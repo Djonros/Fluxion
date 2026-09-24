@@ -1,0 +1,30 @@
+{
+  "models": [
+    {
+      "title": "Fluxion (Local)",
+      "provider": "openai",
+      "model": "qwen2.5-coder:7b-instruct",
+      "apiBase": "http://localhost:11434/v1",
+      "apiKey": "ollama"
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "Fluxion Autocomplete",
+    "provider": "openai",
+    "model": "qwen2.5-coder:7b-instruct",
+    "apiBase": "http://localhost:11434/v1",
+    "apiKey": "ollama"
+  },
+  "embeddingsProvider": {
+    "title": "Fluxion Embeddings",
+    "provider": "openai",
+    "model": "bge-m3",
+    "apiBase": "http://localhost:11434/v1",
+    "apiKey": "ollama"
+  },
+  "systemMessage": "You are Fluxion, an expert Python programming assistant. Give concise, correct answers with runnable code examples.",
+  "allowAnonymousTelemetry": false,
+  "ui": {
+    "showInlineTokenCount": true
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "tasks": [
+    {
+      "task_id": "fluxion-add-1",
+      "prompt": "Write a function `add(a, b)` that returns the sum of two integers.",
+      "canonical_solution": "def add(a, b):\n    return a + b\n",
+      "test": "assert add(2, 3) == 5\nassert add(-1, 1) == 0\nassert add(0, 0) == 0\n",
+      "entry_point": "add"
+    },
+    {
+      "task_id": "fluxion-normalize-path-1",
+      "prompt": "Write a function `normalize_path(path)` that converts backslashes to forward slashes and strips a trailing slash.",
+      "canonical_solution": "def normalize_path(path):\n    path = path.replace(\"\\\\\", \"/\")\n    return path.rstrip(\"/\")\n",
+      "test": "assert normalize_path(\"a\\\\b\\\\c\") == \"a/b/c\"\nassert normalize_path(\"dir/\") == \"dir\"\nassert normalize_path(\"plain\") == \"plain\"\n",
+      "entry_point": "normalize_path",
+      "imports": ["import re", "import os"]
+    }
+  ]
+}

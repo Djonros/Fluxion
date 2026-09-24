@@ -1,0 +1,27 @@
+# config/repos.yaml
+# GitHub repositories to clone for RAG indexing.
+# Each entry is a public repo URL. They will be shallow-cloned (depth=1)
+# into data/repos/<name> and indexed into ChromaDB.
+
+repos:
+  # ── Core Python libraries (good for code patterns) ──
+  - https://github.com/python/cpython
+  - https://github.com/pallets/flask
+  - https://github.com/django/django
+  - https://github.com/fastapi/fastapi
+  - https://github.com/psf/requests
+  - https://github.com/pydantic/pydantic
+
+  # ── Data science ──
+  - https://github.com/pandas-dev/pandas
+  - https://github.com/numpy/numpy
+  - https://github.com/scikit-learn/scikit-learn
+
+  # ── AI/ML ──
+  - https://github.com/huggingface/transformers
+  - https://github.com/pytorch/pytorch
+
+  # ── Dev tools ──
+  - https://github.com/pytest-dev/pytest
+  - https://github.com/astral-sh/ruff
+  - https://github.com/psf/black

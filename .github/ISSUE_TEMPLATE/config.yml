@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Q&A & Discussions
+    url: https://github.com/djonros/fluxion/discussions
+    about: Ask questions, share ideas and discuss Fluxion with the community
+  - name: Security issues
+    url: mailto:djonros@gmail.com
+    about: Report security vulnerabilities directly — do not open a public issue

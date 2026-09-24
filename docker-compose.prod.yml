@@ -1,0 +1,49 @@
+# Fluxion Web App — production stack
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Required environment (export or .env next to this file):
+#   FLUXION_JWT_SECRET=<long random string>
+# Optional (billing):
+#   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PRO, STRIPE_PRICE_TEAM, STRIPE_PRICE_ENTERPRISE
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: fluxion-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fluxion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fluxion}
+      POSTGRES_DB: fluxion
+    volumes:
+      - fluxion_pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fluxion -d fluxion"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    container_name: fluxion-app-prod
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      FLUXION_DB_URL: postgresql+psycopg2://fluxion:${POSTGRES_PASSWORD:-fluxion}@db:5432/fluxion
+      FLUXION_JWT_SECRET: ${FLUXION_JWT_SECRET:?set FLUXION_JWT_SECRET}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_TEAM: ${STRIPE_PRICE_TEAM:-}
+      STRIPE_PRICE_ENTERPRISE: ${STRIPE_PRICE_ENTERPRISE:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  fluxion_pgdata_prod:

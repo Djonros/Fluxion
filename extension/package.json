@@ -1,0 +1,75 @@
+{
+  "name": "fluxion",
+  "displayName": "Fluxion",
+  "description": "Local AI coding assistant — RAG, web search, ReAct agent",
+  "version": "0.1.0",
+  "publisher": "djonros",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Machine Learning", "Programming Languages"],
+  "icon": "media/icon.png",
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "fluxion.chat",
+        "title": "Fluxion: Open Chat"
+      },
+      {
+        "command": "fluxion.indexWorkspace",
+        "title": "Fluxion: Index Project"
+      },
+      {
+        "command": "fluxion.health",
+        "title": "Fluxion: Server Status"
+      },
+      {
+        "command": "fluxion.agentRun",
+        "title": "Fluxion: Run Agent"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fluxion-sidebar",
+          "title": "Fluxion",
+          "icon": "media/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "fluxion-sidebar": [
+        {
+          "type": "webview",
+          "id": "fluxion.chatView",
+          "name": "Chat",
+          "typeIcon": "comment"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Fluxion",
+      "properties": {
+        "fluxion.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8765",
+          "description": "Fluxion API server URL"
+        },
+        "fluxion.agentAllowWrite": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow the agent to write/edit files"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "echo 'No build step needed'"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  }
+}

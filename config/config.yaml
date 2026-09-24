@@ -1,0 +1,34 @@
+ollama_host: http://localhost:11434
+model: qwen2.5-coder:7b-instruct
+
+# Backend selection: ollama (default), api, llama_cpp
+# Override with env: FLUXION_BACKEND=api
+# For API backend, also set: FLUXION_API_KEY, FLUXION_API_BASE_URL, FLUXION_API_MODEL
+# For llama_cpp, also set: FLUXION_GGUF_PATH
+
+generation:
+  temperature: 0.2
+  top_p: 0.9
+  max_tokens: 2048
+  num_ctx: 32768
+
+rag:
+  enabled: false
+  embedding_model: bge-m3
+  embedding_device: cpu
+  chroma_dir: data/chroma
+  chunk_max_chars: 1500
+  chunk_overlap: 200
+  top_k: 8
+  rerank: true
+
+web:
+  enabled: false
+  searxng_url: http://localhost:8080
+  max_pages: 3
+  timeout: 10
+  cache_ttl_hours: 24
+
+paths:
+  data_dir: data
+  repos_dir: data/repos

@@ -1,0 +1,4 @@
+# Phase 18 (Zero-Dep engine): embedded llama.cpp inference.
+# NOTE: prebuilt wheels may not exist for Python 3.14 — CPU AVX2 wheel is
+# installed by the build scripts (18.5); a local source build needs cmake + MSVC.
+llama-cpp-python>=0.3.0

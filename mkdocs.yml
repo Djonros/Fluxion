@@ -1,0 +1,62 @@
+site_name: Fluxion
+site_description: Локальный AI-ассистент для вайб-кодинга на Python
+site_author: Djonros
+
+theme:
+  name: material
+  language: ru
+  logo: assets/images/logo.png
+  favicon: assets/images/favicon.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Переключить на тёмную тему
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Переключить на светлую тему
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.path
+    - content.code.copy
+    - content.tabs.link
+
+markdown_extensions:
+  - attr_list
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Главная: index.md
+  - Установка: install.md
+  - Быстрый старт: quick-start.md
+  - Конфигурация: configuration.md
+  - Руководства:
+      - Чат в приложении: guides/chat.md
+      - RAG по коду: guides/rag.md
+      - ReAct-агент: guides/agent.md
+      - Веб-поиск: guides/web-search.md
+      - VS Code extension: guides/vscode.md
+      - QLoRA-дообучение: guides/finetune.md
+      - Eval (HumanEval / MBPP): guides/eval.md
+      - Лицензия Pro: guides/licensing.md
+  - API сервер: api.md
+  - Деплой (Docker): deployment.md
+  - Решение проблем: troubleshooting.md
+  - FAQ: faq.md
+  - Приватность: privacy.md
