@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — Default backend
+- Without an explicit `backend`, the embedded llama.cpp engine is selected when llama-cpp-python is installed and a local GGUF model exists (`gguf_path`, `FLUXION_GGUF_PATH` or the chat model installed via the "Models" page); previously the default was always Ollama, contradicting the docs ("llama.cpp by default in builds"), so the app failed to pick up a downloaded model. Explicit `backend:`/`FLUXION_BACKEND` still wins. Factory tests made hermetic against models on the developer machine.
+- `RELEASE_NOTES_RU.md` — all changes of this release in plain Russian.
+
+### Fixed — Agent benchmark model lookup
+- The benchmark resolves the model like the desktop app (llama.cpp + model installed via the "Models" page, no `gguf_path` needed), prints the engine and model in use, and explains how to configure the backend instead of a traceback.
+
+### Fixed — Checkpoint snapshot race (found by fluxion-test.bat on Windows)
+- The snapshot index was a copy with a fresh mtime, which disabled git's "racy clean" re-check: a same-size edit made in the same second as the index write was read from the stale stat cache, so a checkpoint could record old content and rollback could silently skip a file. The copy now keeps the original mtime (`shutil.copy2`). Deterministic regression test added.
+
+### Added — Test runner
+- `fluxion-test.bat` — menu and CLI modes (`quick`, `groups`, `ci`, `smoke`, `bench`): tests run in groups (agent, core, server, desktop, licensing, training) with a pre-check of required packages, so a missing PySide6/FastAPI shows as "skipped" instead of import errors; summary table, JUnit XML in `logs/tests/`, exit code for automation; smoke and full agent benchmark on the configured model with resume.
+- `logs/` and `results/` are git-ignored.
+
+### Added — Updater
+- `fluxion-update.bat` — updates the program from a release zip: code backup (models/data/venv excluded), extraction, copy-over that keeps `config.yaml`/`repos.yaml`/`continue_config.json`, post-update validation and tests, one-step rollback (`--rollback`).
+
+### Added — Agent benchmark
+- `eval/agent_bench/` — 36 realistic agent tasks (qa, chat, create, fix, refactor, safety) with automatic post-run checks, anti-cheat (tests must stay unchanged) and a mutation check for test writing. Modes: `baseline` (frozen pre-fix agent), `text`, `json`. Resumable runs, `report.md` with per-mode/category/task results and pairwise comparison. `--validate` proves each task is solvable and its checks reject the untouched fixture; `tests/test_agent_bench.py` runs an oracle through the real agent loop in all modes.
+
+### Fixed — Agent reliability (production-readiness review)
+- Final answer was cut to its first line (`Action: finish` parsed without DOTALL); multi-line answers with code are now kept intact.
+- Failed tools (e.g. failing `run_tests`) returned `Error: ` with no text — the model never saw the pytest output. Observations now include error + output (tail of pytest output preserved).
+- Repeat-guard blocked re-running tests / re-reading a file after `edit_file`; it now resets after every successful write.
+- No stop sequences were sent, so the model invented its own `Observation:` and it was written into files. All backends now pass `stop`; the parser also cuts hallucinated observations. Markdown fences are stripped from `write_file`/`edit_file` content (DOGFOOD 18.8, t3).
+- Missing pytest was reported as "no tests → PASSED". New verification status `syntax_only` is shown honestly in the UI.
+- `edit_file` failed on CRLF files (Windows) and on trailing-whitespace differences; both are handled, line endings preserved.
+- `LlamaCppBackend`/`APIBackend` ignored `generation` settings from config.yaml.
+- Backups in `.fluxion-backup/` keep the pre-agent version and are excluded from git.
+
+### Added — Structured tool calls
+- JSON-schema constrained actions: `TOOL_SPECS` drives both the schema and the prompt; llama.cpp (`response_format` → GBNF grammar) and Ollama (`format`) enforce it, so small models cannot emit malformed actions. Default `auto` for these backends; `FLUXION_AGENT_FORMAT=json|text` overrides; `FLUXION_API_STRUCTURED=1` opts the API backend in.
+- Automatic fallback to text ReAct in the same run when a backend rejects the schema; both reply formats are always understood.
+- Cut-off JSON (max_tokens hit during a large write) is reported to the model instead of being accepted as a final answer.
+- `search_code <query>` tool — semantic search over the existing RAG index (previously `rag_service` was passed to the agent but never used). Results are restricted to the current project, deduplicated and point to `read_file` ranges.
+- Tools offered to the model follow the configuration (no write tools in read-only, no `search_code` without RAG, no `web_search` when not configured).
+
+### Added — Agent
+- `list_files [dir|glob]` tool; `read_file <path> <a>-<b>` paging for long files; `grep` searches all text files (not only `*.py`), skipping vendored/build dirs, binaries and secrets.
+- History compaction when the conversation exceeds the context budget.
+- `/rollback` CLI command.
+- `allow_exec` flag (disables `run_tests`), used by the hosted server.
+
+### Security
+- **Data loss:** the auto-checkpoint used `git stash push -u`, which removed the user's uncommitted work from disk before the agent's first write. Checkpoints are now snapshot commits under `refs/fluxion/checkpoints/` that never touch the working tree or index; `rollback` restores them (and recovers legacy `fluxion-checkpoint` stashes).
+- `git_commit` no longer runs `git add -A`: it commits only files the agent wrote (or the changed files when asked explicitly) and never `.env`/keys.
+- `read_file`/`grep` could read any file on disk (absolute paths, `../`). Access is confined to the project; `.env`, keys and `.git` internals are not sent to the model. Web search results are marked as untrusted.
+- `run_tests` rejects pytest options/paths that load foreign code or leave the project.
+- `APIBackend` no longer falls back to `HF_TOKEN` as the provider API key.
+- Server: `FLUXION_SERVER_MODE=saas` (default in the Docker image) — agent read-only, no test execution, project roots confined to `FLUXION_WORKSPACES_DIR/<user_id>`, server-side RAG indexing disabled (shared index).
+- Server: JWT secret — startup fails in production without a strong `FLUXION_JWT_SECRET`; the public default is never used (ephemeral random secret in dev).
+- Server: CORS no longer `*` with credentials; localhost/VS Code by default, `FLUXION_CORS_ORIGINS` for production.
+- Local server (`fluxion-server.bat`, `fluxion-deploy.bat`) binds to `127.0.0.1` instead of `0.0.0.0`; `docker-compose.prod.yml` requires `POSTGRES_PASSWORD`.
+
 ### Added — Desktop App (Phase 15, in progress)
 - `desktop/` package — PySide6 desktop GUI:
   - `app.py` — branded window (logo palette, dark/light theme with persistence via QSettings), sidebar navigation (Чат / Проект / Агент), chat page with suggestion chips

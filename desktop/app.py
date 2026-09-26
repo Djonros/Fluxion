@@ -709,7 +709,10 @@ class FluxionWindow(QMainWindow):
         )
         answer = result.get("final_answer") or ""
         if answer:
-            self._agent_log(f"<p><b>Ответ:</b></p><p>{html.escape(answer)}</p>")
+            self._agent_log(
+                f"<p><b>Ответ:</b></p>"
+                f"<div style=\"white-space:pre-wrap;\">{html.escape(answer)}</div>"
+            )
         self._set_agent_running(False)
 
     def _on_agent_failed(self, message: str) -> None:
