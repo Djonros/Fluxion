@@ -1,4 +1,4 @@
-# Inference / RAG / Web / CLI  (Python 3.14 venv)
+# Inference / RAG / Web / CLI  (Python 3.11+; release builds use 3.14)
 httpx>=0.27
 pyyaml>=6.0
 python-dotenv>=1.0

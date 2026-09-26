@@ -30,7 +30,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -53,6 +53,7 @@ from .projects import router as projects_router
 from .usage import router as usage_router
 from .usage.limiter import get_limiter, rate_limit, set_limiter, RateLimiter
 from .usage.middleware import UsageLoggingMiddleware
+from .security import cors_options, is_saas, resolve_user_path, user_workspace
 
 logger = logging.getLogger("fluxion.server")
 
@@ -87,13 +88,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Fluxion", version="0.1.0")
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Wildcard origins + credentials let any website drive a local server
+    # holding the user's session; restrict to localhost / configured origins.
+    app.add_middleware(CORSMiddleware, **cors_options())
 
     # ── Rate limiter (in-memory, per-process) ───────────────────────────
     set_limiter(RateLimiter())
@@ -184,7 +181,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         req: AgentRequest,
         user: User = Depends(get_current_user),
     ):
-        project_root = str(settings.project_root())
+        saas = is_saas()
+        project_root = str(user_workspace(user.id) if saas else settings.project_root())
         if req.project_id:
             from .projects.models import Project
             from .database import SessionLocal
@@ -194,15 +192,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     Project.id == req.project_id, Project.user_id == user.id,
                 ).first()
                 if proj and proj.root_path:
-                    project_root = proj.root_path
+                    project_root = str(resolve_user_path(user.id, proj.root_path))
             finally:
                 db.close()
+        if saas and req.allow_write:
+            raise HTTPException(
+                status_code=403,
+                detail="Agent write mode is not available on the hosted service",
+            )
         agent = CodingAgent(
             backend=backend,
             project_root=project_root,
             rag_service=rag_service,
             web_search=web_search,
-            allow_write=req.allow_write,
+            allow_write=req.allow_write and not saas,
+            # pytest runs project code (conftest.py): never on a shared server.
+            allow_exec=not saas,
         )
 
         if req.stream:
@@ -234,7 +239,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/rag/index")
     async def rag_index(req: IndexRequest, user: User = Depends(get_current_user)):
-        target = Path(req.path)
+        if is_saas():
+            # The RAG index is shared by the whole process: indexing on a
+            # multi-tenant server would expose one user's code to others.
+            raise HTTPException(
+                status_code=403,
+                detail="Server-side indexing is disabled on the hosted service",
+            )
+        target = resolve_user_path(user.id, req.path)
         if not target.exists():
             return {"error": f"Path not found: {req.path}"}
         chunks = rag_service.index(target)

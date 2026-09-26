@@ -13,6 +13,17 @@ from .models import Project
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
+def _checked_root(user_id: object, root_path: str | None) -> str | None:
+    """On the hosted service a project root must live in the user's workspace."""
+    if not root_path:
+        return root_path
+    from ..security import is_saas, resolve_user_path
+
+    if not is_saas():
+        return root_path
+    return str(resolve_user_path(user_id, root_path))
+
+
 # ── request / response schemas ───────────────────────────────────────────────
 
 class ProjectCreate(BaseModel):
@@ -55,7 +66,7 @@ def create_project(
         user_id=user.id,
         name=req.name,
         description=req.description,
-        root_path=req.root_path,
+        root_path=_checked_root(user.id, req.root_path),
         settings=req.settings or {},
     )
     db.add(project)
@@ -100,6 +111,8 @@ def update_project(
     """Partially update a project."""
     project = _get_owned_project(db, project_id, user.id)
     updates = req.model_dump(exclude_unset=True)
+    if "root_path" in updates:
+        updates["root_path"] = _checked_root(user.id, updates["root_path"])
     for field, value in updates.items():
         setattr(project, field, value)
     db.commit()

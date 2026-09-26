@@ -3,7 +3,9 @@
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # Required environment (export or .env next to this file):
-#   FLUXION_JWT_SECRET=<long random string>
+#   FLUXION_JWT_SECRET=<random, >= 32 chars>
+#   POSTGRES_PASSWORD=<strong password>
+#   FLUXION_CORS_ORIGINS=https://your-frontend.example.com
 # Optional (billing):
 #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PRO, STRIPE_PRICE_TEAM, STRIPE_PRICE_ENTERPRISE
 
@@ -14,7 +16,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: fluxion
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fluxion}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: fluxion
     volumes:
       - fluxion_pgdata_prod:/var/lib/postgresql/data
@@ -32,8 +34,12 @@ services:
       db:
         condition: service_healthy
     environment:
-      FLUXION_DB_URL: postgresql+psycopg2://fluxion:${POSTGRES_PASSWORD:-fluxion}@db:5432/fluxion
+      FLUXION_DB_URL: postgresql+psycopg2://fluxion:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/fluxion
       FLUXION_JWT_SECRET: ${FLUXION_JWT_SECRET:?set FLUXION_JWT_SECRET}
+      FLUXION_ENV: production
+      FLUXION_SERVER_MODE: saas
+      FLUXION_WORKSPACES_DIR: /app/data/workspaces
+      FLUXION_CORS_ORIGINS: ${FLUXION_CORS_ORIGINS:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
@@ -42,8 +48,11 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
     ports:
       - "8000:8000"
+    volumes:
+      - fluxion_workspaces_prod:/app/data/workspaces
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
   fluxion_pgdata_prod:
+  fluxion_workspaces_prod:

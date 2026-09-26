@@ -26,5 +26,5 @@ echo  Docs:  http://localhost:8765/docs
 echo  Health: http://localhost:8765/api/health
 echo  ─────────────────────────────────────────
 echo.
-python -m uvicorn server.app:create_app --factory --host 0.0.0.0 --port 8765
+python -m uvicorn server.app:create_app --factory --host 127.0.0.1 --port 8765
 pause

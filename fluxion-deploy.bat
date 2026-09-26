@@ -123,7 +123,7 @@ if errorlevel 4 (
 if errorlevel 3 (
     echo.
     echo Starting API server in background...
-    start "Fluxion Server" cmd /c "cd /d "%~dp0" && python -m uvicorn server.app:create_app --factory --host 0.0.0.0 --port 8765"
+    start "Fluxion Server" cmd /c "cd /d "%~dp0" && python -m uvicorn server.app:create_app --factory --host 127.0.0.1 --port 8765"
     timeout /t 2 >nul
     echo Starting CLI...
     python -m cli.app
