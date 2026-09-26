@@ -4,15 +4,20 @@ Selection order:
     1. ``FLUXION_BACKEND`` env  (ollama | llama_cpp | llamacpp | api)
     2. ``backend:`` key in config.yaml (same values)
     3. ``FLUXION_API_KEY`` set  →  APIBackend
-    4. default                   →  OllamaBackend
+    4. llama-cpp-python installed and a local GGUF model present
+       (``gguf_path`` / ``FLUXION_GGUF_PATH`` or the chat model installed via
+       the "Models" page)      →  LlamaCppBackend
+    5. default                   →  OllamaBackend
 
 Fallback chain: if the primary backend ``is_available()`` returns False,
 the factory tries the next backend in the chain.
 """
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from .config import Settings
@@ -72,7 +77,40 @@ def _detect_backend_type(settings: Settings) -> str:
     if api_key:
         return "api"
 
+    # The embedded engine is the documented default of the builds: use it
+    # whenever it can actually run, instead of silently requiring Ollama.
+    if _llama_cpp_installed() and _local_gguf_available(settings):
+        return "llama_cpp"
+
     return "ollama"
+
+
+# Chat model the desktop app resolves when gguf_path is empty
+# (desktop_browser.engine._wire_gguf_paths).
+_DEFAULT_CHAT_MODEL_ID = "qwen2.5-coder-7b-q4km"
+
+
+def _llama_cpp_installed() -> bool:
+    try:
+        return importlib.util.find_spec("llama_cpp") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _local_gguf_available(settings: Settings) -> bool:
+    """True if a GGUF chat model is present locally (no side effects)."""
+    explicit = str(getattr(settings, "gguf_path", "") or "").strip() or os.environ.get(
+        "FLUXION_GGUF_PATH", ""
+    ).strip()
+    if explicit:
+        return Path(explicit).is_file()
+    try:
+        from .model_manager import MODEL_CATALOG, _default_models_dir
+
+        entry = next((m for m in MODEL_CATALOG if m.model_id == _DEFAULT_CHAT_MODEL_ID), None)
+        return entry is not None and (_default_models_dir() / entry.filename).is_file()
+    except Exception:
+        return False
 
 
 def _build_chain(primary: str) -> list[str]:

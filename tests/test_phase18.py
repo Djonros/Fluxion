@@ -71,6 +71,7 @@ def test_detect_config_backend(monkeypatch):
 
 def test_detect_api_key_only_without_explicit_backend(monkeypatch):
     monkeypatch.delenv("FLUXION_BACKEND", raising=False)
+    monkeypatch.setattr("core.backend_factory._local_gguf_available", lambda s: False)
     monkeypatch.setenv("FLUXION_API_KEY", "sk-x")
     assert _detect_backend_type(Settings()) == "api"
     assert _detect_backend_type(Settings(backend="ollama")) == "ollama"
@@ -371,9 +372,89 @@ def test_wire_gguf_paths_resolves_catalog(tmp_path, monkeypatch):
     assert s.rag.embedding_gguf.endswith("bge-m3-Q8_0.gguf")
 
     # ollama-бэкенд: пути не трогаем
-    s2 = Settings()
+    s2 = Settings(backend="ollama")
     _wire_gguf_paths(s2)
     assert s2.gguf_path == ""
+
+
+def test_llama_backend_switch_model(monkeypatch, tmp_path):
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import pytest
+
+    import core.llama_cpp_backend as mod
+
+    loaded = []
+
+    class FakeLlama:
+        def __init__(self, model_path, **kwargs):
+            if "bad" in model_path:
+                raise RuntimeError("bad gguf")
+            loaded.append(model_path)
+
+    class FakeRuntime:
+        def __init__(self):
+            self.items = {}
+
+        def ensure_capacity(self, *args, **kwargs):
+            pass
+
+        def register(self, key, llm, **kwargs):
+            self.items[key] = llm
+
+        def unregister(self, key):
+            self.items.pop(key, None)
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    runtime = FakeRuntime()
+    old_path = tmp_path / "old.gguf"
+    new_path = tmp_path / "new.gguf"
+    backend = mod.LlamaCppBackend(str(old_path), n_ctx=128, runtime=runtime)
+    assert len(loaded) == 1
+
+    backend.switch_model(str(old_path))
+    assert len(loaded) == 1
+
+    backend.switch_model(str(new_path))
+    assert Path(backend.model_path) == new_path.resolve()
+    assert runtime.items["chat"] is backend._llm
+
+    with pytest.raises(RuntimeError):
+        backend.switch_model(str(tmp_path / "bad.gguf"))
+    assert Path(backend.model_path) == new_path.resolve()
+    assert runtime.items["chat"] is backend._llm
+
+
+def test_cli_llama_cpp_fallback(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import cli.app as cli_app
+    import core.backend_factory as bf
+    import core.llama_cpp_backend as lcb
+
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "qwen2.5-coder-7b-instruct-q4_k_m.gguf").write_bytes(b"GGUF-chat")
+    monkeypatch.setenv("FLUXION_MODELS_DIR", str(models))
+    monkeypatch.setattr(bf, "_llama_cpp_installed", lambda: True)
+
+    made = {}
+
+    def fake_from_settings(cls, settings):
+        made["gguf_path"] = settings.gguf_path
+        return SimpleNamespace(engine="llama_cpp")
+
+    monkeypatch.setattr(lcb.LlamaCppBackend, "from_settings", classmethod(fake_from_settings))
+
+    settings = Settings(backend="ollama")
+    result = cli_app._llama_cpp_fallback(settings)
+    assert result is not None
+    assert made["gguf_path"].endswith("qwen2.5-coder-7b-instruct-q4_k_m.gguf")
+
+    monkeypatch.setattr(bf, "_llama_cpp_installed", lambda: False)
+    assert cli_app._llama_cpp_fallback(Settings(backend="ollama")) is None
 
 
 def test_models_page_builds_with_catalog(make_window):

@@ -88,6 +88,7 @@ class OllamaClient:
         self,
         messages: list[dict[str, str]],
         options: dict[str, Any] | None = None,
+        format: dict | str | None = None,  # noqa: A002 - Ollama API field name
     ) -> str:
         payload = {
             "model": self.model,
@@ -95,6 +96,8 @@ class OllamaClient:
             "stream": False,
             "options": options or {},
         }
+        if format is not None:
+            payload["format"] = format
         r = httpx.post(self._url("/api/chat"), json=payload, timeout=self.timeout)
         if r.status_code != 200:
             raise OllamaError(f"Ollama chat failed ({r.status_code}): {r.text[:300]}")
@@ -104,6 +107,7 @@ class OllamaClient:
         self,
         messages: list[dict[str, str]],
         options: dict[str, Any] | None = None,
+        format: dict | str | None = None,  # noqa: A002 - Ollama API field name
     ) -> Iterator[str]:
         payload = {
             "model": self.model,
@@ -111,6 +115,8 @@ class OllamaClient:
             "stream": True,
             "options": options or {},
         }
+        if format is not None:
+            payload["format"] = format
         with httpx.stream(
             "POST", self._url("/api/chat"), json=payload, timeout=None
         ) as r:

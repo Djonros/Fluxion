@@ -18,6 +18,12 @@ class GenerationSettings:
     top_p: float = 0.9
     max_tokens: int = 2048
     num_ctx: int = 32768
+    # Stop sequences: generation halts before any of these strings.  The
+    # ReAct agent sets them so the model cannot invent its own "Observation:".
+    stop: list[str] = field(default_factory=list)
+    # JSON schema the reply must conform to (constrained decoding).  Backends
+    # with ``supports_json_schema = True`` enforce it with a grammar.
+    json_schema: dict | None = None
 
 
 @dataclass
@@ -41,6 +47,7 @@ class WebSettings:
     max_pages: int = 3
     timeout: int = 10
     cache_ttl_hours: int = 24
+    searxng_autostart: bool = True
 
 
 @dataclass

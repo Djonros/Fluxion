@@ -257,6 +257,20 @@ def build_registry(repl: REPL, backend: OllamaBackend, settings: Settings) -> Co
                 )
             )
 
+    # -- rollback of agent changes ---------------------------------------
+
+    def _rollback(args):
+        from pathlib import Path as _Path
+
+        from orchestrator import git_helper
+
+        root = _Path(args[0]) if args else _Path(settings.project_root())
+        out = git_helper.rollback(root.resolve())
+        if out.startswith(("rollback failed", "stash pop failed")):
+            repl.renderer.error(out)
+        else:
+            repl.renderer.info(out)
+
     # -- adapter marketplace ----------------------------------------------
 
     def _adapters(args):
@@ -451,6 +465,7 @@ def build_registry(repl: REPL, backend: OllamaBackend, settings: Settings) -> Co
     reg.register("web", "Search the web [/web <query>]", _web)
     reg.register("webclear", "Clear web cache", _web_clear)
     reg.register("agent", "Run autonomous agent [/agent <task>]", _agent)
+    reg.register("rollback", "Undo the last agent write session [/rollback [path]]", _rollback)
     reg.register("adapters", "LoRA adapter marketplace [/adapters list|info|register|delete|switch]", _adapters)
     reg.register("license", "License plan & activation [/license status|activate <key>|deactivate]", _license)
     reg.register("theme", "Switch UI theme [/theme dark|light]", _theme)
@@ -463,6 +478,31 @@ def _safe_count(rag_service: RAGService) -> int:
         return rag_service.count()
     except Exception:
         return 0
+
+
+def _llama_cpp_fallback(settings: Settings):
+    """Try the embedded llama.cpp engine when Ollama is unreachable."""
+    from core.backend_factory import (
+        _DEFAULT_CHAT_MODEL_ID,
+        _llama_cpp_installed,
+        _local_gguf_available,
+    )
+
+    if not _llama_cpp_installed() or not _local_gguf_available(settings):
+        return None
+    if not str(getattr(settings, "gguf_path", "") or ""):
+        try:
+            from core.model_manager import ModelManager
+
+            settings.gguf_path = str(ModelManager().path_for(_DEFAULT_CHAT_MODEL_ID))
+        except Exception:
+            return None
+    try:
+        from core.llama_cpp_backend import LlamaCppBackend
+
+        return LlamaCppBackend.from_settings(settings)
+    except Exception:
+        return None
 
 
 def _startup_backend(settings: Settings):
@@ -493,6 +533,15 @@ def main() -> int:
             "  Free tier: local Ollama or the embedded llama.cpp engine.\n"
             "  Activate with: /license activate <key>"
         )
+
+    if isinstance(backend, OllamaBackend) and not backend.client.is_alive():
+        fallback = _llama_cpp_fallback(settings)
+        if fallback is not None:
+            renderer.warn(
+                f"Ollama server not reachable at {settings.ollama_host}.\n"
+                "  Switching to the embedded llama.cpp engine."
+            )
+            backend = fallback
 
     if isinstance(backend, OllamaBackend):
         if not backend.client.is_alive():

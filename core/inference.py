@@ -31,29 +31,44 @@ class ModelBackend(ABC):
 
 
 class OllamaBackend(ModelBackend):
+    # Ollama >= 0.5 accepts a JSON schema in "format" (structured outputs).
+    supports_json_schema = True
+
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.generation = settings.generation
         self.client = OllamaClient(
             host=settings.ollama_host, model=settings.model
         )
 
     def _options(self, gen: GenerationSettings | None) -> dict:
         g = gen or self.settings.generation
-        return {
+        opts = {
             "temperature": g.temperature,
             "top_p": g.top_p,
             "num_predict": g.max_tokens,
             "num_ctx": g.num_ctx,
         }
+        if getattr(g, "stop", None):
+            opts["stop"] = list(g.stop)
+        return opts
+
+    @staticmethod
+    def _format(gen: GenerationSettings | None) -> dict | None:
+        return getattr(gen, "json_schema", None) if gen is not None else None
 
     def generate(self, messages, gen=None) -> str:
-        try:
+        fmt = self._format(gen)
+        if fmt is None:
             return self.client.chat(messages, options=self._options(gen))
-        except OllamaError:
-            raise
+        return self.client.chat(messages, options=self._options(gen), format=fmt)
 
     def stream(self, messages, gen=None) -> Iterator[str]:
-        yield from self.client.stream_chat(messages, options=self._options(gen))
+        fmt = self._format(gen)
+        if fmt is None:
+            yield from self.client.stream_chat(messages, options=self._options(gen))
+        else:
+            yield from self.client.stream_chat(messages, options=self._options(gen), format=fmt)
 
     def is_available(self) -> bool:
         return self.client.is_alive() and self.client.exists()

@@ -131,7 +131,7 @@ class TestAgentTools:
 
     def test_read_file_truncates_long(self, agent, tmp_path):
         fpath = tmp_path / "big.py"
-        fpath.write_text("x" * 5000, encoding="utf-8")
+        fpath.write_text("x" * 20000, encoding="utf-8")
         result = agent._tool_read_file("big.py")
         assert result.success
         assert "truncated" in result.output
@@ -507,7 +507,7 @@ class TestAgentRun:
         tools = [s.tool_name for s in result.steps]
         assert tools[-1] == "finish"
         assert "run_tests" in tools
-        assert result.verification in ("passed", "failed")
+        assert result.verification in ("passed", "syntax_only", "failed")
 
     def test_gate_syntax_fallback_without_tests(self, tmp_path):
         """Project without pytest: syntax check decides; broken code blocked."""
@@ -528,7 +528,8 @@ class TestAgentRun:
         gate_steps = [s for s in result.steps if s.tool_args == "(auto-verify)"]
         assert gate_steps
         assert "syntax check FAILED" in gate_steps[0].observation
-        assert result.verification == "passed"
+        # No tests in the project: only syntax was checked — reported honestly.
+        assert result.verification == "syntax_only"
 
     def test_gate_budget_exhausted_marks_failed(self, tmp_path, monkeypatch):
         """Always-failing verification: budget exhausted → finish allowed, failed."""

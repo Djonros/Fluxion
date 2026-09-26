@@ -34,7 +34,14 @@ class APIBackend(ModelBackend):
         base_url: str = "https://openrouter.ai/api/v1",
         model: str = "qwen/qwen2.5-coder-7b-instruct",
         timeout: float = 120.0,
+        generation: GenerationSettings | None = None,
     ):
+        self.generation = generation or GenerationSettings()
+        # Structured outputs are provider/model specific: opt in explicitly
+        # (FLUXION_API_STRUCTURED=1) for providers supporting json_schema.
+        self.supports_json_schema = os.environ.get(
+            "FLUXION_API_STRUCTURED", ""
+        ).strip().lower() in ("1", "true", "yes")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -43,9 +50,12 @@ class APIBackend(ModelBackend):
     @classmethod
     def from_settings(cls, settings: Settings) -> APIBackend:
         return cls(
-            api_key=os.environ.get("FLUXION_API_KEY", settings.hf_token or ""),
+            # Only FLUXION_API_KEY is used.  The old fallback to HF_TOKEN sent the
+            # Hugging Face token to a third-party provider (OpenRouter etc.).
+            api_key=os.environ.get("FLUXION_API_KEY", ""),
             base_url=os.environ.get("FLUXION_API_BASE_URL", "https://openrouter.ai/api/v1"),
             model=os.environ.get("FLUXION_API_MODEL", settings.model),
+            generation=settings.generation,
         )
 
     def _headers(self) -> dict[str, str]:
@@ -60,8 +70,8 @@ class APIBackend(ModelBackend):
         gen: GenerationSettings | None,
         stream: bool,
     ) -> dict[str, Any]:
-        g = gen or GenerationSettings()
-        return {
+        g = gen or self.generation
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": g.temperature,
@@ -69,6 +79,15 @@ class APIBackend(ModelBackend):
             "max_tokens": g.max_tokens,
             "stream": stream,
         }
+        if getattr(g, "stop", None):
+            # OpenAI-compatible APIs accept at most 4 stop sequences.
+            payload["stop"] = list(g.stop)[:4]
+        if getattr(g, "json_schema", None) and self.supports_json_schema:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "agent_action", "schema": g.json_schema},
+            }
+        return payload
 
     def generate(
         self,

@@ -200,7 +200,7 @@ class TestAgentGitCommit:
 
 class TestAutoCheckpoint:
     def test_checkpoint_happens_before_write(self, rw_agent, git_repo):
-        """First write_file triggers a git stash checkpoint."""
+        """First write_file triggers a git snapshot checkpoint."""
         result = rw_agent._tool_write_file("new.py\ncontent = 1\n")
         assert result.success
         assert rw_agent._checkpointed is True

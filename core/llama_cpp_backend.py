@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 from .config import GenerationSettings, Settings
 from .inference import ModelBackend
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 class LlamaCppBackend(ModelBackend):
     """Direct GGUF inference backend using llama-cpp-python."""
 
+    # llama-cpp-python compiles a JSON schema into a GBNF grammar, so the
+    # model cannot produce a malformed tool call.
+    supports_json_schema = True
+
     def __init__(
         self,
         model_path: str,
@@ -30,6 +35,7 @@ class LlamaCppBackend(ModelBackend):
         verbose: bool = False,
         runtime=None,
         runtime_key: str = "chat",
+        generation: GenerationSettings | None = None,
     ):
         try:
             from llama_cpp import Llama
@@ -39,6 +45,13 @@ class LlamaCppBackend(ModelBackend):
             ) from exc
 
         self.model_path = model_path
+        self._n_ctx = n_ctx
+        self._n_gpu_layers = n_gpu_layers
+        self._verbose = verbose
+        # Defaults for generate()/stream() when the caller passes no settings.
+        # Previously a bare GenerationSettings() was used, silently ignoring
+        # temperature/max_tokens from config.yaml.
+        self.generation = generation or GenerationSettings(num_ctx=n_ctx)
         from .model_runtime import get_shared_runtime
 
         self._runtime = runtime or get_shared_runtime()
@@ -57,6 +70,34 @@ class LlamaCppBackend(ModelBackend):
     def unload(self) -> None:
         """Drop the model from the registry (frees VRAM on GC)."""
         self._runtime.unregister(self._runtime_key)
+
+    def switch_model(self, model_path: str) -> None:
+        """Hot-swap to another GGUF in place; on failure keeps the old model."""
+        new_path = str(Path(model_path).resolve())
+        if new_path == str(Path(self.model_path).resolve()):
+            return
+        from llama_cpp import Llama
+
+        self._runtime.unregister(self._runtime_key)
+        old_llm = self._llm
+        self._llm = None
+        try:
+            self._llm = Llama(
+                model_path=new_path,
+                n_ctx=self._n_ctx,
+                n_gpu_layers=self._n_gpu_layers,
+                verbose=self._verbose,
+            )
+        except Exception:
+            self._llm = old_llm
+            self._runtime.register(
+                self._runtime_key, old_llm, n_gpu_layers=self._n_gpu_layers, task="chat"
+            )
+            raise
+        self._runtime.register(
+            self._runtime_key, self._llm, n_gpu_layers=self._n_gpu_layers, task="chat"
+        )
+        self.model_path = new_path
 
     @property
     def cpu_mode_note(self) -> str:
@@ -79,15 +120,21 @@ class LlamaCppBackend(ModelBackend):
             model_path=model_path,
             n_ctx=settings.generation.num_ctx,
             n_gpu_layers=n_gpu,
+            generation=settings.generation,
         )
 
     def _params(self, gen: GenerationSettings | None) -> dict:
-        g = gen or GenerationSettings()
-        return {
+        g = gen or self.generation
+        params = {
             "temperature": g.temperature,
             "top_p": g.top_p,
             "max_tokens": g.max_tokens,
         }
+        if getattr(g, "stop", None):
+            params["stop"] = list(g.stop)
+        if getattr(g, "json_schema", None):
+            params["response_format"] = {"type": "json_object", "schema": g.json_schema}
+        return params
 
     def generate(
         self,
@@ -116,4 +163,4 @@ class LlamaCppBackend(ModelBackend):
                 yield delta
 
     def is_available(self) -> bool:
-        return self.model_path and os.path.isfile(self.model_path)
+        return bool(self.model_path) and os.path.isfile(self.model_path)

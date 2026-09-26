@@ -46,7 +46,7 @@ web:
 |------------|----------|
 | `OLLAMA_HOST` | Адрес Ollama (`http://localhost:11434`) |
 | `MODEL` | Модель по умолчанию (бэкенд ollama) |
-| `FLUXION_BACKEND` | `llama_cpp` / `ollama` / `api` (по умолчанию — авто-детект) |
+| `FLUXION_BACKEND` | `llama_cpp` / `ollama` / `api` (по умолчанию — авто-детект: `api` при `FLUXION_API_KEY`, иначе `llama_cpp`, если установлен llama-cpp-python и есть GGUF-модель — `gguf_path` или скачанная на странице «Модели», иначе `ollama`) |
 | `FLUXION_API_KEY` | Ключ для API-backend |
 | `FLUXION_API_BASE_URL` | Base URL OpenAI-compatible API |
 | `FLUXION_API_MODEL` | Имя модели в API |
