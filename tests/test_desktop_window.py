@@ -1,11 +1,14 @@
-"""Desktop GUI tests (offscreen Qt).
+"""Window-level tests of the desktop app (desktop_browser).
 
-Covers: streaming chat reply, conversation history, stop button,
-no-engine fallback and theme persistence via injected QSettings.
+Ported from the removed legacy ``desktop`` package, whose window this app grew
+out of: same widgets and behaviour (chat, agent, models, training, licence,
+project page).  The browser panel is disabled (no QtWebEngine in tests) and
+chat history is isolated by tests/conftest.py.
 """
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("FLUXION_DISABLE_WEBENGINE", "1")
 
 import time
 from types import SimpleNamespace
@@ -15,7 +18,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from cli.theme import DARK, LIGHT
-from desktop.app import FluxionWindow
+from desktop_browser.app import FluxionWindow
 
 
 class FakeAssistant:
@@ -616,7 +619,7 @@ def test_training_failure_shows_message(qapp, tmp_path, monkeypatch):
     import licensing
 
     monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
-    from desktop.training import TrainingError
+    from desktop_browser.training import TrainingError
 
     pipeline, _ = _fake_pipeline(error=TrainingError("нет окружения"))
     window = _training_window(qapp, tmp_path, pipeline)
@@ -663,7 +666,7 @@ def test_training_requires_dataset(qapp, tmp_path, monkeypatch):
 
 
 def test_env_install_button_offered_and_runs(qapp, tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.setattr(training, "_detect_trainer", lambda log, env=None: (None, "", None))
     monkeypatch.setattr(training, "detect_training_env", lambda env_dir: None)
@@ -693,8 +696,8 @@ def test_env_install_button_offered_and_runs(qapp, tmp_path, monkeypatch):
 
 
 def test_env_install_prompts_and_autoinstalls_when_python_missing(qapp, tmp_path, monkeypatch):
-    import desktop.training as training
-    from desktop.app import QMessageBox
+    import desktop_browser.training as training
+    from desktop_browser.app import QMessageBox
 
     monkeypatch.setattr(training, "_detect_trainer", lambda log, env=None: (None, "", None))
     monkeypatch.setattr(training, "detect_training_env", lambda env_dir: None)
@@ -719,8 +722,8 @@ def test_env_install_prompts_and_autoinstalls_when_python_missing(qapp, tmp_path
 
 
 def test_env_install_declined_when_python_missing(qapp, tmp_path, monkeypatch):
-    import desktop.training as training
-    from desktop.app import QMessageBox
+    import desktop_browser.training as training
+    from desktop_browser.app import QMessageBox
 
     monkeypatch.setattr(training, "_detect_trainer", lambda log, env=None: (None, "", None))
     monkeypatch.setattr(training, "detect_training_env", lambda env_dir: None)
@@ -741,7 +744,7 @@ def test_env_install_declined_when_python_missing(qapp, tmp_path, monkeypatch):
 
 
 def test_env_label_hidden_when_system_trainer_present(qapp, tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     def trainer(settings, dataset, max_samples):
         return "adapter"
@@ -757,7 +760,7 @@ def test_env_label_hidden_when_system_trainer_present(qapp, tmp_path, monkeypatc
 
 
 def test_env_label_ready_when_marker_exists(qapp, tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     env_py = tmp_path / "training_env" / "Scripts" / "python.exe"
     monkeypatch.setattr(training, "detect_training_env", lambda env_dir: str(env_py))
@@ -777,7 +780,7 @@ def _pro_license():
 
 
 def test_license_dialog_free_status(qapp, tmp_path, monkeypatch):
-    import desktop.license_dialog as ld
+    import desktop_browser.license_dialog as ld
 
     monkeypatch.setattr(ld, "load_activation", lambda path=None: None)
     dialog = ld.LicenseDialog()
@@ -786,7 +789,7 @@ def test_license_dialog_free_status(qapp, tmp_path, monkeypatch):
 
 
 def test_license_dialog_activate_success(qapp, tmp_path, monkeypatch):
-    import desktop.license_dialog as ld
+    import desktop_browser.license_dialog as ld
 
     lic = _pro_license()
     state = {"active": None}
@@ -807,7 +810,7 @@ def test_license_dialog_activate_success(qapp, tmp_path, monkeypatch):
 
 
 def test_license_dialog_activate_error(qapp, tmp_path, monkeypatch):
-    import desktop.license_dialog as ld
+    import desktop_browser.license_dialog as ld
     from licensing import LicenseError
 
     monkeypatch.setattr(ld, "load_activation", lambda path=None: None)
@@ -825,7 +828,7 @@ def test_license_dialog_activate_error(qapp, tmp_path, monkeypatch):
 
 
 def test_license_dialog_activate_empty_key(qapp, tmp_path, monkeypatch):
-    import desktop.license_dialog as ld
+    import desktop_browser.license_dialog as ld
 
     called = {"activate": False}
     monkeypatch.setattr(
@@ -839,7 +842,7 @@ def test_license_dialog_activate_empty_key(qapp, tmp_path, monkeypatch):
 
 
 def test_license_dialog_deactivate(qapp, tmp_path, monkeypatch):
-    import desktop.license_dialog as ld
+    import desktop_browser.license_dialog as ld
 
     lic = _pro_license()
     state = {"active": lic}
@@ -863,7 +866,7 @@ def test_license_dialog_deactivate(qapp, tmp_path, monkeypatch):
 
 
 def test_window_license_badge_free(qapp, tmp_path, monkeypatch):
-    import desktop.app as app_module
+    import desktop_browser.app as app_module
 
     monkeypatch.setattr(app_module, "load_activation", lambda: None)
     window = _window(qapp, tmp_path)
@@ -872,7 +875,7 @@ def test_window_license_badge_free(qapp, tmp_path, monkeypatch):
 
 
 def test_window_license_badge_pro_and_refresh(qapp, tmp_path, monkeypatch):
-    import desktop.app as app_module
+    import desktop_browser.app as app_module
 
     state = {"lic": _pro_license()}
     monkeypatch.setattr(app_module, "load_activation", lambda: state["lic"])

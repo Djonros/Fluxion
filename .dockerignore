@@ -13,7 +13,6 @@ finetune/
 data_pipeline/
 extension/
 scripts/
-reference/
 tests/
 cli/
 docs/

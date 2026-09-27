@@ -1,0 +1,23 @@
+# Files and folders removed from the project. fluxion-update.bat deletes them
+# from an installed copy after copying the new files (they stay in the backup,
+# so --rollback brings them back). One path per line, relative to the project
+# root. config, data, models, .git and virtual environments are never touched.
+
+# 2026-09: unrelated tutorial code (seq2seq/LSTM), not used by the product
+reference
+
+# 2026-09: legacy desktop app (the exe is built from desktop_browser)
+desktop
+run_desktop.py
+fluxion-desktop.spec
+tests/test_desktop.py
+# superseded build / tools
+fluxion-desktop-browser.spec
+fluxion-license.bat
+fluxion-deploy.bat
+fluxion-web.bat
+scripts/export_training_package.py
+# moved to docs/internal/
+DOGFOOD-18-8.md
+VIDEO_SCRIPT.md
+ROADMAP.md

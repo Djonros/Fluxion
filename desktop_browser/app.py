@@ -752,11 +752,7 @@ class IndexWorker(QThread):
 
 
 class ModelListWorker(QThread):
-    """Fetches available models without blocking the UI thread.
-
-    Ollama first; when the engine has no Ollama client (llama.cpp build),
-    lists installed chat GGUF models instead.
-    """
+    """Fetches available Ollama models without blocking the UI thread."""
 
     done = Signal(list)
     failed = Signal(str)
@@ -768,11 +764,7 @@ class ModelListWorker(QThread):
     def run(self) -> None:
         client = getattr(self.backend, "client", None)
         if client is None or not hasattr(client, "list_models"):
-            ggufs = self._installed_ggufs()
-            if ggufs:
-                self.done.emit(ggufs)
-            else:
-                self.failed.emit("Нет установленных GGUF-моделей")
+            self.failed.emit("Смена моделей доступна только для Ollama-движка")
             return
         try:
             models = list(client.list_models())
@@ -780,39 +772,6 @@ class ModelListWorker(QThread):
             self.failed.emit(f"Не удалось получить список моделей: {exc}")
             return
         self.done.emit(models)
-
-    def _installed_ggufs(self) -> list:
-        try:
-            from core.model_manager import ModelManager
-
-            installed = ModelManager().list_installed()
-        except Exception:
-            return []
-        return [
-            model.filename
-            for model in installed
-            if getattr(model, "task", "") == "chat"
-        ]
-
-
-class ModelSwitchWorker(QThread):
-    """Hot-swaps the llama.cpp GGUF model without freezing the UI."""
-
-    done = Signal(str)
-    failed = Signal(str)
-
-    def __init__(self, backend, model_path: str, parent=None):
-        super().__init__(parent)
-        self.backend = backend
-        self.model_path = model_path
-
-    def run(self) -> None:
-        try:
-            self.backend.switch_model(self.model_path)
-        except Exception as exc:
-            self.failed.emit(str(exc))
-            return
-        self.done.emit(self.model_path)
 
 
 class TrainingWorker(QThread):
@@ -910,12 +869,10 @@ class FluxionWindow(QMainWindow):
         self.agent_worker: AgentWorker | None = None
         self.index_worker: IndexWorker | None = None
         self._model_worker: ModelListWorker | None = None
-        self._switch_worker: ModelSwitchWorker | None = None
         self._health_worker: HealthWorker | None = None
         self.training_worker: TrainingWorker | None = None
         self.env_worker: EnvWorker | None = None
         self._applying_model = False
-        self._model_switching = False
         self.generating = False
         self.agent_running = False
         self.indexing = False
@@ -938,7 +895,7 @@ class FluxionWindow(QMainWindow):
         self.setWindowTitle("Fluxion")
         self.setMinimumSize(920, 620)
         self.resize(1120, 760)
-        self.setWindowIcon(QIcon(str(APP_ROOT / "assets" / "icon.png")))
+        self.setWindowIcon(QIcon(str(APP_ROOT / "assets" / "icon-256.png")))
         self._build_ui()
         self.apply_theme(self.theme)
         self._restore_memory()
@@ -1612,7 +1569,7 @@ class FluxionWindow(QMainWindow):
         if not path or self.indexing:
             return
         if self.rag_service is None:
-            self.project_view.setHtml("<p>Движок не подключён. Запустите приложение через python -m desktop.</p>")
+            self.project_view.setHtml("<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>")
             return
 
         self.indexing = True
@@ -1856,7 +1813,7 @@ class FluxionWindow(QMainWindow):
             return
         if self.agent_factory is None:
             self.agent_view.setHtml(
-                "<p>Движок не подключён. Запустите приложение через python -m desktop.</p>"
+                "<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>"
             )
             return
 
@@ -1903,12 +1860,14 @@ class FluxionWindow(QMainWindow):
             parts.append(
                 f"<p style=\"color:#94A3B8; margin-left:24px;\"><i>{html.escape(thought[:500])}</i></p>"
             )
+        from orchestrator.presentation import format_tool, render_chat_html
+
         tool = getattr(step, "tool_name", "")
-        if tool:
-            args = html.escape(getattr(step, "tool_args", "") or "")
+        args = getattr(step, "tool_args", "") or ""
+        tool_text = format_tool(step) if tool else ""
+        if tool_text:
             parts.append(
-                f"<p style=\"margin-left:24px;\"><span style=\"color:#00E5FF;\">→</span> "
-                f"<code>{html.escape(tool)} {args}</code></p>"
+                f"<div style=\"margin-left:24px; color:#00E5FF;\">{render_chat_html(tool_text)}</div>"
             )
         if tool == "web_search" and args:
             self._show_web_results(getattr(step, "tool_args", "") or "")
@@ -1932,8 +1891,10 @@ class FluxionWindow(QMainWindow):
         )
         answer = result.get("final_answer") or ""
         if answer:
+            from orchestrator.presentation import render_chat_html
+
             self._agent_log(
-                f"<div style=\"margin-left:24px; white-space:pre-wrap;\"><b>Ответ:</b><br>{linkify(answer)}</div>"
+                f"<div style=\"margin-left:24px;\"><b>Ответ:</b><br>{render_chat_html(answer)}</div>"
             )
         verification = result.get("verification", "")
         labels = {
@@ -2498,7 +2459,7 @@ class FluxionWindow(QMainWindow):
             return
         if self.settings is None:
             self.training_view.setHtml(
-                "<p>Движок не подключён. Запустите приложение через python -m desktop.</p>"
+                "<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>"
             )
             return
         dataset = self.training_dataset.text().strip()
@@ -2619,13 +2580,13 @@ class FluxionWindow(QMainWindow):
         self.model_combo.blockSignals(False)
         self._applying_model = False
         self.model_combo.setEnabled(True)
-        self.model_combo.setToolTip("Модель для чата и агента")
+        self.model_combo.setToolTip("Модель Ollama для чата и агента")
 
     def _on_models_failed(self, message: str) -> None:
         self._show_models_unavailable(message)
 
     def _on_model_selected(self, name: str) -> None:
-        if self.generating or self.agent_running or self._model_switching:
+        if self.generating or self.agent_running:
             self._applying_model = True
             self.model_combo.blockSignals(True)
             self.model_combo.setCurrentText(getattr(self.settings, "model", ""))
@@ -2633,13 +2594,6 @@ class FluxionWindow(QMainWindow):
             self._applying_model = False
             return
         if not name or self.settings is None or getattr(self.settings, "model", "") == name:
-            return
-        if self._is_llama_backend():
-            path = self._resolve_gguf_path(name)
-            if not path:
-                self._show_models_unavailable(f"GGUF-файл не найден: {name}")
-                return
-            self._start_model_switch(name, path)
             return
         self.settings.model = name
         client = getattr(self.backend, "client", None)
@@ -2652,64 +2606,6 @@ class FluxionWindow(QMainWindow):
         self._applying_model = False
         self.qsettings.setValue("model", name)
         self._start_status_check()
-
-    def _is_llama_backend(self) -> bool:
-        from core.llama_cpp_backend import LlamaCppBackend
-
-        return isinstance(self.backend, LlamaCppBackend)
-
-    def _resolve_gguf_path(self, name: str) -> str:
-        try:
-            from core.model_manager import ModelManager
-
-            for model in ModelManager().list_installed():
-                if model.filename == name and getattr(model, "task", "") == "chat":
-                    return str(model.path)
-        except Exception:
-            return ""
-        return ""
-
-    def _start_model_switch(self, name: str, path: str) -> None:
-        self._model_switching = True
-        self.settings.model = name
-        self.model_combo.setEnabled(False)
-        self.model_combo.setToolTip(f"Загрузка модели {name}…")
-        self._switch_worker = ModelSwitchWorker(self.backend, path)
-        self._switch_worker.done.connect(self._on_model_switched)
-        self._switch_worker.failed.connect(self._on_model_switch_failed)
-        self._switch_worker.finished.connect(self._on_switch_worker_finished)
-        self._switch_worker.start()
-
-    def _on_switch_worker_finished(self) -> None:
-        worker, self._switch_worker = self._switch_worker, None
-        if worker is not None:
-            worker.deleteLater()
-
-    def _on_model_switched(self, path: str) -> None:
-        self._model_switching = False
-        name = getattr(self.settings, "model", "")
-        self._applying_model = True
-        self.model_combo.blockSignals(True)
-        self.model_combo.setCurrentText(name)
-        self.model_combo.blockSignals(False)
-        self._applying_model = False
-        self.model_combo.setEnabled(True)
-        self.model_combo.setToolTip("Модель для чата и агента")
-        self.qsettings.setValue("model", name)
-        self._append_banner(f"Модель переключена: {name}")
-        self._start_status_check()
-
-    def _on_model_switch_failed(self, message: str) -> None:
-        self._model_switching = False
-        old_path = str(getattr(self.backend, "model_path", "") or "")
-        if old_path:
-            from pathlib import Path
-
-            self.settings.model = Path(old_path).name
-        self.model_combo.setEnabled(True)
-        self.model_combo.setToolTip("Модель для чата и агента")
-        self._append_banner(f"Не удалось переключить модель: {message}")
-        self._load_models()
 
     # ── engine status ────────────────────────────────────────────────────
 
@@ -2777,10 +2673,10 @@ class FluxionWindow(QMainWindow):
 
     def send_message(self) -> None:
         text = self.prompt.text().strip()
-        if not text or self.generating or self.agent_running or self._model_switching:
+        if not text or self.generating or self.agent_running:
             return
         if self.assistant is None:
-            self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop.")
+            self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
             return
         self.prompt.clear()
         if self.chat_agent_files.isChecked() and self.agent_factory is not None:
@@ -2816,7 +2712,7 @@ class FluxionWindow(QMainWindow):
         if checked:
             if self.agent_factory is None:
                 self.chat_agent_files.setChecked(False)
-                self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop.")
+                self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
                 return
             self.prompt.setPlaceholderText("Задача для агента: например, прочитай main.py и исправь баг...")
         else:
@@ -2849,20 +2745,19 @@ class FluxionWindow(QMainWindow):
         if not self._messages:
             return
         self._stop_thinking()
-        parts = []
-        thought = getattr(step, "thought", "")
-        if thought:
-            parts.append(thought[:300])
+        from orchestrator.presentation import format_agent_step
+
         tool = getattr(step, "tool_name", "")
-        if tool:
-            args = getattr(step, "tool_args", "") or ""
-            parts.append(f"→ {tool} {args}".rstrip())
-            if tool == "web_search" and args:
-                self._show_web_results(args)
-                self._maybe_show_fetch_notice()
-        if parts:
+        args = getattr(step, "tool_args", "") or ""
+        if tool == "web_search" and args:
+            self._show_web_results(args)
+            self._maybe_show_fetch_notice()
+        # finish is not shown here: its text is the final answer, added once
+        # in _on_chat_agent_done (it used to appear twice).
+        text = format_agent_step(step)
+        if text:
             entry = self._messages[-1]
-            entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + "\n".join(parts)
+            entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + text
             self._render_messages()
 
     def _on_chat_agent_done(self, result: dict) -> None:
@@ -2874,6 +2769,8 @@ class FluxionWindow(QMainWindow):
             fragments.append("(остановлено пользователем)")
         answer = result.get("final_answer") or ""
         if answer:
+            if fragments:
+                fragments.append("")  # blank line between the steps and the answer
             fragments.append(answer)
             self.history.append({"role": "assistant", "content": answer})
         entry["text"] = "\n".join(fragments) or "(пустой ответ)"
@@ -3005,8 +2902,10 @@ class FluxionWindow(QMainWindow):
                     spinner = "◐◓◑◒"[self._think_frame % 4]
                     parts.append(f"<p><i>{spinner} Думаю…</i></p>")
                     continue
-                body = linkify(entry["text"]).replace("\n", "<br>") or "…"
-                parts.append(f"<p>{body}</p>")
+                from orchestrator.presentation import render_chat_html
+
+                body = render_chat_html(entry["text"]) or "…"
+                parts.append(f"<div>{body}</div>")
             self.messages.setHtml("".join(parts))
         scrollbar = self.messages.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
@@ -3281,12 +3180,7 @@ def main() -> int:
         try:
             assistant, backend, settings, rag_service, web_search = build_engine()
 
-            web_cfg = getattr(settings, "web", None)
-            if (
-                web_search is not None
-                and getattr(web_cfg, "searxng_autostart", True)
-                and os.environ.get("FLUXION_DESKTOP_SMOKE") != "1"
-            ):
+            if web_search is not None and os.environ.get("FLUXION_DESKTOP_SMOKE") != "1":
                 from threading import Thread
 
                 from .searxng import ensure_searxng

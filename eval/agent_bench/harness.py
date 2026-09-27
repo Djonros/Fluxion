@@ -131,24 +131,53 @@ def make_agent(mode: str, backend, root: Path, task: Task, max_iter: int):
     return CodingAgent(**common, action_format=mode)
 
 
-def run_one(task: Task, mode: str, backend, max_iter: int, keep: bool = False) -> dict:
+def run_one(
+    task: Task,
+    mode: str,
+    backend,
+    max_iter: int,
+    keep: bool = False,
+    timeout: float | None = None,
+    progress=None,
+) -> dict:
+    """Run *task* once.  *timeout* (seconds) is checked after every agent
+    step — a model call in progress cannot be interrupted, but each call is
+    bounded by max_tokens.  *progress(step, elapsed)* is called per step."""
     root = Path(tempfile.mkdtemp(prefix=f"fxbench-{task.id}-"))
     materialize(task.files, root)
     record: dict = {"task": task.id, "category": task.category, "mode": mode}
     started = time.perf_counter()
+    steps: list = []
+    answer = ""
+    timed_out = False
     try:
         agent = make_agent(mode, backend, root, task, max_iter)
-        result = agent.run(task.prompt)
-        steps = result.steps
-        answer = result.final_answer if result.success else ""
+        gen = agent.run_iter(task.prompt)
+        result = None
+        while True:
+            try:
+                step = next(gen)
+            except StopIteration as stop:
+                result = stop.value
+                break
+            steps.append(step)
+            elapsed = time.perf_counter() - started
+            if progress is not None:
+                progress(step, elapsed)
+            if timeout and elapsed > timeout and not step.is_final:
+                timed_out = True
+                gen.close()
+                break
+        if result is not None and result.success:
+            answer = result.final_answer
         record.update(
-            agent_success=bool(result.success),
-            verification=getattr(result, "verification", ""),
+            agent_success=bool(result is not None and result.success),
+            verification=getattr(result, "verification", "") if result is not None else "",
             final_format=getattr(agent, "action_format", "text"),
+            timed_out=timed_out,
         )
     except Exception as exc:  # a crash is a failed task, not a failed benchmark
-        steps, answer = [], ""
-        record.update(agent_success=False, error=f"{type(exc).__name__}: {exc}")
+        record.update(agent_success=False, error=f"{type(exc).__name__}: {exc}", timed_out=False)
     record["seconds"] = round(time.perf_counter() - started, 1)
 
     tool_steps = [s for s in steps if s.tool_name and s.tool_name != "finish"]
@@ -163,9 +192,11 @@ def run_one(task: Task, mode: str, backend, max_iter: int, keep: bool = False) -
         tools=[s.tool_name for s in tool_steps],
     )
     outcomes = run_checks(task, root, answer, len(tool_steps))
-    record["passed"] = all(o.ok for o in outcomes)
+    record["passed"] = all(o.ok for o in outcomes) and not timed_out
     record["failed_checks"] = [o.detail or task.checks[i]["type"]
                                for i, o in enumerate(outcomes) if not o.ok]
+    if timed_out:
+        record["failed_checks"].insert(0, f"timeout after {record['seconds']:.0f}s")
     record["answer"] = (answer or "")[:400]
     if keep:
         record["workdir"] = str(root)
@@ -222,8 +253,8 @@ def build_report(records: list[dict], meta: dict | None = None) -> str:
     lines += [
         f"Tasks: {n_tasks}. Runs: {len(records)}. A task counts as solved when all its checks pass.",
         "",
-        "| Mode | Solved | Avg steps | Median time, s | Tool errors / run | Format errors / run | Repeat blocks / run | Crashes |",
-        "|------|--------|-----------|----------------|-------------------|---------------------|---------------------|---------|",
+        "| Mode | Solved | Avg steps | Median time, s | Tool errors / run | Format errors / run | Repeat blocks / run | Crashes | Timeouts |",
+        "|------|--------|-----------|----------------|-------------------|---------------------|---------------------|---------|----------|",
     ]
     for m in modes:
         rs = by_mode[m]
@@ -235,7 +266,8 @@ def build_report(records: list[dict], meta: dict | None = None) -> str:
             f"| {statistics.mean(r['tool_errors'] for r in rs):.2f} "
             f"| {statistics.mean(r['no_action'] for r in rs):.2f} "
             f"| {statistics.mean(r['repeats'] for r in rs):.2f} "
-            f"| {sum(1 for r in rs if r.get('error') or r.get('backend_error'))} |"
+            f"| {sum(1 for r in rs if r.get('error') or r.get('backend_error'))} "
+            f"| {sum(1 for r in rs if r.get('timed_out'))} |"
         )
     fallback = [r for r in by_mode.get("json", []) if r.get("final_format") == "text"]
     if fallback:
@@ -322,6 +354,9 @@ def main(argv: list[str] | None = None, backend=None) -> int:
     ap.add_argument("--category", default="", help="qa,chat,create,fix,refactor,safety")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--max-iter", type=int, default=15)
+    ap.add_argument("--task-timeout", type=float, default=900,
+                    help="seconds per task, checked after each step (0 = no limit); "
+                         "a timed-out task counts as failed")
     ap.add_argument("--config", default=None, help="config.yaml (default: AI_AGENT_CONFIG or config/config.yaml)")
     ap.add_argument("--out", default=None, help="results dir (reuse to resume)")
     ap.add_argument("--keep", action="store_true", help="keep task work dirs for inspection")
@@ -394,6 +429,7 @@ def main(argv: list[str] | None = None, backend=None) -> int:
     else:
         meta = {"backend": type(backend).__name__}
     meta.update(modes=modes, repeats=args.repeats, max_iter=args.max_iter,
+                task_timeout=args.task_timeout,
                 started=time.strftime("%Y-%m-%d %H:%M"))
     meta_path = out / "meta.json"
     if not meta_path.exists():
@@ -409,14 +445,16 @@ def main(argv: list[str] | None = None, backend=None) -> int:
     durations: list[float] = []
     with (out / "results.jsonl").open("a", encoding="utf-8") as fh:
         for i, (task, mode, rep) in enumerate(plan, 1):
-            rec = run_one(task, mode, backend, args.max_iter, keep=args.keep)
+            print(f"[{i}/{total}] {task.id} · {mode} ...", flush=True)
+            rec = run_one(task, mode, backend, args.max_iter, keep=args.keep,
+                          timeout=args.task_timeout or None, progress=_print_step)
             rec["repeat"] = rep
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             fh.flush()
             durations.append(rec["seconds"])
             eta = statistics.mean(durations) * (total - i) / 60
             mark = "✓" if rec["passed"] else "✗"
-            print(f"[{i}/{total}] {mark} {task.id:26} {mode:8} {rec['steps']:2} steps "
+            print(f"        {mark} {task.id:26} {mode:8} {rec['steps']:2} steps "
                   f"{rec['seconds']:6.1f}s  ETA {eta:5.1f} min"
                   + ("" if rec["passed"] else f"  ({'; '.join(rec['failed_checks'])[:80]})"))
 
@@ -425,6 +463,14 @@ def main(argv: list[str] | None = None, backend=None) -> int:
     print("\n" + report.split("## By category")[0])
     print(f"Full report: {out / 'report.md'}")
     return 0
+
+
+def _print_step(step, elapsed: float) -> None:
+    """One line per agent step, so a long task visibly makes progress."""
+    what = step.tool_name or ("ответ" if step.is_final else "без действия")
+    if step.is_final:
+        what = "finish"
+    print(f"        шаг {step.iteration:2}: {what:<12} {elapsed:6.0f}s", flush=True)
 
 
 def _load_meta(out: Path) -> dict | None:

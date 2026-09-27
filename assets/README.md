@@ -13,3 +13,4 @@
 - `docs/assets/images/banner.png` — 1000px, hero docs-сайта
 - `extension/media/icon.png` — 256×256, иконка VS Code extension
 - `extension/media/sidebar-icon.svg` — старая монохромная иконка сайдбара
+- `icon-256.png` — квадратный 256×256 (из `icon.ico`), значок окна; единственный файл из `assets`, который попадает в exe

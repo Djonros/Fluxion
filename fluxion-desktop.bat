@@ -1,25 +1,29 @@
 @echo off
 chcp 65001 >nul 2>&1
-title Fluxion Desktop
+setlocal EnableExtensions
+title Fluxion
 cd /d "%~dp0"
 
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python not found. Run fluxion-deploy.bat first.
-    pause
-    exit /b 1
-)
+:: Запуск приложения Fluxion из исходников (то же, что FluxionBrowserLite.exe).
+set "PY="
+if exist ".venv\Scripts\python.exe" set "PY=%~dp0.venv\Scripts\python.exe"
+if not defined PY if exist "venv\Scripts\python.exe" set "PY=%~dp0venv\Scripts\python.exe"
+if not defined PY set "PY=python"
+"%PY%" --version >nul 2>&1
+if errorlevel 1 goto :no_python
+"%PY%" -c "import PySide6" >nul 2>&1
+if errorlevel 1 goto :no_deps
 
-python -c "import PySide6" >nul 2>&1
-if errorlevel 1 (
-    echo Installing desktop dependencies...
-    python -m pip install "PySide6>=6.10"
-    if errorlevel 1 (
-        echo [ERROR] Failed to install PySide6.
-        pause
-        exit /b 1
-    )
-)
-
-python -m desktop
+"%PY%" -m desktop_browser
 if errorlevel 1 pause
+exit /b 0
+
+:no_deps
+echo [ОШИБКА] Зависимости не установлены. Сначала запустите fluxion-setup.bat.
+pause
+exit /b 1
+
+:no_python
+echo [ОШИБКА] Python не найден. Сначала запустите fluxion-setup.bat.
+pause
+exit /b 1

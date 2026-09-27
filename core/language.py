@@ -41,8 +41,13 @@ def detect_language(text):
     return None
 
 
+_DISABLED = ("off", "none", "false", "0")
+
+
 def resolve_target(setting, user_text):
     setting = (setting or "auto").strip().lower()
+    if setting in _DISABLED:
+        return None  # language handling switched off
     if setting in DIRECTIVES:
         return setting
     lowered = (user_text or "").lower()

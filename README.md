@@ -44,8 +44,8 @@ Fluxion — это полностью локальный AI-ассистент �
 - **RAG по коду** — AST-aware чанкинг (tree-sitter), эмбеддинги bge-m3 (GGUF), ChromaDB
 - **Умная маршрутизация** — rule-based Router: DIRECT / RAG / WEB / RAG_THEN_WEB
 - **Веб-поиск** — SearXNG в Docker + trafilatura для чистого текста + SQLite кэш
-- **ReAct-агент** — 10 инструментов: `read_file`, `write_file`, `edit_file`, `grep`, `run_tests`, `web_search`, `git_status`, `git_diff`, `git_commit`, `finish`
-- **Git integration** — auto-checkpoint (git stash) перед записью, rollback, commit из агента
+- **ReAct-агент** — 12 инструментов: `list_files`, `read_file` (по диапазонам строк), `grep`, `search_code` (поиск по смыслу через RAG), `write_file`, `edit_file`, `run_tests`, `web_search`, `git_status`, `git_diff`, `git_commit`, `finish`. Со встроенным llama.cpp и Ollama действия модели проверяются JSON-схемой — маленькая модель не может выдать неверный формат. Правки проверяются тестами до завершения
+- **Git integration** — снимок рабочей папки перед первой правкой (ваши незакоммиченные изменения не трогаются), откат `/rollback`, коммит только изменённых агентом файлов
 - **FastAPI сервер** — REST API: `/api/chat` (streaming SSE), `/api/agent/run`, `/api/rag/index`, `/api/health`
 - **VS Code extension** — чат-сайдбар, agent mode, индексация проекта
 - **QLoRA-дообучение** — unsloth (6 ГБ) или HF peft+trl (8-12 ГБ), экспорт в GGUF для Ollama
@@ -66,25 +66,28 @@ Fluxion — это полностью локальный AI-ассистент �
 
 | Батник | Что делает |
 |--------|-----------|
-| **`fluxion-deploy.bat`** | Полное развертывание из исходников: Python, зависимости, модель. Интерактивное меню: CLI / сервер / оба / тесты. |
-| **`fluxion.bat`** | Запуск CLI REPL (чат, RAG, агент) |
-| **`fluxion-desktop.bat`** | Запуск desktop-приложения (PySide6 GUI: чат, темы) |
-| **`fluxion-server.bat`** | Запуск FastAPI сервера на `:8765` |
-| **`fluxion-web.bat`** | Установка и запуск SearXNG в Docker (веб-поиск) |
-| **`fluxion-vscode.bat`** | Установка VS Code extension |
-| **`fluxion-setup.bat`** | Базовая установка зависимостей + модели (облегчённый deploy) |
+| **`fluxion-setup.bat`** | Установка из исходников: виртуальное окружение, зависимости, встроенный движок llama.cpp, по желанию — сервер. Запускается один раз, повторный запуск пропускает установленное |
+| **`fluxion-desktop.bat`** | Запуск приложения (то же, что `FluxionBrowserLite.exe`): чат, агент, RAG, веб-поиск, модели |
+| `fluxion.bat` | CLI в терминале (чат, RAG, агент) |
+| `fluxion-server.bat` | API-сервер на `127.0.0.1:8765` для расширения VS Code |
+| `fluxion-vscode.bat` | Установка расширения VS Code |
+| `fluxion-test.bat` | Тесты по группам и проверка агента на вашей модели |
+| `fluxion-update.bat` | Обновление из архива с резервной копией, откатом и пересборкой exe |
+| `fluxion-release.bat` | Выпуск новой версии на GitHub: тесты, коммит, тег, релиз со сборками (для владельца) |
+| `issue-key.bat` | Выпуск лицензионных ключей (для владельца) |
 
 ```
 Первый запуск:
-  1. fluxion-deploy.bat     → выберите режим в меню
-  2. fluxion-web.bat        → (опц.) веб-поиск через SearXNG
-  3. fluxion-vscode.bat     → (опц.) VS Code extension
+  1. fluxion-setup.bat      → установка
+  2. fluxion-desktop.bat    → программа; модель — страница «Модели»
 
-Повседневный запуск:
+Дополнительно:
+  fluxion-vscode.bat + fluxion-server.bat → расширение VS Code
   fluxion.bat               → CLI
-  fluxion-desktop.bat       → desktop-приложение (GUI)
-  fluxion-server.bat        → API сервер для extension
 ```
+
+Веб-поиск (SearXNG в Docker) программа запускает сама, если установлен
+Docker Desktop. Для CLI и сервера: `powershell -File scripts\setup_searxng.ps1`.
 
 ### Установка (ручная — любая ОС)
 
@@ -110,8 +113,8 @@ python -m uvicorn server.app:create_app --factory --port 8765
 
 ```
 1. Вставить флешку
-2. Запустить fluxion-deploy.bat (установит Python-зависимости и модель)
-3. Запустить fluxion.bat
+2. Запустить fluxion-setup.bat (установит зависимости и движок)
+3. Запустить fluxion-desktop.bat
 ```
 
 Конфиги используют относительные пути — хардкод путей отсутствует.
@@ -298,8 +301,10 @@ fluxion/
 ├── licensing/         # Ed25519-лицензии: issue/verify/store + Pro feature gates
 ├── cli/               # REPL, команды, рендеринг (prompt_toolkit + rich)
 ├── config/            # config.yaml, .env, repos.yaml, continue_config.json
-├── scripts/           # setup_searxng.ps1
-├── tests/            # 765 тестов (Phases 1-18 + server)
+├── desktop_browser/   # Десктоп-приложение (PySide6): чат, агент, браузер, модели, обучение
+├── scripts/           # Сборка exe, установка llama.cpp, SearXNG
+├── tests/             # pytest; запуск по группам — fluxion-test.bat
+├── docs/              # Документация (mkdocs); docs/internal — внутренние заметки
 ├── requirements.txt   # Инференс/RAG/веб/CLI
 └── requirements-train.txt  # Обучение (Python 3.11/3.12)
 ```
@@ -307,10 +312,13 @@ fluxion/
 ## Тесты
 
 ```bash
-python -m pytest tests/ -v
+python -m pytest tests/ -q
 ```
 
-765 тестов (Phases 1-18 + server): 752 passed, 13 skipped.
+На Windows удобнее `fluxion-test.bat`: тесты по группам (агент, ядро, сервер,
+десктоп, лицензии, обучение) со сводкой; группа пропускается, если не установлены
+её пакеты. Там же — проверка агента на вашей модели (бенчмарк из 36 задач,
+`eval/agent_bench`). CI прогоняет тесты на Ubuntu и Windows, Python 3.11–3.13.
 
 ## Continue.dev интеграция
 

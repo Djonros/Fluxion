@@ -91,3 +91,48 @@ def test_report_flags_differences():
     report = build_report(recs)
     assert "only json: 1 ['a']" in report
     assert "fell back to text" in report
+
+
+class SlowWanderingBackend:
+    """Never finishes: keeps listing files, 0.1 s per call."""
+
+    def generate(self, messages, gen=None):
+        import time
+
+        time.sleep(0.1)
+        turn = sum(1 for m in messages if m["role"] == "assistant")
+        return f"Thought: look\nAction: grep pattern{turn}"
+
+    def stream(self, messages, gen=None):
+        yield ""
+
+    def is_available(self):
+        return True
+
+
+@pytest.mark.parametrize("mode", ["baseline", "text"])
+def test_task_timeout_stops_and_fails(mode):
+    task = next(t for t in TASKS if t.id == "qa-where-defined")
+    seen = []
+    rec = run_one(task, mode, SlowWanderingBackend(), max_iter=15, timeout=0.35,
+                  progress=lambda step, elapsed: seen.append(step.iteration))
+    assert rec["timed_out"] is True
+    assert rec["passed"] is False
+    assert rec["failed_checks"][0].startswith("timeout")
+    assert 3 <= rec["steps"] < 15            # stopped early, after the limit
+    assert seen == list(range(1, rec["steps"] + 1))   # progress on every step
+
+
+def test_no_timeout_keeps_previous_behaviour():
+    task = next(t for t in TASKS if t.id == "create-calc")
+    rec = run_one(task, "json", OracleBackend(TASKS), max_iter=15, timeout=None)
+    assert rec["passed"] and rec["timed_out"] is False
+
+
+def test_report_counts_timeouts():
+    recs = [{"task": "a", "category": "qa", "mode": "baseline", "passed": False, "steps": 5,
+             "seconds": 901, "tool_errors": 0, "no_action": 0, "repeats": 0, "timed_out": True,
+             "failed_checks": ["timeout after 901s"], "tools": []}]
+    report = build_report(recs)
+    assert "| Timeouts |" in report
+    assert report.splitlines()[[i for i, l in enumerate(report.splitlines()) if l.startswith("| baseline")][0]].rstrip().endswith("| 1 |")

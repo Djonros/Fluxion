@@ -2,7 +2,7 @@
   "name": "fluxion",
   "displayName": "Fluxion",
   "description": "Local AI coding assistant — RAG, web search, ReAct agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "djonros",
   "license": "Apache-2.0",
   "engines": {
@@ -11,7 +11,7 @@
   "categories": ["Other", "Machine Learning", "Programming Languages"],
   "icon": "media/icon.png",
   "activationEvents": ["onStartupFinished"],
-  "main": "./out/extension.js",
+  "main": "./src/extension.js",
   "contributes": {
     "commands": [
       {

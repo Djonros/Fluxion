@@ -75,3 +75,22 @@ python -m eval.runner --benchmark custom --tasks-path eval/tasks.sample.json
 (`eval/runner.py: run_code_safely`). Пример файла: `eval/tasks.sample.json`.
 Harness-smoke (парсер + прогон канонических решений без модели) гоняется в CI
 (`tests/test_eval_custom.py`).
+
+## Бенчмарк агента
+
+`eval.runner` меряет генерацию одной функции. Работу агента целиком — поиск по
+проекту, чтение, правки, запуск тестов — меряет `eval.agent_bench`: 36 задач
+(вопросы по коду, создание, исправление, рефакторинг, ответ без инструментов,
+«ничего не меняй») с автоматической проверкой после работы агента.
+
+```bash
+python -m eval.agent_bench --validate                  # проверить сами задачи, без модели
+python -m eval.agent_bench --limit 3 --modes json      # пробный прогон
+python -m eval.agent_bench --modes baseline,text,json --out results/agent_bench/full
+```
+
+Режимы: `baseline` — агент до исправлений 0.10.0, `text` — текущий агент с
+текстовым форматом действий, `json` — со структурированными вызовами. Модель
+берётся из `config/config.yaml`. Результат — `report.md` в папке `--out`: доля
+решённых задач, шаги, время, ошибки, сравнение режимов. Подробнее —
+`eval/agent_bench/README.md`. На Windows: `fluxion-test.bat`, пункты 4–6.

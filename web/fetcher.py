@@ -9,7 +9,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 10
-_DEFAULT_UA = "Mozilla/5.0 (compatible; VibeCoderBot/1.0)"
+_DEFAULT_UA = "Mozilla/5.0 (compatible; FluxionBot/1.0)"
 _MAX_CONTENT_CHARS = 8000
 
 

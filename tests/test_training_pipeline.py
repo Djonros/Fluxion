@@ -7,7 +7,22 @@ import httpx
 import pytest
 
 from core.ollama_client import OllamaClient
-from desktop.training import TrainingError, TrainingParams, _absolutize_from, run_pipeline
+from desktop_browser.training import TrainingError, TrainingParams, _absolutize_from, run_pipeline
+
+import os
+
+# Automatic Python installation uses winget and Windows install locations.
+windows_only = pytest.mark.skipif(os.name != "nt", reason="winget / Windows install dirs")
+
+
+@pytest.fixture(autouse=True)
+def _pro_license(monkeypatch):
+    """Training is a Pro feature; these tests exercise the pipeline, not the
+    gate, so they must not depend on a licence being activated on the machine
+    running them (CI has none).  test_pipeline_requires_pro overrides this."""
+    import licensing
+
+    monkeypatch.setattr(licensing, "ensure_pro", lambda feature: None)
 
 
 def _params(tmp_path, **kwargs):
@@ -50,7 +65,7 @@ def test_pipeline_missing_dataset(tmp_path):
 
 
 def test_pipeline_no_trainer(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.setattr(training, "_detect_trainer", lambda log, env=None: (None, "", None))
     with pytest.raises(TrainingError, match="Окружение обучения"):
@@ -61,7 +76,7 @@ def test_pipeline_no_trainer(tmp_path, monkeypatch):
 
 
 def test_pipeline_cancelled_before_merge(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     flag = {"stop": False}
 
@@ -84,7 +99,7 @@ def test_pipeline_cancelled_before_merge(tmp_path, monkeypatch):
 def test_pipeline_full_flow_registers_and_creates(tmp_path, monkeypatch):
     import finetune.export_gguf as export_mod
     import finetune.merge as merge_mod
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.chdir(tmp_path)
     llama_dir = tmp_path / "llama.cpp"
@@ -163,7 +178,7 @@ def test_absolutize_from_keeps_absolute(tmp_path):
 
 
 def test_env_python_path_windows(tmp_path):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     py = training.env_python_path(tmp_path / "venv")
     if training.os.name == "nt":
@@ -173,7 +188,7 @@ def test_env_python_path_windows(tmp_path):
 
 
 def test_detect_training_env_requires_marker(tmp_path):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     env_dir = tmp_path / "training_env"
     env_dir.mkdir()
@@ -189,7 +204,7 @@ def test_detect_training_env_requires_marker(tmp_path):
 
 
 def test_run_cmd_streams_output_and_success():
-    import desktop.training as training
+    import desktop_browser.training as training
 
     logs = []
     training._run_cmd(
@@ -201,7 +216,7 @@ def test_run_cmd_streams_output_and_success():
 
 
 def test_run_cmd_failure_raises(tmp_path):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     with pytest.raises(TrainingError, match="кодом 1"):
         training._run_cmd(
@@ -212,7 +227,7 @@ def test_run_cmd_failure_raises(tmp_path):
 
 
 def test_run_cmd_stop_terminates_process():
-    import desktop.training as training
+    import desktop_browser.training as training
 
     code = (
         "import time\n"
@@ -229,7 +244,7 @@ def test_run_cmd_stop_terminates_process():
 
 
 def test_install_training_environment_reports_missing_python(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.setattr(
         training, "find_host_python", lambda: (None, "нужен Python 3.11/3.12")
@@ -243,7 +258,7 @@ def test_install_training_environment_reports_missing_python(tmp_path, monkeypat
 
 
 def test_install_training_environment_runs_pip(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     commands = []
 
@@ -270,7 +285,7 @@ def test_install_training_environment_runs_pip(tmp_path, monkeypatch):
 
 
 def test_install_training_environment_autoinstalls_python(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     commands = []
 
@@ -299,7 +314,7 @@ def test_install_training_environment_autoinstalls_python(tmp_path, monkeypatch)
 
 
 def test_install_training_environment_skips_autoinstall_by_default(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     def fail_autoinstall(log, stop):
         raise AssertionError("autoinstall must not run when flag is off")
@@ -320,7 +335,7 @@ def test_install_training_environment_skips_autoinstall_by_default(tmp_path, mon
 
 
 def test_find_offline_wheels_detects_shipped_pack(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.delenv("FLUXION_OFFLINE_WHEELS", raising=False)
     assert training.find_offline_wheels(tmp_path) is None
@@ -331,7 +346,7 @@ def test_find_offline_wheels_detects_shipped_pack(tmp_path, monkeypatch):
 
 
 def test_find_offline_wheels_env_override(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     override = tmp_path / "custom_wheels"
     override.mkdir()
@@ -340,7 +355,7 @@ def test_find_offline_wheels_env_override(tmp_path, monkeypatch):
 
 
 def test_install_training_environment_offline_uses_local_pack(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     commands = []
 
@@ -378,7 +393,7 @@ def test_install_training_environment_offline_uses_local_pack(tmp_path, monkeypa
 
 
 def test_install_training_environment_offline_missing_pack(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.setattr(training, "find_host_python", lambda: ("py312", "ok"))
     with pytest.raises(TrainingError, match="Офлайн-пак"):
@@ -390,8 +405,9 @@ def test_install_training_environment_offline_missing_pack(tmp_path, monkeypatch
         )
 
 
+@windows_only
 def test_autoinstall_python_runs_winget(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     commands = []
 
@@ -415,8 +431,9 @@ def test_autoinstall_python_runs_winget(tmp_path, monkeypatch):
     ]
 
 
+@windows_only
 def test_autoinstall_python_requires_winget(monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.setattr(training, "_locate_windows_python", lambda: None)
     real_shutil = __import__("shutil")
@@ -429,8 +446,9 @@ def test_autoinstall_python_requires_winget(monkeypatch):
         training.autoinstall_python(log=lambda msg: None, stop_requested=lambda: False)
 
 
+@windows_only
 def test_autoinstall_python_fails_when_not_located(monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.setattr(training, "_run_cmd", lambda *a, **k: None)
     monkeypatch.setattr(training, "_locate_windows_python", lambda: None)
@@ -438,8 +456,9 @@ def test_autoinstall_python_fails_when_not_located(monkeypatch):
         training.autoinstall_python(log=lambda msg: None, stop_requested=lambda: False)
 
 
+@windows_only
 def test_locate_windows_python_scans_install_dirs(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     py = tmp_path / "Programs" / "Python" / "Python312" / "python.exe"
     py.parent.mkdir(parents=True)
@@ -456,7 +475,7 @@ def test_locate_windows_python_scans_install_dirs(tmp_path, monkeypatch):
 
 
 def test_pipeline_env_subprocess_flow(tmp_path, monkeypatch):
-    import desktop.training as training
+    import desktop_browser.training as training
 
     monkeypatch.chdir(tmp_path)
     llama_dir = tmp_path / "llama.cpp"
@@ -483,6 +502,8 @@ def test_pipeline_env_subprocess_flow(tmp_path, monkeypatch):
             )
         if extra_env:
             assert "finetune" in extra_env["PYTHONPATH"] or "site-packages" not in extra_env["PYTHONPATH"]
+            # the venv trainer must find the frozen app's licence activation
+            assert extra_env.get("FLUXION_LICENSE_FILE")
 
     monkeypatch.setattr(training, "_run_cmd", fake_run_cmd)
 
@@ -565,3 +586,30 @@ def test_ollama_client_create(monkeypatch):
     assert captured["json"]["model"] == "fluxion-test"
     assert captured["json"]["modelfile"] == "FROM /abs/model.gguf"
     assert captured["json"]["stream"] is True
+
+
+def test_install_training_environment_online_installs_each_once(tmp_path, monkeypatch):
+    """Regression: a merge leftover installed an unpinned torch and the ML
+    stack a second time online, and crashed the offline (Full) install."""
+    import desktop_browser.training as training
+
+    commands = []
+
+    def fake_run_cmd(cmd, log, stop_requested, extra_env=None):
+        commands.append([str(part) for part in cmd])
+        if "-m" in cmd and "venv" in cmd:
+            py = training.env_python_path(cmd[-1])
+            py.parent.mkdir(parents=True, exist_ok=True)
+            py.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(training, "_run_cmd", fake_run_cmd)
+    monkeypatch.setattr(training, "find_host_python", lambda: ("py312", "ok"))
+    training.install_training_environment(
+        tmp_path / "training_env", log=lambda m: None, stop_requested=lambda: False
+    )
+    torch_cmds = [c for c in commands if any(part.startswith("torch") for part in c[4:5])]
+    stack_cmds = [c for c in commands if "unsloth" in c]
+    assert len(torch_cmds) == 1, torch_cmds
+    assert torch_cmds[0][4] == training.TORCH_PIN          # pinned version, not bare "torch"
+    assert "--index-url" in torch_cmds[0]
+    assert len(stack_cmds) == 1, stack_cmds

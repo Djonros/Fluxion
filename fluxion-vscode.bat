@@ -1,64 +1,60 @@
 @echo off
 chcp 65001 >nul 2>&1
-title Fluxion — VS Code Extension
+setlocal EnableExtensions
+title Fluxion - расширение VS Code
 cd /d "%~dp0"
 
-echo ════════════════════════════════════════════════
-echo   Fluxion — VS Code Extension Install
-echo ════════════════════════════════════════════════
+:: Устанавливает расширение Fluxion в VS Code (копирует папку extension в
+:: %USERPROFILE%\.vscode\extensions\fluxion). Расширению нужен запущенный
+:: fluxion-server.bat.
+
+echo ============================================================
+echo    FLUXION - установка расширения VS Code
+echo ============================================================
 echo.
+if not exist "extension\package.json" goto :no_extension
 
-:: ── Check extension dir ────────────────────────────────────────
-if not exist "extension\package.json" (
-    echo [ERROR] Extension files not found in .\extension\
-    pause
-    exit /b 1
-)
-echo [OK] Extension found
-
-:: ── Check VS Code ──────────────────────────────────────────────
+set "EXT_DIR=%USERPROFILE%\.vscode\extensions\fluxion"
 where code >nul 2>&1
-if errorlevel 1 (
-    echo.
-    echo [!] VS Code CLI not found on PATH.
-    echo.
-    echo   Option A: Open VS Code manually and press F5 in the extension/ folder
-    echo           for Extension Development Host (debug mode).
-    echo.
-    echo   Option B: Add VS Code to PATH and re-run this script.
-    echo.
-    echo   Option C: Copy extension manually:
-    echo.
-    set /p choice="Copy to default extensions folder? (Y/N): "
-    /i "%choice%"=="Y" goto copy
-    pause
-    exit /b 0
-)
-
-:copy
-:: ── Copy to extensions folder ──────────────────────────────────
+if not errorlevel 1 goto :install
+echo [!] Команда code не найдена в PATH - это не мешает установке.
+echo     Расширение будет скопировано в папку расширений VS Code.
 echo.
-echo Installing to VS Code extensions folder...
-set EXT_DIR=%USERPROFILE%\.vscode\extensions\fluxion
+choice /c YN /m "Установить"
+if errorlevel 2 goto :cancelled
 
+:install
+echo Установка в %EXT_DIR% ...
 if exist "%EXT_DIR%" rmdir /s /q "%EXT_DIR%"
 mkdir "%EXT_DIR%" 2>nul
+xcopy /E /I /Q /Y "extension\*" "%EXT_DIR%\" >nul
+if errorlevel 1 goto :copy_failed
+if not exist "%EXT_DIR%\src\extension.js" goto :copy_failed
 
-xcopy /E /I /Q "extension\*" "%EXT_DIR%\" >nul
-if errorlevel 1 (
-    echo [ERROR] Failed to copy extension files.
-    pause
-    exit /b 1
-)
-
-echo [OK] Extension installed to %EXT_DIR%
 echo.
-echo ════════════════════════════════════════════════
-echo  Extension installed!
+echo ============================================================
+echo    Расширение установлено
+echo ============================================================
+echo    1. Перезапустите VS Code
+echo    2. Запустите сервер: fluxion-server.bat
+echo    3. В VS Code нажмите Ctrl+Shift+P и введите Fluxion
 echo.
-echo  1. Restart VS Code
-echo  2. Start Fluxion server: fluxion-server.bat
-echo  3. Press Ctrl+Shift+P in VS Code
-echo  4. Type "Fluxion" to see commands
-echo ════════════════════════════════════════════════
+echo    Отладка расширения: откройте папку extension в VS Code и нажмите F5.
+echo.
 pause
+exit /b 0
+
+:no_extension
+echo [ОШИБКА] Не найдена папка extension с файлом package.json.
+pause
+exit /b 1
+
+:copy_failed
+echo [ОШИБКА] Не удалось скопировать файлы расширения.
+pause
+exit /b 1
+
+:cancelled
+echo Отменено.
+pause
+exit /b 0

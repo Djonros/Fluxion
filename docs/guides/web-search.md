@@ -4,17 +4,15 @@ Fluxion использует SearXNG в Docker как метапоисковик
 
 ## Установка
 
-=== "Батник"
+Десктоп-приложение запускает SearXNG само, если установлен Docker Desktop.
+Для CLI и API-сервера:
 
-    ```bat
-    fluxion-web.bat
-    ```
+```powershell
+powershell -File scripts/setup_searxng.ps1
+```
 
-=== "PowerShell"
-
-    ```powershell
-    powershell -File scripts/setup_searxng.ps1
-    ```
+Скрипт создаёт контейнер `fluxion-searxng` с настройками, где включён
+JSON-формат ответов: без него SearXNG отвечает программе ошибкой 403.
 
 ## Проверка
 

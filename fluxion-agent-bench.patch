@@ -1,0 +1,2221 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 16cb31b..3ed5e62 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ 
+ ## [Unreleased]
+ 
++### Added — Agent benchmark
++- `eval/agent_bench/` — 36 realistic agent tasks (qa, chat, create, fix, refactor, safety) with automatic post-run checks, anti-cheat (tests must stay unchanged) and a mutation check for test writing. Modes: `baseline` (frozen pre-fix agent), `text`, `json`. Resumable runs, `report.md` with per-mode/category/task results and pairwise comparison. `--validate` proves each task is solvable and its checks reject the untouched fixture; `tests/test_agent_bench.py` runs an oracle through the real agent loop in all modes.
++
+ ### Fixed — Agent reliability (production-readiness review)
+ - Final answer was cut to its first line (`Action: finish` parsed without DOTALL); multi-line answers with code are now kept intact.
+ - Failed tools (e.g. failing `run_tests`) returned `Error: ` with no text — the model never saw the pytest output. Observations now include error + output (tail of pytest output preserved).
+diff --git a/eval/agent_bench/README.md b/eval/agent_bench/README.md
+new file mode 100644
+index 0000000..3b1f30f
+--- /dev/null
++++ b/eval/agent_bench/README.md
+@@ -0,0 +1,77 @@
++# Агентный бенчмарк Fluxion
++
++36 реалистичных задач для агента: вопросы по коду, создание модулей, исправление
++багов, рефакторинг, ответы без инструментов и проверка «ничего не менять».
++Каждая задача — маленький проект, запрос к агенту и автоматические проверки,
++которые запускаются **после** работы агента.
++
++| Категория | Задач | Что проверяется |
++|-----------|-------|-----------------|
++| qa | 10 | ответ содержит нужный факт (файл, значение, порт, версию); в т.ч. длинный файл, YAML, Dockerfile |
++| chat | 2 | ответ без вызова инструментов, на языке вопроса |
++| create | 8 | новый код проходит скрытые проверки; в т.ч. сценарий t3 из догфуда и тест с мутацией |
++| fix | 10 | баг исправлен, тесты проекта **не изменены**; в т.ч. CRLF-файл, длинный файл, JSON-конфиг |
++| refactor | 5 | новое поведение работает, старое не сломано |
++| safety | 1 | при просьбе «ничего не меняй» файлы не изменены |
++
++## Режимы
++
++- `baseline` — замороженная копия агента до исправлений (`baseline_agent.py`);
++- `text` — текущий агент, классический текстовый ReAct;
++- `json` — текущий агент, структурированные вызовы по JSON-схеме.
++
++Все режимы получают одну и ту же модель, лимит итераций (15), без RAG и
++веб-поиска, без git — чтобы сравнивался только агент.
++
++## Запуск
++
++Нужно окружение разработки (не exe) с llama-cpp-python или Ollama и **pytest**:
++агент запускает тесты проекта через него.
++
++```bash
++# 1. Проверить сами задачи (модель не нужна, секунды)
++python -m eval.agent_bench --validate
++
++# 2. Пробный прогон: 3 задачи, один режим (~2–3 минуты на CPU)
++python -m eval.agent_bench --limit 3 --modes json
++
++# 3. Полный замер
++python -m eval.agent_bench --modes baseline,text,json --repeats 3 --out results/agent_bench/full
++```
++
++Модель и бэкенд берутся из `config/config.yaml` (или `--config путь`), то есть
++замеряется ровно ваша настройка.
++
++**Время.** По логу догфуда шаг агента на CPU занимает ~8–9 с, задача — в среднем
++3–6 шагов. Один проход (36 задач × 3 режима) ≈ 1–1,5 часа, с `--repeats 3` —
++3–4 часа. Результаты пишутся после каждой задачи: если прервать (Ctrl+C) и
++запустить ту же команду с тем же `--out`, прогон продолжится с места остановки.
++
++## Результаты
++
++В папке `--out`:
++
++- `report.md` — сводка: доля решённых задач по режимам, среднее число шагов,
++  время, ошибки инструментов, ошибки формата, срабатывания защиты от повторов,
++  разбивка по категориям, попарное сравнение режимов и таблица по задачам;
++- `results.jsonl` — сырые данные по каждому прогону;
++- `meta.json` — модель, бэкенд и параметры генерации.
++
++Пересобрать отчёт без запуска модели: `python -m eval.agent_bench --report results/agent_bench/full`.
++
++`--keep` оставляет рабочие папки задач, чтобы посмотреть, что именно агент
++сделал с файлами (путь сохраняется в `results.jsonl`).
++
++## Как читать
++
++При 36 задачах разница в 2–3 задачи может быть случайной. Доверять стоит
++различиям, которые держатся на всех повторах и видны в попарном сравнении.
++Если в отчёте есть предупреждение, что json-режим откатился на text, значит
++бэкенд отклонил схему, и эти прогоны на самом деле измеряют текстовый формат.
++
++## Свои задачи
++
++Добавьте `Task` в `tasks.py`: фикстуру, запрос, проверки и эталонное решение.
++`--validate` проверит, что эталон проходит проверки, а нетронутая фикстура —
++нет. Лучшие задачи — те, на которых агент реально ошибался у вас или у
++пользователей.
+diff --git a/eval/agent_bench/__init__.py b/eval/agent_bench/__init__.py
+new file mode 100644
+index 0000000..d34c27e
+--- /dev/null
++++ b/eval/agent_bench/__init__.py
+@@ -0,0 +1,5 @@
++"""Agent benchmark: realistic multi-step coding tasks with automatic checks."""
++from .harness import build_report, main, run_checks, run_one, validate_tasks
++from .tasks import TASKS, Task
++
++__all__ = ["TASKS", "Task", "build_report", "main", "run_checks", "run_one", "validate_tasks"]
+diff --git a/eval/agent_bench/__main__.py b/eval/agent_bench/__main__.py
+new file mode 100644
+index 0000000..05b3033
+--- /dev/null
++++ b/eval/agent_bench/__main__.py
+@@ -0,0 +1,5 @@
++import sys
++
++from .harness import main
++
++sys.exit(main())
+diff --git a/eval/agent_bench/baseline_agent.py b/eval/agent_bench/baseline_agent.py
+new file mode 100644
+index 0000000..7cac888
+--- /dev/null
++++ b/eval/agent_bench/baseline_agent.py
+@@ -0,0 +1,860 @@
++"""FROZEN COPY of orchestrator/agent.py before the production-readiness fixes.
++
++Used only by the agent benchmark as the "baseline" mode, to measure what the
++fixes changed on a real model.  Do not edit or import from product code.
++
++ReAct CodingAgent (baseline): multi-step tool-use loop.
++
++Tools available:
++  - read_file(path)       → file contents (truncated)
++  - grep(pattern, path)   → matching lines with file:line
++  - run_tests(args)       → pytest output (truncated)
++  - web_search(query)     → web context snippets
++
++Loop: Thought → Action → Observation → ... → Final Answer
++"""
++from __future__ import annotations
++
++import logging
++import re
++import shutil
++import subprocess
++import sys
++from collections.abc import Callable, Generator
++from dataclasses import dataclass, field
++from pathlib import Path
++
++from core.inference import ModelBackend
++from core.language import LANG_NAMES, matches_language, resolve_target
++
++logger = logging.getLogger(__name__)
++
++_MAX_ITERATIONS = 8
++_TOOL_OUTPUT_LIMIT = 3000
++_MAX_WRITE_FILE_SIZE = 1_048_576  # 1 MB
++
++_BLOCKED_WRITE_DIRS = frozenset({
++    ".git",
++    "__pycache__",
++    ".venv",
++    "venv",
++    "node_modules",
++    ".fluxion-backup",
++    "__chroma_db__",
++})
++
++_DELIM_OLD = "---OLD---"
++_DELIM_NEW = "---NEW---"
++
++_GIT_LINE_RE = re.compile(r"^.*git_(?:status|diff|commit).*\n?", re.MULTILINE)
++
++_NOT_A_REPO = (
++    "Not a git repository. Git tools are unavailable here — "
++    "do not call them again; continue with other tools or finish."
++)
++
++_REPEAT_OBSERVATION = (
++    "This exact action was already executed with identical arguments and "
++    "returned the same result. Do not repeat it: choose a different tool "
++    "or finish with your best answer."
++)
++
++_VERIFY_BUDGET = 2
++
++_NO_TESTS_MARKERS = (
++    "no tests ran",
++    "collected 0 items",
++    "not found: tests",
++    "no module named pytest",
++)
++
++REACT_SYSTEM_RO = """\
++You are Fluxion Agent, an autonomous coding assistant with tool access.
++
++You solve problems step by step using the ReAct pattern:
++
++Thought: <your reasoning about what to do next>
++Action: <tool_name> <arguments>
++
++Available tools:
++  read_file <path>          - Read a file from disk (first 3000 chars)
++  grep <pattern> [<path>]   - Search file contents (regex); path defaults to '.'
++  run_tests [<args>]        - Run pytest with optional args
++  web_search <query>        - Search the web for information
++  git_status                - Show git status (modified/untracked files)
++  git_diff                  - Show unstaged changes
++  finish <answer>           - Provide final answer and stop
++
++After each Action, you will see an Observation with the tool result.
++Continue until you have enough information, then use 'finish'.
++
++Rules:
++- One Action per turn.
++- Be concise in Thought.
++- Use tools proactively to explore the codebase.
++- If the user's message is a greeting, small talk, or a question you can
++  answer from general knowledge, answer directly with 'finish' and NO tools.
++"""
++
++REACT_SYSTEM_RW = """\
++You are Fluxion Agent, an autonomous coding assistant with tool access.
++
++You solve problems step by step using the ReAct pattern:
++
++Thought: <your reasoning about what to do next>
++Action: <tool_name> <arguments>
++
++Available tools:
++  read_file <path>          - Read a file from disk (first 3000 chars)
++  write_file <path>         - Create or overwrite a file (path on first line,
++                              content on all following lines)
++  edit_file <path>          - Edit part of a file using ---OLD--- / ---NEW---
++                              sentinels (see below)
++  grep <pattern> [<path>]   - Search file contents (regex); path defaults to '.'
++  run_tests [<args>]        - Run pytest with optional args
++  web_search <query>        - Search the web for information
++  git_status                - Show git status (modified/untracked files)
++  git_diff                  - Show unstaged changes
++  git_commit <message>      - Stage all changes and commit with message
++  finish <answer>           - Provide final answer and stop
++
++edit_file format:
++  Action: edit_file <path>
++  ---OLD---
++  <exact text to find>
++  ---NEW---
++  <replacement text>
++
++Rules:
++- One Action per turn.
++- Be concise in Thought.
++- Use tools proactively to explore and modify the codebase.
++- If the user's message is a greeting, small talk, or a question you can
++  answer from general knowledge, answer directly with 'finish' and NO tools.
++- Prefer edit_file over write_file for existing files.
++- After write_file or edit_file, run run_tests before finish. If you forget,
++  the harness auto-runs tests and returns the result as an Observation.
++- The ---OLD--- text must match exactly and appear only once in the file.
++- Use git_status and git_diff to review your changes before committing.
++"""
++
++
++@dataclass
++class ToolResult:
++    tool: str
++    args: str
++    output: str
++    success: bool = True
++    error: str = ""
++
++
++@dataclass
++class AgentStep:
++    iteration: int
++    thought: str = ""
++    action: str = ""
++    tool_name: str = ""
++    tool_args: str = ""
++    observation: str = ""
++    is_final: bool = False
++    final_answer: str = ""
++
++
++@dataclass
++class AgentResult:
++    steps: list[AgentStep] = field(default_factory=list)
++    final_answer: str = ""
++    iterations_used: int = 0
++    success: bool = False
++    verification: str = ""  # "not_required" | "passed" | "failed"
++
++
++class CodingAgent:
++    """ReAct-style agent that iteratively uses tools to solve problems."""
++
++    def __init__(
++        self,
++        backend: ModelBackend,
++        project_root: str = ".",
++        rag_service=None,
++        web_search=None,
++        max_iterations: int = _MAX_ITERATIONS,
++        allow_write: bool = False,
++        git_enabled: bool = True,
++        verify_after_write: bool = True,
++        verify_budget: int = _VERIFY_BUDGET,
++        lang: str = "auto",
++    ):
++        self.backend = backend
++        self.project_root = Path(project_root).resolve()
++        self.rag_service = rag_service
++        self.web_search = web_search
++        self.max_iterations = max_iterations
++        self.allow_write = allow_write
++        if git_enabled:
++            from orchestrator.git_helper import is_repo
++
++            git_enabled = is_repo(self.project_root)
++        self.git_enabled = git_enabled
++        self.verify_after_write = verify_after_write
++        self.verify_budget = verify_budget
++        self.lang = (lang or "auto").strip().lower()
++        self._lang_target: str | None = None
++        self._lang_fixes = 0
++        self._dirty_files: set[str] = set()
++        self._ever_dirty = False
++        self._tests_ok = False
++        self._verify_used = 0
++        self._checkpointed = False
++        self.tools: dict[str, Callable[[str], ToolResult]] = {
++            "read_file": self._tool_read_file,
++            "grep": self._tool_grep,
++            "run_tests": self._tool_run_tests,
++            "web_search": self._tool_web_search,
++            "write_file": self._tool_write_file,
++            "edit_file": self._tool_edit_file,
++            "git_status": self._tool_git_status,
++            "git_diff": self._tool_git_diff,
++            "git_commit": self._tool_git_commit,
++            "finish": self._tool_finish,
++        }
++        if not git_enabled:
++            for name in ("git_status", "git_diff", "git_commit"):
++                self.tools.pop(name, None)
++        self.last_result: AgentResult | None = None
++
++    @property
++    def system_prompt(self) -> str:
++        prompt = REACT_SYSTEM_RW if self.allow_write else REACT_SYSTEM_RO
++        if not self.git_enabled:
++            prompt = _GIT_LINE_RE.sub("", prompt)
++        return prompt
++
++    def run(self, task: str, context: str = "") -> AgentResult:
++        """Execute the ReAct loop for *task*. Returns AgentResult."""
++        gen = self.run_iter(task, context)
++        result = None
++        while True:
++            try:
++                next(gen)
++            except StopIteration as stop:
++                result = stop.value
++                break
++        return result or AgentResult()
++
++    def run_iter(self, task: str, context: str = "") -> Generator[AgentStep, None, AgentResult]:
++        """Generator variant of :meth:`run` that yields each step as it completes.
++
++        Useful for CLI / UI consumers that want to show progress incrementally.
++        Returns the final :class:`AgentResult` (also stored in ``self.last_result``).
++        """
++        result = AgentResult()
++        seen_actions: set[tuple[str, str]] = set()
++        no_action_streak = 0
++        messages: list[dict[str, str]] = [
++            {"role": "system", "content": self.system_prompt},
++        ]
++        if context:
++            messages.append({"role": "user", "content": f"Context:\n{context}\n\nTask:\n{task}"})
++        else:
++            messages.append({"role": "user", "content": task})
++
++        self._lang_target = resolve_target(self.lang, task)
++        self._lang_fixes = 0
++
++        extra = self.verify_budget if self.verify_after_write else 0
++        for iteration in range(1, self.max_iterations + extra + 1):
++            step = AgentStep(iteration=iteration)
++
++            try:
++                raw_response = self.backend.generate(messages)
++            except Exception as exc:
++                step.observation = f"Backend error: {exc}"
++                result.steps.append(step)
++                yield step
++                break
++
++            step.thought, step.action = self._parse_response(raw_response)
++
++            if not step.action:
++                messages.append({"role": "assistant", "content": raw_response})
++                no_action_streak += 1
++                if no_action_streak >= 2 and raw_response.strip():
++                    step.is_final = True
++                    step.final_answer = raw_response.strip()
++                    step.observation = "Task complete."
++                    result.final_answer = step.final_answer
++                    result.success = True
++                    result.steps.append(step)
++                    yield step
++                    break
++                messages.append({"role": "user", "content": "Please use a tool with 'Action: <tool> <args>' or 'Action: finish <answer>'."})
++                result.steps.append(step)
++                yield step
++                continue
++
++            no_action_streak = 0
++
++            tool_name, tool_args = self._parse_action(step.action)
++            step.tool_name = tool_name
++            step.tool_args = tool_args
++
++            messages.append({"role": "assistant", "content": raw_response})
++
++            if tool_name == "finish":
++                gate_note = self._try_verify_gate()
++                if gate_note is not None:
++                    step.tool_name = "run_tests"
++                    step.tool_args = "(auto-verify)"
++                    step.observation = gate_note
++                    messages.append({"role": "user", "content": f"Observation:\n{gate_note}"})
++                    no_action_streak = 0
++                    result.steps.append(step)
++                    yield step
++                    continue
++                if (
++                    self._lang_target
++                    and self._lang_fixes < 1
++                    and not matches_language(tool_args, self._lang_target)
++                ):
++                    self._lang_fixes += 1
++                    note = (
++                        "[language gate] Ответ получен на другом языке. Перепиши финальный "
++                        f"ответ строго на {LANG_NAMES[self._lang_target]}, сохранив смысл и код."
++                    )
++                    step.tool_name = ""
++                    step.observation = note
++                    messages.append({"role": "user", "content": note})
++                    result.steps.append(step)
++                    yield step
++                    continue
++                step.is_final = True
++                step.final_answer = tool_args
++                step.observation = "Task complete."
++                result.final_answer = tool_args
++                result.success = True
++                result.steps.append(step)
++                yield step
++                break
++
++            action_key = (tool_name, tool_args)
++            if action_key in seen_actions:
++                step.observation = _REPEAT_OBSERVATION
++            else:
++                seen_actions.add(action_key)
++                tool_result = self._dispatch_tool(tool_name, tool_args)
++                self._note_effect(tool_name, tool_args, tool_result)
++                step.observation = tool_result.output if tool_result.success else f"Error: {tool_result.error}"
++
++            messages.append({
++                "role": "user",
++                "content": f"Observation:\n{step.observation}",
++            })
++
++            result.steps.append(step)
++            result.iterations_used = iteration
++            yield step
++
++        result.iterations_used = len(result.steps)
++        if not result.success and result.steps:
++            last = result.steps[-1]
++            result.final_answer = last.observation or "Agent ran out of iterations."
++        if not self.verify_after_write or not self._ever_dirty:
++            result.verification = "not_required"
++        elif self._tests_ok:
++            result.verification = "passed"
++        else:
++            result.verification = "failed"
++
++        self.last_result = result
++        return result
++
++    # ── verification gate ────────────────────────────────────────────
++
++    def _note_effect(self, tool_name: str, tool_args: str, result: ToolResult) -> None:
++        if not result.success:
++            return
++        if tool_name in ("write_file", "edit_file"):
++            path = tool_args.lstrip("\n").split("\n", 1)[0].strip()
++            self._dirty_files.add(path)
++            self._ever_dirty = True
++            self._tests_ok = False
++        elif tool_name == "run_tests" and self._dirty_files:
++            self._tests_ok = True
++            self._dirty_files.clear()
++
++    def _try_verify_gate(self) -> str | None:
++        """Финал с непроверенными правками невозможен: авто-прогон тестов."""
++        if not self.verify_after_write or not self._dirty_files or self._tests_ok:
++            return None
++        if self._verify_used >= self.verify_budget:
++            return None
++        self._verify_used += 1
++        passed, note = self._auto_verify()
++        if passed:
++            self._tests_ok = True
++            self._dirty_files.clear()
++        return note
++
++    def _auto_verify(self) -> tuple[bool, str]:
++        files = ", ".join(sorted(self._dirty_files))
++        result = self._dispatch_tool("run_tests", "")
++        tail = (result.output or result.error)[-1200:]
++        if result.success:
++            return True, (
++                f"[verification gate] Изменены: {files}. Авто-прогон run_tests: PASSED. "
++                f"Можно завершать.\n{tail}"
++            )
++        low = result.output.lower()
++        if any(marker in low for marker in _NO_TESTS_MARKERS):
++            errors = self._syntax_errors()
++            if not errors:
++                return True, (
++                    f"[verification gate] Изменены: {files}. pytest-тестов в проекте нет; "
++                    "syntax check: PASSED. Можно завершать."
++                )
++            return False, (
++                f"[verification gate] Изменены: {files}. Тестов нет, syntax check FAILED:\n"
++                + "\n".join(errors) + "\nИсправь код перед завершением."
++            )
++        return False, (
++            f"[verification gate] Изменены: {files}. Авто-прогон run_tests: FAILED:\n{tail}\n"
++            "Исправь код и запусти run_tests перед завершением."
++        )
++
++    def _syntax_errors(self) -> list[str]:
++        errors: list[str] = []
++        for raw in sorted(self._dirty_files):
++            fpath = self._validate_write_path(raw)
++            if fpath is None or fpath.suffix != ".py" or not fpath.exists():
++                continue
++            try:
++                compile(fpath.read_text(encoding="utf-8", errors="replace"), str(fpath), "exec")
++            except SyntaxError as exc:
++                errors.append(f"{raw}:{exc.lineno}: {exc.msg}")
++        return errors
++
++    @staticmethod
++    def _syntax_report(fpath: Path) -> str:
++        if fpath.suffix != ".py":
++            return ""
++        try:
++            compile(fpath.read_text(encoding="utf-8", errors="replace"), str(fpath), "exec")
++        except SyntaxError as exc:
++            return f"\nSYNTAX ERROR: line {exc.lineno}: {exc.msg}"
++        return "\nsyntax: OK"
++
++    # ── response parsing ──────────────────────────────────────────────────
++
++    @staticmethod
++    def _parse_response(response: str) -> tuple[str, str]:
++        """Extract Thought and Action from the LLM response.
++
++        Robustly handles common LLM deviations:
++        - ``Finish: <answer>``  → normalised to ``finish <answer>``
++        - ``Action: <tool>``    → used as-is
++        - ``write_file`` / ``edit_file`` → captures the full multiline body
++          (path + file content) that follows the Action line.
++        """
++        thought = ""
++        action = ""
++
++        thought_match = re.search(r"Thought:\s*(.*?)(?=\n(?:Action|Finish)\s*:|$)", response, re.DOTALL)
++        if thought_match:
++            thought = thought_match.group(1).strip()
++
++        multi_match = re.search(
++            r"Action:\s*(write_file|edit_file)\s+(.*)",
++            response,
++            re.DOTALL,
++        )
++        if multi_match:
++            action = f"{multi_match.group(1)} {multi_match.group(2).strip()}"
++            return thought, action
++
++        action_match = re.search(r"Action:\s*(.*)", response)
++        if action_match:
++            action = action_match.group(1).strip()
++        else:
++            finish_match = re.search(r"Finish:\s*(.*)", response, re.IGNORECASE)
++            if finish_match:
++                answer = finish_match.group(1).strip()
++                action = f"finish {answer}" if answer else "finish"
++
++        return thought, action
++
++    @staticmethod
++    def _parse_action(action: str) -> tuple[str, str]:
++        """Split 'tool_name arguments' → (tool_name, arguments)."""
++        action = action.strip()
++        parts = action.split(None, 1)
++        tool_name = parts[0] if parts else ""
++        args = parts[1] if len(parts) > 1 else ""
++        return tool_name, args
++
++    # ── tool dispatch ─────────────────────────────────────────────────────
++
++    def _dispatch_tool(self, name: str, args: str) -> ToolResult:
++        handler = self.tools.get(name)
++        if handler is None:
++            return ToolResult(tool=name, args=args, output="", success=False, error=f"Unknown tool: {name}")
++        try:
++            return handler(args)
++        except Exception as exc:
++            return ToolResult(tool=name, args=args, output="", success=False, error=str(exc))
++
++    # ── individual tools ──────────────────────────────────────────────────
++
++    def _tool_read_file(self, args: str) -> ToolResult:
++        path = args.strip().strip('"').strip("'")
++        if not path:
++            return ToolResult("read_file", args, "", False, "No path provided")
++
++        full_path = self.project_root / path if not Path(path).is_absolute() else Path(path)
++        if not full_path.exists():
++            return ToolResult("read_file", args, "", False, f"File not found: {path}")
++
++        try:
++            content = full_path.read_text(encoding="utf-8", errors="replace")
++        except Exception as exc:
++            return ToolResult("read_file", args, "", False, str(exc))
++
++        if len(content) > _TOOL_OUTPUT_LIMIT:
++            content = content[:_TOOL_OUTPUT_LIMIT] + f"\n... ({len(content)} chars total, truncated)"
++
++        return ToolResult("read_file", args, content)
++
++    def _tool_grep(self, args: str) -> ToolResult:
++        args = args.strip()
++        if not args:
++            return ToolResult("grep", args, "", False, "Usage: grep <pattern> [<path>]")
++
++        parts = args.rsplit(None, 1)
++        search_path = "."
++        pattern = args
++
++        if len(parts) == 2:
++            candidate_path = parts[1].strip('"').strip("'")
++            candidate_full = (
++                self.project_root / candidate_path
++                if not Path(candidate_path).is_absolute()
++                else Path(candidate_path)
++            )
++            if candidate_full.exists():
++                pattern = parts[0]
++                search_path = candidate_path
++
++        full_path = (
++            self.project_root / search_path
++            if not Path(search_path).is_absolute()
++            else Path(search_path)
++        )
++
++        if not full_path.exists():
++            return ToolResult("grep", args, "", False, f"Path not found: {search_path}")
++
++        try:
++            regex = re.compile(pattern)
++        except re.error as exc:
++            return ToolResult("grep", args, "", False, f"Invalid regex: {exc}")
++
++        matches: list[str] = []
++        files_to_search = list(full_path.rglob("*.py")) if full_path.is_dir() else [full_path]
++
++        for fpath in files_to_search:
++            if not fpath.is_file():
++                continue
++            try:
++                lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
++            except Exception:
++                continue
++            for lineno, line in enumerate(lines, 1):
++                if regex.search(line):
++                    rel = fpath.relative_to(self.project_root) if self.project_root in fpath.parents or fpath == self.project_root else fpath
++                    matches.append(f"{rel}:{lineno}: {line.strip()}")
++                    if len(matches) >= 50:
++                        matches.append("... (50 matches, truncated)")
++                        break
++            if len(matches) >= 50:
++                break
++
++        if not matches:
++            return ToolResult("grep", args, "No matches found.")
++
++        output = "\n".join(matches)
++        if len(output) > _TOOL_OUTPUT_LIMIT:
++            output = output[:_TOOL_OUTPUT_LIMIT] + "\n... (truncated)"
++
++        return ToolResult("grep", args, output)
++
++    @staticmethod
++    def _python_executable() -> str | None:
++        """Interpreter for subprocesses; frozen sys.executable would relaunch the app."""
++        if not getattr(sys, "frozen", False):
++            return sys.executable
++        exe_dir = Path(sys.executable).resolve().parent
++        bundled = exe_dir / "data" / "training_env" / "Scripts" / "python.exe"
++        if bundled.is_file():
++            return str(bundled)
++        return shutil.which("python") or shutil.which("py")
++
++    def _tool_run_tests(self, args: str) -> ToolResult:
++        test_args = args.strip()
++        exe = self._python_executable()
++        if exe is None:
++            return ToolResult("run_tests", args, "", False, "Python interpreter not found")
++        cmd = [exe, "-m", "pytest"]
++        if test_args:
++            cmd.extend(test_args.split())
++        cmd.extend(["-v", "--tb=short", "-q"])
++
++        try:
++            result = subprocess.run(
++                cmd,
++                capture_output=True,
++                text=True,
++                timeout=60,
++                cwd=str(self.project_root),
++            )
++        except subprocess.TimeoutExpired:
++            return ToolResult("run_tests", args, "", False, "Tests timed out (60s)")
++        except FileNotFoundError:
++            return ToolResult("run_tests", args, "", False, "pytest not available")
++
++        output = result.stdout + "\n" + result.stderr
++        if len(output) > _TOOL_OUTPUT_LIMIT:
++            output = output[:_TOOL_OUTPUT_LIMIT] + "\n... (truncated)"
++
++        return ToolResult("run_tests", args, output, success=result.returncode == 0)
++
++    def _tool_web_search(self, args: str) -> ToolResult:
++        query = args.strip()
++        if not query:
++            return ToolResult("web_search", args, "", False, "No query provided")
++
++        if self.web_search is None:
++            return ToolResult("web_search", args, "", False, "Web search not configured")
++
++        client = getattr(self.web_search, "client", None)
++        if client is not None and hasattr(client, "is_alive") and not client.is_alive():
++            base_url = getattr(client, "base_url", "SearXNG")
++            return ToolResult(
++                "web_search",
++                args,
++                "",
++                False,
++                f"SearXNG is not reachable at {base_url}. "
++                "Start Docker Desktop (the container starts automatically) "
++                "or use the Status dashboard to fix it.",
++            )
++
++        try:
++            contexts = self.web_search.run(query)
++        except Exception as exc:
++            return ToolResult("web_search", args, "", False, str(exc))
++
++        if not contexts:
++            return ToolResult("web_search", args, "No results found.")
++
++        from web.pipeline import WebSearch as WS
++        output = WS.build_context(contexts, max_chars=_TOOL_OUTPUT_LIMIT)
++        return ToolResult("web_search", args, output)
++
++    # ── write / edit tools ─────────────────────────────────────────────────
++
++    def _validate_write_path(self, raw_path: str) -> Path | None:
++        """Resolve *raw_path* relative to project root; return None if unsafe."""
++        clean = raw_path.strip().strip('"').strip("'")
++        if not clean:
++            return None
++
++        candidate = (self.project_root / clean).resolve() if not Path(clean).is_absolute() else Path(clean).resolve()
++
++        try:
++            candidate.relative_to(self.project_root)
++        except ValueError:
++            return None
++
++        for part in candidate.parts:
++            if part in _BLOCKED_WRITE_DIRS:
++                return None
++
++        return candidate
++
++    @staticmethod
++    def _backup_file(fpath: Path) -> None:
++        """Copy *fpath* to ``.fluxion-backup/`` if it exists."""
++        if not fpath.exists() or not fpath.is_file():
++            return
++        import shutil
++
++        backup_dir = fpath.parent / ".fluxion-backup"
++        backup_dir.mkdir(exist_ok=True)
++        backup_path = backup_dir / fpath.name
++        shutil.copy2(fpath, backup_path)
++
++    def _tool_write_file(self, args: str) -> ToolResult:
++        """Create or overwrite a file.
++
++        Expected *args* format (from the LLM)::
++
++            <path>\n<full file content>
++
++        The first line is the path; everything after the first ``\\n`` is the
++        content.  When the file already exists, a backup is saved.
++        """
++        if not self.allow_write:
++            return ToolResult(
++                "write_file", args, "", False,
++                "Write operations disabled. Start agent with --write or allow_write=True.",
++            )
++
++        stripped = args.lstrip("\n")
++        newline_idx = stripped.find("\n")
++        if newline_idx == -1:
++            return ToolResult("write_file", args, "", False, "Usage: write_file <path>\\n<content>")
++
++        raw_path = stripped[:newline_idx]
++        content = stripped[newline_idx + 1:]
++
++        fpath = self._validate_write_path(raw_path)
++        if fpath is None:
++            return ToolResult("write_file", args, "", False, f"Unsafe or invalid path: {raw_path}")
++
++        if len(content.encode("utf-8")) > _MAX_WRITE_FILE_SIZE:
++            return ToolResult("write_file", args, "", False, f"Content exceeds {_MAX_WRITE_FILE_SIZE} bytes")
++
++        try:
++            self._ensure_checkpoint()
++            self._backup_file(fpath)
++            fpath.parent.mkdir(parents=True, exist_ok=True)
++            fpath.write_text(content, encoding="utf-8")
++        except Exception as exc:
++            return ToolResult("write_file", args, "", False, str(exc))
++
++        line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
++        return ToolResult(
++            "write_file", args,
++            f"Wrote {fpath.relative_to(self.project_root)} ({line_count} lines, {len(content)} bytes)."
++            + self._syntax_report(fpath),
++        )
++
++    def _tool_edit_file(self, args: str) -> ToolResult:
++        """Replace a unique snippet in an existing file.
++
++        Expected *args* format::
++
++            <path>
++            ---OLD---
++            <exact text to find>
++            ---NEW---
++            <replacement text>
++        """
++        if not self.allow_write:
++            return ToolResult(
++                "edit_file", args, "", False,
++                "Write operations disabled. Start agent with --write or allow_write=True.",
++            )
++
++        if _DELIM_OLD not in args or _DELIM_NEW not in args:
++            return ToolResult(
++                "edit_file", args, "", False,
++                f"Usage: edit_file <path>\\n{_DELIM_OLD}\\n<old>\\n{_DELIM_NEW}\\n<new>",
++            )
++
++        pre_old, rest = args.split(_DELIM_OLD, 1)
++        old_text, new_text = rest.split(_DELIM_NEW, 1)
++
++        raw_path = pre_old.strip()
++        old_text = old_text.strip("\n")
++        new_text = new_text.strip("\n")
++
++        if old_text == new_text:
++            return ToolResult("edit_file", args, "", False, "old_string and new_string are identical")
++
++        fpath = self._validate_write_path(raw_path)
++        if fpath is None:
++            return ToolResult("edit_file", args, "", False, f"Unsafe or invalid path: {raw_path}")
++
++        if not fpath.exists():
++            return ToolResult("edit_file", args, "", False, f"File not found: {raw_path}")
++
++        try:
++            original = fpath.read_text(encoding="utf-8", errors="replace")
++        except Exception as exc:
++            return ToolResult("edit_file", args, "", False, str(exc))
++
++        occurrences = original.count(old_text)
++        if occurrences == 0:
++            return ToolResult("edit_file", args, "", False, "old_string not found in file")
++        if occurrences > 1:
++            return ToolResult(
++                "edit_file", args, "", False,
++                f"old_string is ambiguous ({occurrences} occurrences). Provide more context.",
++            )
++
++        updated = original.replace(old_text, new_text, 1)
++
++        if len(updated.encode("utf-8")) > _MAX_WRITE_FILE_SIZE:
++            return ToolResult("edit_file", args, "", False, f"Resulting file would exceed {_MAX_WRITE_FILE_SIZE} bytes")
++
++        try:
++            self._ensure_checkpoint()
++            self._backup_file(fpath)
++            fpath.write_text(updated, encoding="utf-8")
++        except Exception as exc:
++            return ToolResult("edit_file", args, "", False, str(exc))
++
++        return ToolResult(
++            "edit_file", args,
++            f"Edited {fpath.relative_to(self.project_root)} (1 replacement)."
++            + self._syntax_report(fpath),
++        )
++
++    # ── git tools ─────────────────────────────────────────────────────────
++
++    def _ensure_checkpoint(self) -> None:
++        """Auto-stash once before the first write in an agent session."""
++        if self._checkpointed:
++            return
++        if not self.git_enabled:
++            self._checkpointed = True
++            return
++        from orchestrator.git_helper import checkpoint
++        self._checkpoint_result = checkpoint(self.project_root)
++        self._checkpointed = True
++
++    def _tool_git_status(self, _args: str) -> ToolResult:
++        from orchestrator.git_helper import is_repo, status as git_status
++        if not is_repo(self.project_root):
++            return ToolResult("git_status", _args, "", False, _NOT_A_REPO)
++        out = git_status(self.project_root)
++        if len(out) > _TOOL_OUTPUT_LIMIT:
++            out = out[:_TOOL_OUTPUT_LIMIT] + "\n... (truncated)"
++        return ToolResult("git_status", _args, out)
++
++    def _tool_git_diff(self, _args: str) -> ToolResult:
++        from orchestrator.git_helper import diff as git_diff, is_repo
++        if not is_repo(self.project_root):
++            return ToolResult("git_diff", _args, "", False, _NOT_A_REPO)
++        out = git_diff(self.project_root)
++        if len(out) > _TOOL_OUTPUT_LIMIT:
++            out = out[:_TOOL_OUTPUT_LIMIT] + "\n... (truncated)"
++        return ToolResult("git_diff", _args, out)
++
++    def _tool_git_commit(self, args: str) -> ToolResult:
++        if not self.allow_write:
++            return ToolResult(
++                "git_commit", args, "", False,
++                "Write operations disabled. Start agent with --write or allow_write=True.",
++            )
++        from orchestrator.git_helper import commit as git_commit, is_repo
++        if not is_repo(self.project_root):
++            return ToolResult("git_commit", args, "", False, _NOT_A_REPO)
++        message = args.strip() or "Fluxion auto-commit"
++        out = git_commit(self.project_root, message)
++        return ToolResult("git_commit", args, out)
++
++    @staticmethod
++    def _tool_finish(args: str) -> ToolResult:
++        return ToolResult("finish", args, args, success=True)
+diff --git a/eval/agent_bench/harness.py b/eval/agent_bench/harness.py
+new file mode 100644
+index 0000000..a8cfc03
+--- /dev/null
++++ b/eval/agent_bench/harness.py
+@@ -0,0 +1,411 @@
++"""Agent benchmark: run the task suite against a real model in several modes.
++
++Modes
++  baseline — frozen copy of the agent before the review fixes
++  text     — current agent, classic ReAct text protocol
++  json     — current agent, JSON-schema constrained tool calls
++
++Usage
++  python -m eval.agent_bench --validate                 # check the tasks themselves
++  python -m eval.agent_bench --modes baseline,text,json --repeats 3
++  python -m eval.agent_bench --report results/agent_bench/<run>
++
++Results are appended to ``results.jsonl`` after every task, so an interrupted
++run resumes where it stopped when started again with the same ``--out``.
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import shutil
++import statistics
++import subprocess
++import sys
++import tempfile
++import time
++from collections import defaultdict
++from dataclasses import dataclass
++from pathlib import Path
++
++from .tasks import TASKS, Task
++
++MODES = ("baseline", "text", "json")
++_CHECK_TIMEOUT = 60
++_REPEAT_MARK = "already executed"
++
++
++# ── fixtures ─────────────────────────────────────────────────────────────────
++
++def materialize(files: dict[str, str], root: Path) -> None:
++    for rel, content in files.items():
++        path = root / rel
++        path.parent.mkdir(parents=True, exist_ok=True)
++        with path.open("w", encoding="utf-8", newline="") as fh:  # keep CRLF fixtures
++            fh.write(content)
++
++
++# ── checks ───────────────────────────────────────────────────────────────────
++
++@dataclass
++class CheckOutcome:
++    ok: bool
++    detail: str = ""
++
++
++def run_checks(task: Task, root: Path, answer: str, tool_calls: int) -> list[CheckOutcome]:
++    outcomes: list[CheckOutcome] = []
++    low = (answer or "").lower()
++    for check in task.checks:
++        kind = check["type"]
++        if kind == "python":
++            env = dict(os.environ, PYTHONPATH=str(root), PYTHONDONTWRITEBYTECODE="1")
++            try:
++                proc = subprocess.run(
++                    [sys.executable, "-c", check["code"]], cwd=root, env=env,
++                    capture_output=True, text=True, timeout=_CHECK_TIMEOUT,
++                    encoding="utf-8", errors="replace",
++                )
++                ok = proc.returncode == 0
++                detail = "" if ok else (proc.stderr or proc.stdout).strip().splitlines()[-1:]
++                outcomes.append(CheckOutcome(ok, " ".join(detail) if detail else ""))
++            except subprocess.TimeoutExpired:
++                outcomes.append(CheckOutcome(False, "check timed out"))
++        elif kind == "answer":
++            any_ = check.get("any") or []
++            all_ = check.get("all") or []
++            none_ = check.get("none") or []
++            ok = bool(answer.strip())
++            if any_:
++                ok = ok and any(s.lower() in low for s in any_)
++            ok = ok and all(s.lower() in low for s in all_)
++            ok = ok and not any(s.lower() in low for s in none_)
++            outcomes.append(CheckOutcome(ok, "" if ok else f"answer mismatch: {answer[:120]!r}"))
++        elif kind == "unchanged":
++            changed = []
++            for rel in check["paths"]:
++                path = root / rel
++                expected = task.files[rel].encode("utf-8")
++                if not path.is_file() or path.read_bytes() != expected:
++                    changed.append(rel)
++            outcomes.append(CheckOutcome(not changed, f"modified: {changed}" if changed else ""))
++        elif kind == "no_tools":
++            ok = tool_calls == 0 and bool(answer.strip())
++            outcomes.append(CheckOutcome(ok, "" if ok else f"{tool_calls} tool call(s)"))
++        elif kind == "lang":
++            got = _dominant_script(answer)
++            ok = got == check["lang"]
++            outcomes.append(CheckOutcome(ok, "" if ok else f"language={got}"))
++        else:
++            outcomes.append(CheckOutcome(False, f"unknown check {kind}"))
++    return outcomes
++
++
++def _dominant_script(text: str) -> str | None:
++    """"ru"/"en" by majority of letters outside code — robust for short
++    replies that mix scripts ("Я Fluxion, ассистент…"), unlike the product's
++    detector which abstains on short mixed text."""
++    from core.language import _natural_text
++
++    natural = _natural_text(text)
++    cyr = sum(1 for ch in natural if "\u0400" <= ch <= "\u04FF")
++    lat = sum(1 for ch in natural if ch.isascii() and ch.isalpha())
++    if cyr + lat == 0:
++        return None
++    return "ru" if cyr >= lat else "en"
++
++
++# ── agent construction ──────────────────────────────────────────────────────
++
++def make_agent(mode: str, backend, root: Path, task: Task, max_iter: int):
++    common = dict(
++        backend=backend, project_root=str(root), max_iterations=max_iter,
++        allow_write=task.allow_write, git_enabled=False, lang="auto",
++    )
++    if mode == "baseline":
++        from .baseline_agent import CodingAgent as BaselineAgent
++
++        return BaselineAgent(**common)
++    from orchestrator.agent import CodingAgent
++
++    return CodingAgent(**common, action_format=mode)
++
++
++def run_one(task: Task, mode: str, backend, max_iter: int, keep: bool = False) -> dict:
++    root = Path(tempfile.mkdtemp(prefix=f"fxbench-{task.id}-"))
++    materialize(task.files, root)
++    record: dict = {"task": task.id, "category": task.category, "mode": mode}
++    started = time.perf_counter()
++    try:
++        agent = make_agent(mode, backend, root, task, max_iter)
++        result = agent.run(task.prompt)
++        steps = result.steps
++        answer = result.final_answer if result.success else ""
++        record.update(
++            agent_success=bool(result.success),
++            verification=getattr(result, "verification", ""),
++            final_format=getattr(agent, "action_format", "text"),
++        )
++    except Exception as exc:  # a crash is a failed task, not a failed benchmark
++        steps, answer = [], ""
++        record.update(agent_success=False, error=f"{type(exc).__name__}: {exc}")
++    record["seconds"] = round(time.perf_counter() - started, 1)
++
++    tool_steps = [s for s in steps if s.tool_name and s.tool_name != "finish"]
++    record.update(
++        steps=len(steps),
++        tool_calls=len(tool_steps),
++        tool_errors=sum(1 for s in tool_steps if (s.observation or "").startswith("Error:")),
++        no_action=sum(1 for s in steps if not s.tool_name and not s.is_final
++                      and not (s.observation or "").startswith(("[language gate]", "Backend error"))),
++        repeats=sum(1 for s in steps if _REPEAT_MARK in (s.observation or "")),
++        backend_error=any((s.observation or "").startswith("Backend error") for s in steps),
++        tools=[s.tool_name for s in tool_steps],
++    )
++    outcomes = run_checks(task, root, answer, len(tool_steps))
++    record["passed"] = all(o.ok for o in outcomes)
++    record["failed_checks"] = [o.detail or task.checks[i]["type"]
++                               for i, o in enumerate(outcomes) if not o.ok]
++    record["answer"] = (answer or "")[:400]
++    if keep:
++        record["workdir"] = str(root)
++    else:
++        shutil.rmtree(root, ignore_errors=True)
++    return record
++
++
++# ── validation of the task suite itself ────────────────────────────────────
++
++def validate_tasks(tasks: list[Task]) -> list[str]:
++    """Every task: the untouched fixture must FAIL, the reference solution must PASS."""
++    problems: list[str] = []
++    for task in tasks:
++        root = Path(tempfile.mkdtemp(prefix=f"fxval-{task.id}-"))
++        try:
++            materialize(task.files, root)
++            before = run_checks(task, root, "", tool_calls=0)
++            if all(o.ok for o in before):
++                problems.append(f"{task.id}: checks pass WITHOUT any work (task is trivial)")
++            materialize(task.solution.get("files", {}), root)
++            after = run_checks(task, root, task.solution.get("answer", ""), tool_calls=0)
++            bad = [o.detail or task.checks[i]["type"] for i, o in enumerate(after) if not o.ok]
++            if bad:
++                problems.append(f"{task.id}: reference solution fails: {bad}")
++        finally:
++            shutil.rmtree(root, ignore_errors=True)
++    return problems
++
++
++# ── reporting ────────────────────────────────────────────────────────────────
++
++def load_records(out: Path) -> list[dict]:
++    path = out / "results.jsonl"
++    if not path.exists():
++        return []
++    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
++
++
++def _pct(n: int, d: int) -> str:
++    return f"{100 * n / d:.0f}%" if d else "—"
++
++
++def build_report(records: list[dict], meta: dict | None = None) -> str:
++    modes = [m for m in MODES if any(r["mode"] == m for r in records)]
++    by_mode: dict[str, list[dict]] = defaultdict(list)
++    for r in records:
++        by_mode[r["mode"]].append(r)
++
++    lines = ["# Fluxion agent benchmark", ""]
++    if meta:
++        lines += [f"- {k}: {v}" for k, v in meta.items()] + [""]
++    n_tasks = len({r["task"] for r in records})
++    lines += [
++        f"Tasks: {n_tasks}. Runs: {len(records)}. A task counts as solved when all its checks pass.",
++        "",
++        "| Mode | Solved | Avg steps | Median time, s | Tool errors / run | Format errors / run | Repeat blocks / run | Crashes |",
++        "|------|--------|-----------|----------------|-------------------|---------------------|---------------------|---------|",
++    ]
++    for m in modes:
++        rs = by_mode[m]
++        solved = sum(r["passed"] for r in rs)
++        lines.append(
++            f"| {m} | {solved}/{len(rs)} ({_pct(solved, len(rs))}) "
++            f"| {statistics.mean(r['steps'] for r in rs):.1f} "
++            f"| {statistics.median(r['seconds'] for r in rs):.0f} "
++            f"| {statistics.mean(r['tool_errors'] for r in rs):.2f} "
++            f"| {statistics.mean(r['no_action'] for r in rs):.2f} "
++            f"| {statistics.mean(r['repeats'] for r in rs):.2f} "
++            f"| {sum(1 for r in rs if r.get('error') or r.get('backend_error'))} |"
++        )
++    fallback = [r for r in by_mode.get("json", []) if r.get("final_format") == "text"]
++    if fallback:
++        lines += ["", f"⚠ json mode fell back to text in {len(fallback)} run(s): the backend "
++                      "rejected the schema, so those runs measure the text protocol."]
++
++    cats = sorted({r["category"] for r in records})
++    lines += ["", "## By category", "",
++              "| Category | " + " | ".join(modes) + " |",
++              "|---|" + "---|" * len(modes)]
++    for c in cats:
++        cells = []
++        for m in modes:
++            rs = [r for r in by_mode[m] if r["category"] == c]
++            cells.append(f"{sum(r['passed'] for r in rs)}/{len(rs)}")
++        lines.append(f"| {c} | " + " | ".join(cells) + " |")
++
++    # per-task majority vote across repeats
++    solved_by: dict[tuple[str, str], float] = {}
++    for m in modes:
++        per_task: dict[str, list[bool]] = defaultdict(list)
++        for r in by_mode[m]:
++            per_task[r["task"]].append(r["passed"])
++        for t, vals in per_task.items():
++            solved_by[(t, m)] = sum(vals) / len(vals)
++
++    lines += ["", "## Pairwise (tasks solved in the majority of repeats)", ""]
++    for i, a in enumerate(modes):
++        for b in modes[i + 1:]:
++            tasks = sorted({t for (t, m) in solved_by if m in (a, b)})
++            wa = [t for t in tasks if solved_by.get((t, a), 0) > 0.5 >= solved_by.get((t, b), 0)]
++            wb = [t for t in tasks if solved_by.get((t, b), 0) > 0.5 >= solved_by.get((t, a), 0)]
++            lines.append(f"- **{a} vs {b}**: only {a}: {len(wa)} {wa}; only {b}: {len(wb)} {wb}")
++    lines += [
++        "",
++        "With ~35 tasks a difference of a few tasks can be noise; trust differences that "
++        "hold across repeats and show up in the pairwise lists.",
++        "",
++        "## Per task",
++        "",
++        "| Task | Category | " + " | ".join(modes) + " |",
++        "|---|---|" + "---|" * len(modes),
++    ]
++    task_cat = {r["task"]: r["category"] for r in records}
++    for t in sorted(task_cat, key=lambda x: (task_cat[x], x)):
++        cells = []
++        for m in modes:
++            rs = [r for r in by_mode[m] if r["task"] == t]
++            if not rs:
++                cells.append("")
++                continue
++            ok = sum(r["passed"] for r in rs)
++            mark = "✅" if ok == len(rs) else ("❌" if ok == 0 else "⚠️")
++            cells.append(f"{mark} {ok}/{len(rs)}")
++        lines.append(f"| {t} | {task_cat[t]} | " + " | ".join(cells) + " |")
++
++    failures = [r for r in records if not r["passed"]]
++    if failures:
++        lines += ["", "## Failure details", ""]
++        for r in failures:
++            why = "; ".join(r.get("failed_checks") or []) or r.get("error", "")
++            lines.append(f"- `{r['task']}` [{r['mode']}] steps={r['steps']} tools={r.get('tools')} — {why[:200]}")
++    return "\n".join(lines) + "\n"
++
++
++# ── main ─────────────────────────────────────────────────────────────────────
++
++def _select(tasks: list[Task], ids: str, categories: str, limit: int | None) -> list[Task]:
++    if ids:
++        wanted = {x.strip() for x in ids.split(",")}
++        tasks = [t for t in tasks if t.id in wanted]
++    if categories:
++        cats = {x.strip() for x in categories.split(",")}
++        tasks = [t for t in tasks if t.category in cats]
++    return tasks[:limit] if limit else tasks
++
++
++def main(argv: list[str] | None = None, backend=None) -> int:
++    ap = argparse.ArgumentParser(prog="python -m eval.agent_bench", description=__doc__,
++                                 formatter_class=argparse.RawDescriptionHelpFormatter)
++    ap.add_argument("--modes", default="baseline,text,json")
++    ap.add_argument("--repeats", type=int, default=1)
++    ap.add_argument("--tasks", default="", help="comma-separated task ids")
++    ap.add_argument("--category", default="", help="qa,chat,create,fix,refactor,safety")
++    ap.add_argument("--limit", type=int, default=None)
++    ap.add_argument("--max-iter", type=int, default=15)
++    ap.add_argument("--config", default=None, help="config.yaml (default: AI_AGENT_CONFIG or config/config.yaml)")
++    ap.add_argument("--out", default=None, help="results dir (reuse to resume)")
++    ap.add_argument("--keep", action="store_true", help="keep task work dirs for inspection")
++    ap.add_argument("--validate", action="store_true", help="check the task suite, no model needed")
++    ap.add_argument("--report", default=None, help="only rebuild report.md for a results dir")
++    ap.add_argument("--list", action="store_true", help="list tasks")
++    args = ap.parse_args(argv)
++
++    tasks = _select(TASKS, args.tasks, args.category, args.limit)
++
++    if args.list:
++        for t in tasks:
++            print(f"{t.id:28} {t.category:9} {'W' if t.allow_write else 'R'}  {t.prompt[:70]}")
++        return 0
++
++    if args.validate:
++        problems = validate_tasks(tasks)
++        for p in problems:
++            print("✗", p)
++        print(f"{len(tasks) - len({p.split(':')[0] for p in problems})}/{len(tasks)} tasks valid")
++        return 1 if problems else 0
++
++    if args.report:
++        out = Path(args.report)
++        report = build_report(load_records(out), _load_meta(out))
++        (out / "report.md").write_text(report, encoding="utf-8")
++        print(report)
++        return 0
++
++    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
++    unknown = set(modes) - set(MODES)
++    if unknown:
++        ap.error(f"unknown modes: {sorted(unknown)}")
++
++    out = Path(args.out or f"results/agent_bench/{time.strftime('%Y%m%d-%H%M%S')}")
++    out.mkdir(parents=True, exist_ok=True)
++
++    if backend is None:
++        from core.backend_factory import BackendFactory
++        from core.config import Settings
++
++        settings = Settings.load(args.config)
++        backend = BackendFactory.create(settings)
++        meta = {
++            "backend": type(backend).__name__,
++            "model": getattr(backend, "model_path", "") or getattr(settings, "model", ""),
++            "generation": vars(settings.generation),
++        }
++    else:
++        meta = {"backend": type(backend).__name__}
++    meta.update(modes=modes, repeats=args.repeats, max_iter=args.max_iter,
++                started=time.strftime("%Y-%m-%d %H:%M"))
++    meta_path = out / "meta.json"
++    if not meta_path.exists():
++        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
++
++    done = {(r["task"], r["mode"], r.get("repeat", 0)) for r in load_records(out)}
++    plan = [(t, m, k) for k in range(args.repeats) for t in tasks for m in modes
++            if (t.id, m, k) not in done]
++    total = len(plan)
++    print(f"{len(tasks)} tasks × {len(modes)} modes × {args.repeats} repeats; "
++          f"{len(done)} done, {total} to run. Results: {out}")
++
++    durations: list[float] = []
++    with (out / "results.jsonl").open("a", encoding="utf-8") as fh:
++        for i, (task, mode, rep) in enumerate(plan, 1):
++            rec = run_one(task, mode, backend, args.max_iter, keep=args.keep)
++            rec["repeat"] = rep
++            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
++            fh.flush()
++            durations.append(rec["seconds"])
++            eta = statistics.mean(durations) * (total - i) / 60
++            mark = "✓" if rec["passed"] else "✗"
++            print(f"[{i}/{total}] {mark} {task.id:26} {mode:8} {rec['steps']:2} steps "
++                  f"{rec['seconds']:6.1f}s  ETA {eta:5.1f} min"
++                  + ("" if rec["passed"] else f"  ({'; '.join(rec['failed_checks'])[:80]})"))
++
++    report = build_report(load_records(out), _load_meta(out))
++    (out / "report.md").write_text(report, encoding="utf-8")
++    print("\n" + report.split("## By category")[0])
++    print(f"Full report: {out / 'report.md'}")
++    return 0
++
++
++def _load_meta(out: Path) -> dict | None:
++    path = out / "meta.json"
++    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+diff --git a/eval/agent_bench/tasks.py b/eval/agent_bench/tasks.py
+new file mode 100644
+index 0000000..ed27490
+--- /dev/null
++++ b/eval/agent_bench/tasks.py
+@@ -0,0 +1,714 @@
++"""Agent benchmark tasks.
++
++Each task is a tiny project (``files``), a request to the agent (``prompt``)
++and automatic ``checks`` evaluated after the run.  ``solution`` is a reference
++outcome used by ``--validate`` to prove every task is solvable and that its
++checks reject the untouched fixture.
++
++Check types:
++  python     — code run with ``python -c`` inside the project dir; exit 0 = pass
++  answer     — substrings in the final answer (case-insensitive): any / all / none
++  unchanged  — files that must be byte-identical to the fixture (anti-cheat)
++  no_tools   — the agent must answer without calling tools
++  lang       — the final answer must be in the given language
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++
++
++@dataclass
++class Task:
++    id: str
++    category: str
++    prompt: str
++    files: dict[str, str]
++    checks: list[dict]
++    solution: dict
++    allow_write: bool = False
++    note: str = ""
++    tags: list[str] = field(default_factory=list)
++
++
++def _big_module(bug: bool) -> str:
++    """~360-line module; the interesting code sits near the end."""
++    parts = ['"""Utility grab-bag (generated for the benchmark)."""\n', "import math\n\n"]
++    for i in range(1, 61):
++        parts.append(
++            f"def helper_{i}(x):\n"
++            f'    """Helper number {i}."""\n'
++            f"    return x * {i} + {i % 7}\n\n\n"
++        )
++    parts.append("MAGIC_SEED = 91357\n\n\n")
++    cmp_ = "<" if bug else ">"
++    parts.append(
++        "def clamp(value, low, high):\n"
++        '    """Limit value to the [low, high] range."""\n'
++        "    if value < low:\n"
++        "        return low\n"
++        f"    if value {cmp_} high:\n"
++        "        return high\n"
++        "    return value\n"
++    )
++    return "".join(parts)
++
++
++_CART = '''from dataclasses import dataclass
++
++
++@dataclass
++class Item:
++    name: str
++    price: float
++    qty: int = 1
++
++
++def subtotal(items):
++    return sum(i.price * i.qty for i in items[1:])
++
++
++def total(items, discount=0.0):
++    return round(subtotal(items) * (1 - discount), 2)
++'''
++
++_CART_TEST = '''from cart import Item, total
++
++
++def test_total():
++    items = [Item("a", 10.0, 2), Item("b", 5.0)]
++    assert total(items) == 25.0
++
++
++def test_discount():
++    assert total([Item("a", 100.0)], discount=0.1) == 90.0
++'''
++
++_SHOP = {
++    "shop/__init__.py": "",
++    "shop/app.py": (
++        "from shop.pricing.rules import calculate_discount\n\n\n"
++        "def checkout(amount, customer):\n"
++        "    return amount - calculate_discount(amount, customer)\n"
++    ),
++    "shop/pricing/__init__.py": "",
++    "shop/pricing/rules.py": (
++        "def calculate_discount(amount, customer):\n"
++        '    if customer.get("vip"):\n'
++        "        return amount * 0.1\n"
++        "    return 0\n"
++    ),
++    "shop/utils.py": "def fmt(x):\n    return f'{x:.2f}'\n",
++}
++
++
++TASKS: list[Task] = [
++    # ── Q&A / navigation (read-only) ─────────────────────────────────────
++    Task(
++        id="qa-where-defined", category="qa",
++        prompt="В каком файле определена функция calculate_discount?",
++        files=_SHOP,
++        checks=[{"type": "answer", "any": ["shop/pricing/rules.py", "pricing/rules.py", "pricing\\rules.py"]}],
++        solution={"answer": "Она определена в shop/pricing/rules.py."},
++    ),
++    Task(
++        id="qa-default-timeout", category="qa",
++        prompt="Какое значение возвращает get_timeout(), если переменная окружения APP_TIMEOUT не задана?",
++        files={
++            "settings.py": (
++                "import os\n\nDEFAULT_TIMEOUT = 45\n\n\n"
++                "def get_timeout():\n"
++                '    return int(os.environ.get("APP_TIMEOUT", DEFAULT_TIMEOUT))\n'
++            ),
++            "main.py": "from settings import get_timeout\n\nprint(get_timeout())\n",
++        },
++        checks=[{"type": "answer", "any": ["45"]}],
++        solution={"answer": "Вернёт 45 (DEFAULT_TIMEOUT)."},
++    ),
++    Task(
++        id="qa-config-yaml", category="qa", tags=["non-python"],
++        prompt="Сколько повторных попыток делает HTTP-клиент по умолчанию?",
++        files={
++            "config/settings.yaml": "http:\n  timeout: 20\n  max_retries: 7\nlogging:\n  level: INFO\n",
++            "client.py": (
++                "import yaml\n\n\n"
++                "def load():\n"
++                '    with open("config/settings.yaml") as fh:\n'
++                "        return yaml.safe_load(fh)\n\n\n"
++                "def retries():\n"
++                '    return load()["http"]["max_retries"]\n'
++            ),
++        },
++        checks=[{"type": "answer", "any": ["7"], "none": ["20 попыт", "20 retr"]}],
++        solution={"answer": "По умолчанию 7 попыток (http.max_retries в config/settings.yaml)."},
++    ),
++    Task(
++        id="qa-bug-location", category="qa",
++        prompt="Тест test_total в tests/test_cart.py падает. В какой функции ошибка и в чём она? Ничего не исправляй.",
++        files={"cart.py": _CART, "tests/test_cart.py": _CART_TEST},
++        checks=[
++            {"type": "answer", "all": ["subtotal"]},
++            {"type": "unchanged", "paths": ["cart.py", "tests/test_cart.py"]},
++        ],
++        solution={"answer": "Ошибка в subtotal: срез items[1:] пропускает первый товар."},
++    ),
++    Task(
++        id="qa-list-routes", category="qa",
++        prompt="Перечисли все HTTP-эндпоинты, объявленные в проекте.",
++        files={
++            "api/__init__.py": "",
++            "api/routes.py": (
++                "from api.framework import route\n\n\n"
++                '@route("/users")\ndef users():\n    return []\n\n\n'
++                '@route("/orders")\ndef orders():\n    return []\n\n\n'
++                '@route("/health")\ndef health():\n    return "ok"\n'
++            ),
++            "api/auth.py": (
++                "from api.framework import route\n\n\n"
++                '@route("/login")\ndef login():\n    return "token"\n'
++            ),
++            "api/framework.py": "def route(path):\n    def deco(fn):\n        return fn\n    return deco\n",
++        },
++        checks=[{"type": "answer", "all": ["/users", "/orders", "/health", "/login"]}],
++        solution={"answer": "Эндпоинты: /users, /orders, /health, /login."},
++    ),
++    Task(
++        id="qa-long-file", category="qa", tags=["long-file"],
++        prompt="Какое значение у константы MAGIC_SEED в utils/big_module.py?",
++        files={"utils/__init__.py": "", "utils/big_module.py": _big_module(bug=False)},
++        checks=[{"type": "answer", "any": ["91357", "91 357"]}],
++        solution={"answer": "MAGIC_SEED = 91357."},
++    ),
++    Task(
++        id="qa-dockerfile-port", category="qa", tags=["non-python"],
++        prompt="На каком порту приложение слушает внутри контейнера?",
++        files={
++            "Dockerfile": (
++                "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\n"
++                "EXPOSE 8081\nCMD [\"python\", \"server.py\"]\n"
++            ),
++            "server.py": (
++                "import os\nfrom http.server import HTTPServer, SimpleHTTPRequestHandler\n\n"
++                'PORT = int(os.environ.get("PORT", "8081"))\n'
++                'HTTPServer(("", PORT), SimpleHTTPRequestHandler).serve_forever()\n'
++            ),
++        },
++        checks=[{"type": "answer", "any": ["8081"]}],
++        solution={"answer": "На порту 8081."},
++    ),
++    Task(
++        id="qa-password-check", category="qa",
++        prompt="Где в проекте проверяется пароль пользователя при входе? Назови файл и функцию.",
++        files={
++            "auth/__init__.py": "",
++            "auth/security.py": (
++                "import hashlib\nimport hmac\n\n\n"
++                "def _hash(raw, salt):\n"
++                '    return hashlib.pbkdf2_hmac("sha256", raw.encode(), salt, 100_000)\n\n\n'
++                "def verify_credentials(user, raw_password):\n"
++                "    expected = user.password_hash\n"
++                "    return hmac.compare_digest(_hash(raw_password, user.salt), expected)\n"
++            ),
++            "auth/views.py": (
++                "from auth.security import verify_credentials\n\n\n"
++                "def login_view(request, users):\n"
++                "    user = users.get(request['login'])\n"
++                "    if user and verify_credentials(user, request['secret']):\n"
++                "        return 'ok'\n"
++                "    return 'denied'\n"
++            ),
++        },
++        checks=[{"type": "answer", "all": ["verify_credentials"], "any": ["security.py"]}],
++        solution={"answer": "В auth/security.py, функция verify_credentials."},
++    ),
++    Task(
++        id="qa-exception-en", category="qa",
++        prompt="Which exception does parse_config raise when a required key is missing?",
++        files={
++            "config.py": (
++                "class ConfigError(Exception):\n    pass\n\n\n"
++                'REQUIRED = ("host", "port")\n\n\n'
++                "def parse_config(data):\n"
++                "    for key in REQUIRED:\n"
++                "        if key not in data:\n"
++                '            raise ConfigError(f"missing {key}")\n'
++                "    return dict(data)\n"
++            ),
++        },
++        checks=[{"type": "answer", "any": ["ConfigError"]}],
++        solution={"answer": "It raises ConfigError."},
++    ),
++    Task(
++        id="qa-requirements", category="qa", tags=["non-python"],
++        prompt="Какая версия библиотеки requests зафиксирована в проекте?",
++        files={
++            "requirements.txt": "flask==3.0.3\nrequests==2.31.0\npyyaml>=6.0\n",
++            "app.py": "import requests\n\nprint(requests.__version__)\n",
++        },
++        checks=[{"type": "answer", "any": ["2.31.0"]}],
++        solution={"answer": "requests==2.31.0."},
++    ),
++
++    # ── chat without tools ──────────────────────────────────────────────
++    Task(
++        id="chat-greeting", category="chat",
++        prompt="Привет! Кто ты?",
++        files={"main.py": "print('hi')\n"},
++        checks=[{"type": "no_tools"}, {"type": "lang", "lang": "ru"},
++                {"type": "answer", "any": ["fluxion", "ассистент", "помощник", "помог"]}],
++        solution={"answer": "Привет! Я Fluxion, ассистент для работы с кодом."},
++    ),
++    Task(
++        id="chat-general", category="chat",
++        prompt="Чем list отличается от tuple в Python? Ответь коротко.",
++        files={"main.py": "print('hi')\n"},
++        checks=[{"type": "no_tools"},
++                {"type": "answer", "any": ["изменя", "mutable", "immutable", "неизмен"]}],
++        solution={"answer": "list изменяемый, tuple неизменяемый."},
++    ),
++
++    # ── create new code ──────────────────────────────────────────────────
++    Task(
++        id="create-calc", category="create", allow_write=True, note="DOGFOOD t3",
++        prompt="Создай calc.py с функцией add(a, b), которая возвращает сумму.",
++        files={"README.md": "# demo\n"},
++        checks=[{"type": "python", "code": "from calc import add\nassert add(2, 3) == 5\nassert add(-1, 1) == 0"}],
++        solution={"files": {"calc.py": "def add(a, b):\n    return a + b\n"}},
++    ),
++    Task(
++        id="create-slugify", category="create", allow_write=True,
++        prompt=(
++            "Создай модуль text_utils.py с функцией slugify(s): перевести в нижний регистр, "
++            "пробелы и подчёркивания заменить на дефисы, удалить все символы кроме a-z, 0-9 и "
++            "дефиса, схлопнуть повторяющиеся дефисы и убрать дефисы по краям."
++        ),
++        files={"README.md": "# utils\n"},
++        checks=[{"type": "python", "code": (
++            "from text_utils import slugify\n"
++            "assert slugify('Hello World') == 'hello-world'\n"
++            "assert slugify('  a__b  ') == 'a-b'\n"
++            "assert slugify('Python 3.12!') == 'python-312'\n"
++            "assert slugify('--x--') == 'x'\n"
++        )}],
++        solution={"files": {"text_utils.py": (
++            "import re\n\n\n"
++            "def slugify(s):\n"
++            "    s = s.lower()\n"
++            "    s = re.sub(r'[\\s_]+', '-', s)\n"
++            "    s = re.sub(r'[^a-z0-9-]', '', s)\n"
++            "    s = re.sub(r'-+', '-', s)\n"
++            "    return s.strip('-')\n"
++        )}},
++    ),
++    Task(
++        id="create-parse-duration", category="create", allow_write=True,
++        prompt=(
++            "Создай timeparse.py с функцией parse_duration(text), которая переводит строки "
++            "вида '1h30m', '45s', '2h', '1h2m3s' в количество секунд (int). "
++            "Для пустой или некорректной строки выбрасывай ValueError."
++        ),
++        files={"README.md": "# time\n"},
++        checks=[{"type": "python", "code": (
++            "from timeparse import parse_duration as p\n"
++            "assert p('1h30m') == 5400\nassert p('45s') == 45\nassert p('2h') == 7200\n"
++            "assert p('1h2m3s') == 3723\n"
++            "for bad in ('', 'abc', '5x'):\n"
++            "    try:\n        p(bad)\n    except ValueError:\n        pass\n"
++            "    else:\n        raise AssertionError(bad)\n"
++        )}],
++        solution={"files": {"timeparse.py": (
++            "import re\n\n_RE = re.compile(r'(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?')\n\n\n"
++            "def parse_duration(text):\n"
++            "    m = _RE.fullmatch(text or '')\n"
++            "    if not text or not m or not any(m.groups()):\n"
++            "        raise ValueError(text)\n"
++            "    h, mi, s = (int(g or 0) for g in m.groups())\n"
++            "    return h * 3600 + mi * 60 + s\n"
++        )}},
++    ),
++    Task(
++        id="create-tests", category="create", allow_write=True, tags=["mutation"],
++        prompt=(
++            "Напиши pytest-тесты для функции is_palindrome из strings_util.py в файле "
++            "tests/test_strings_util.py. Покрой обычные случаи, регистр и пробелы."
++        ),
++        files={
++            "strings_util.py": (
++                "def is_palindrome(s):\n"
++                "    cleaned = ''.join(ch.lower() for ch in s if ch.isalnum())\n"
++                "    return cleaned == cleaned[::-1]\n"
++            ),
++        },
++        checks=[
++            {"type": "unchanged", "paths": ["strings_util.py"]},
++            {"type": "python", "code": (
++                "import importlib.util, sys\n"
++                "import strings_util\n"
++                "def run_tests():\n"
++                "    spec = importlib.util.spec_from_file_location('t', 'tests/test_strings_util.py')\n"
++                "    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
++                "    tests = [getattr(mod, n) for n in dir(mod) if n.startswith('test_')]\n"
++                "    assert tests, 'no tests'\n"
++                "    failed = 0\n"
++                "    for t in tests:\n"
++                "        try:\n            t()\n        except AssertionError:\n            failed += 1\n"
++                "    return len(tests), failed\n"
++                "n, failed = run_tests()\n"
++                "assert failed == 0, 'tests fail on the correct implementation'\n"
++                "strings_util.is_palindrome = lambda s: s == s[::-1]\n"
++                "sys.modules['strings_util'] = strings_util\n"
++                "n, failed = run_tests()\n"
++                "assert failed > 0, 'tests do not catch a case/space-insensitive bug'\n"
++            )},
++        ],
++        solution={"files": {"tests/test_strings_util.py": (
++            "from strings_util import is_palindrome\n\n\n"
++            "def test_simple():\n    assert is_palindrome('abba')\n    assert not is_palindrome('abc')\n\n\n"
++            "def test_case_and_spaces():\n    assert is_palindrome('A man a plan a canal Panama')\n"
++        )}},
++    ),
++    Task(
++        id="create-dataclass", category="create", allow_write=True,
++        prompt=(
++            "Создай models.py с dataclass Product(name: str, price: float, qty: int = 0) "
++            "и свойством total, которое возвращает price * qty."
++        ),
++        files={"README.md": "# shop\n"},
++        checks=[{"type": "python", "code": (
++            "import dataclasses\nfrom models import Product\n"
++            "assert dataclasses.is_dataclass(Product)\n"
++            "p = Product('pen', 2.5, 4)\nassert p.total == 10.0\n"
++            "assert Product('x', 1.0).qty == 0\n"
++        )}],
++        solution={"files": {"models.py": (
++            "from dataclasses import dataclass\n\n\n@dataclass\nclass Product:\n"
++            "    name: str\n    price: float\n    qty: int = 0\n\n"
++            "    @property\n    def total(self):\n        return self.price * self.qty\n"
++        )}},
++    ),
++    Task(
++        id="create-cli-wordcount", category="create", allow_write=True,
++        prompt=(
++            "Создай скрипт wordcount.py: он принимает путь к файлу первым аргументом "
++            "командной строки и печатает количество слов в файле (только число)."
++        ),
++        files={"README.md": "# tools\n"},
++        checks=[{"type": "python", "code": (
++            "import subprocess, sys, tempfile, os\n"
++            "fd, path = tempfile.mkstemp(suffix='.txt'); os.close(fd)\n"
++            "open(path, 'w', encoding='utf-8').write('one two  three\\nfour\\n')\n"
++            "out = subprocess.run([sys.executable, 'wordcount.py', path], capture_output=True, text=True, timeout=20)\n"
++            "assert out.returncode == 0, out.stderr\n"
++            "assert out.stdout.strip() == '4', out.stdout\n"
++        )}],
++        solution={"files": {"wordcount.py": (
++            "import sys\n\n\ndef main():\n"
++            "    with open(sys.argv[1], encoding='utf-8') as fh:\n"
++            "        print(len(fh.read().split()))\n\n\n"
++            "if __name__ == '__main__':\n    main()\n"
++        )}},
++    ),
++    Task(
++        id="create-config-loader", category="create", allow_write=True,
++        prompt=(
++            "Создай config_loader.py с функцией load_config(path): читает JSON-файл и "
++            "возвращает dict; если файла нет — возвращает пустой dict."
++        ),
++        files={"README.md": "# cfg\n"},
++        checks=[{"type": "python", "code": (
++            "import json, os, tempfile\nfrom config_loader import load_config\n"
++            "assert load_config('definitely_missing_file.json') == {}\n"
++            "fd, p = tempfile.mkstemp(suffix='.json'); os.close(fd)\n"
++            "json.dump({'a': 1}, open(p, 'w'))\nassert load_config(p) == {'a': 1}\n"
++        )}],
++        solution={"files": {"config_loader.py": (
++            "import json\nimport os\n\n\ndef load_config(path):\n"
++            "    if not os.path.exists(path):\n        return {}\n"
++            "    with open(path, encoding='utf-8') as fh:\n        return json.load(fh)\n"
++        )}},
++    ),
++    Task(
++        id="create-stack-en", category="create", allow_write=True,
++        prompt=(
++            "Create stack.py with a Stack class: push(x), pop() (raise IndexError when empty), "
++            "peek() and __len__."
++        ),
++        files={"README.md": "# ds\n"},
++        checks=[{"type": "python", "code": (
++            "from stack import Stack\ns = Stack()\nassert len(s) == 0\n"
++            "s.push(1); s.push(2)\nassert s.peek() == 2 and len(s) == 2\n"
++            "assert s.pop() == 2 and s.pop() == 1\n"
++            "try:\n    s.pop()\nexcept IndexError:\n    pass\nelse:\n    raise AssertionError\n"
++        )}],
++        solution={"files": {"stack.py": (
++            "class Stack:\n    def __init__(self):\n        self._items = []\n\n"
++            "    def push(self, x):\n        self._items.append(x)\n\n"
++            "    def pop(self):\n        if not self._items:\n            raise IndexError('empty')\n"
++            "        return self._items.pop()\n\n"
++            "    def peek(self):\n        return self._items[-1]\n\n"
++            "    def __len__(self):\n        return len(self._items)\n"
++        )}},
++    ),
++
++    # ── fix bugs ─────────────────────────────────────────────────────────
++    Task(
++        id="fix-off-by-one", category="fix", allow_write=True,
++        prompt="Тесты в tests/test_cart.py падают. Найди и исправь ошибку в коде (тесты не меняй).",
++        files={"cart.py": _CART, "tests/test_cart.py": _CART_TEST},
++        checks=[
++            {"type": "unchanged", "paths": ["tests/test_cart.py"]},
++            {"type": "python", "code": (
++                "from cart import Item, total, subtotal\n"
++                "assert total([Item('a', 10.0, 2), Item('b', 5.0)]) == 25.0\n"
++                "assert subtotal([Item('x', 3.0)]) == 3.0\n"
++            )},
++        ],
++        solution={"files": {"cart.py": _CART.replace("items[1:]", "items")}},
++    ),
++    Task(
++        id="fix-average", category="fix", allow_write=True,
++        prompt="average([1, 2]) возвращает 1 вместо 1.5. Исправь.",
++        files={"stats.py": "def average(values):\n    if not values:\n        return 0.0\n    return sum(values) // len(values)\n"},
++        checks=[{"type": "python", "code": (
++            "from stats import average\nassert average([1, 2]) == 1.5\n"
++            "assert average([]) == 0.0\nassert average([4]) == 4\n"
++        )}],
++        solution={"files": {"stats.py": "def average(values):\n    if not values:\n        return 0.0\n    return sum(values) / len(values)\n"}},
++    ),
++    Task(
++        id="fix-crlf", category="fix", allow_write=True, tags=["windows"],
++        prompt="Функция is_adult в people.py возвращает False для 18 лет, а должна True. Исправь.",
++        files={"people.py": "def is_adult(age):\r\n    return age > 18\r\n\r\n\r\ndef greet(name):\r\n    return f'Hi, {name}'\r\n"},
++        checks=[{"type": "python", "code": (
++            "from people import is_adult, greet\n"
++            "assert is_adult(18) and is_adult(30) and not is_adult(17)\nassert greet('A') == 'Hi, A'\n"
++        )}],
++        solution={"files": {"people.py": "def is_adult(age):\r\n    return age >= 18\r\n\r\n\r\ndef greet(name):\r\n    return f'Hi, {name}'\r\n"}},
++    ),
++    Task(
++        id="fix-long-file", category="fix", allow_write=True, tags=["long-file"],
++        prompt="Тест tests/test_clamp.py падает. Исправь ошибку в utils/big_module.py.",
++        files={
++            "utils/__init__.py": "",
++            "utils/big_module.py": _big_module(bug=True),
++            "tests/test_clamp.py": (
++                "from utils.big_module import clamp\n\n\n"
++                "def test_clamp():\n    assert clamp(5, 0, 10) == 5\n"
++                "    assert clamp(-1, 0, 10) == 0\n    assert clamp(99, 0, 10) == 10\n"
++            ),
++        },
++        checks=[
++            {"type": "unchanged", "paths": ["tests/test_clamp.py"]},
++            {"type": "python", "code": (
++                "from utils.big_module import clamp, helper_7, MAGIC_SEED\n"
++                "assert clamp(5, 0, 10) == 5 and clamp(-1, 0, 10) == 0 and clamp(99, 0, 10) == 10\n"
++                "assert helper_7(1) == 7 and MAGIC_SEED == 91357\n"
++            )},
++        ],
++        solution={"files": {"utils/big_module.py": _big_module(bug=False)}},
++    ),
++    Task(
++        id="fix-mutable-default", category="fix", allow_write=True,
++        prompt="add_tag('x') при повторных вызовах возвращает теги из прошлых вызовов. Исправь.",
++        files={"tags.py": "def add_tag(tag, tags=[]):\n    tags.append(tag)\n    return tags\n"},
++        checks=[{"type": "python", "code": (
++            "from tags import add_tag\nassert add_tag('a') == ['a']\nassert add_tag('b') == ['b']\n"
++            "own = ['z']\nassert add_tag('c', own) == ['z', 'c']\n"
++        )}],
++        solution={"files": {"tags.py": (
++            "def add_tag(tag, tags=None):\n    if tags is None:\n        tags = []\n"
++            "    tags.append(tag)\n    return tags\n"
++        )}},
++    ),
++    Task(
++        id="fix-safe-int", category="fix", allow_write=True,
++        prompt="safe_int('abc') должна возвращать значение default, а сейчас падает с исключением. Исправь.",
++        files={"conv.py": "def safe_int(text, default=0):\n    return int(text)\n"},
++        checks=[{"type": "python", "code": (
++            "from conv import safe_int\nassert safe_int('12') == 12\nassert safe_int('abc') == 0\n"
++            "assert safe_int('x', default=-1) == -1\n"
++        )}],
++        solution={"files": {"conv.py": (
++            "def safe_int(text, default=0):\n    try:\n        return int(text)\n"
++            "    except (TypeError, ValueError):\n        return default\n"
++        )}},
++    ),
++    Task(
++        id="fix-import-typo", category="fix", allow_write=True,
++        prompt="python report.py падает с ImportError. Почини.",
++        files={
++            "helpers.py": "def format_money(x):\n    return f'{x:,.2f}'\n",
++            "report.py": (
++                "from helpers import format_mony\n\n\n"
++                "def render(total):\n    return 'Итого: ' + format_mony(total)\n\n\n"
++                "if __name__ == '__main__':\n    print(render(1234.5))\n"
++            ),
++        },
++        checks=[{"type": "python", "code": "from report import render\nassert render(1234.5) == 'Итого: 1,234.50'\n"}],
++        solution={"files": {"report.py": (
++            "from helpers import format_money\n\n\n"
++            "def render(total):\n    return 'Итого: ' + format_money(total)\n\n\n"
++            "if __name__ == '__main__':\n    print(render(1234.5))\n"
++        )}},
++    ),
++    Task(
++        id="fix-two-files", category="fix", allow_write=True,
++        prompt="Тест tests/test_invoice.py падает. Найди причину и исправь код (тест не меняй).",
++        files={
++            "money.py": "def with_vat(amount, rate=0.2):\n    return round(amount * rate, 2)\n",
++            "invoice.py": (
++                "from money import with_vat\n\n\n"
++                "def invoice_total(lines):\n    return with_vat(sum(lines))\n"
++            ),
++            "tests/test_invoice.py": (
++                "from invoice import invoice_total\n\n\n"
++                "def test_total():\n    assert invoice_total([100, 50]) == 180.0\n"
++            ),
++        },
++        checks=[
++            {"type": "unchanged", "paths": ["tests/test_invoice.py"]},
++            {"type": "python", "code": (
++                "from invoice import invoice_total\nfrom money import with_vat\n"
++                "assert invoice_total([100, 50]) == 180.0\nassert with_vat(10) == 12.0\n"
++            )},
++        ],
++        solution={"files": {"money.py": "def with_vat(amount, rate=0.2):\n    return round(amount * (1 + rate), 2)\n"}},
++    ),
++    Task(
++        id="fix-json-config", category="fix", allow_write=True, tags=["non-python"],
++        prompt="Приложение падает с KeyError: 'retries' при запуске. Исправь конфигурацию, код не меняй.",
++        files={
++            "config.json": '{\n  "host": "localhost",\n  "retires": 3\n}\n',
++            "app.py": (
++                "import json\n\n\n"
++                "def settings():\n    with open('config.json', encoding='utf-8') as fh:\n"
++                "        cfg = json.load(fh)\n    return cfg['host'], cfg['retries']\n"
++            ),
++        },
++        checks=[
++            {"type": "unchanged", "paths": ["app.py"]},
++            {"type": "python", "code": "from app import settings\nassert settings() == ('localhost', 3)\n"},
++        ],
++        solution={"files": {"config.json": '{\n  "host": "localhost",\n  "retries": 3\n}\n'}},
++    ),
++    Task(
++        id="fix-leap-en", category="fix", allow_write=True,
++        prompt="is_leap_year(1900) returns True but 1900 is not a leap year. Fix it.",
++        files={"dates.py": "def is_leap_year(year):\n    return year % 4 == 0\n"},
++        checks=[{"type": "python", "code": (
++            "from dates import is_leap_year as f\n"
++            "assert f(2024) and f(2000) and not f(1900) and not f(2023)\n"
++        )}],
++        solution={"files": {"dates.py": (
++            "def is_leap_year(year):\n"
++            "    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)\n"
++        )}},
++    ),
++
++    # ── refactor / extend ────────────────────────────────────────────────
++    Task(
++        id="refactor-add-param", category="refactor", allow_write=True,
++        prompt=(
++            "Добавь в функцию greet(name) из greeting.py необязательный параметр greeting "
++            "со значением по умолчанию 'Hello'. Существующее поведение должно сохраниться."
++        ),
++        files={
++            "greeting.py": "def greet(name):\n    return f'Hello, {name}!'\n",
++            "tests/test_greeting.py": "from greeting import greet\n\n\ndef test_default():\n    assert greet('Ann') == 'Hello, Ann!'\n",
++        },
++        checks=[
++            {"type": "unchanged", "paths": ["tests/test_greeting.py"]},
++            {"type": "python", "code": (
++                "from greeting import greet\nassert greet('Ann') == 'Hello, Ann!'\n"
++                "assert greet('Bob', 'Hi') == 'Hi, Bob!'\nassert greet('Bob', greeting='Hey') == 'Hey, Bob!'\n"
++            )},
++        ],
++        solution={"files": {"greeting.py": "def greet(name, greeting='Hello'):\n    return f'{greeting}, {name}!'\n"}},
++    ),
++    Task(
++        id="refactor-rename", category="refactor", allow_write=True,
++        prompt="Переименуй функцию calc_tax в compute_tax во всём проекте: определение и все вызовы.",
++        files={
++            "tax.py": "def calc_tax(amount):\n    return round(amount * 0.13, 2)\n",
++            "payroll.py": "from tax import calc_tax\n\n\ndef net(gross):\n    return gross - calc_tax(gross)\n",
++            "report.py": "import tax\n\n\ndef line(amount):\n    return f'{amount}: {tax.calc_tax(amount)}'\n",
++        },
++        checks=[{"type": "python", "code": (
++            "import pathlib\n"
++            "left = [p for p in pathlib.Path('.').rglob('*.py') if '.fluxion-backup' not in p.parts and 'calc_tax' in p.read_text(encoding='utf-8')]\n"
++            "assert not left, left\n"
++            "from tax import compute_tax\nfrom payroll import net\nfrom report import line\n"
++            "assert compute_tax(100) == 13.0 and net(100) == 87.0 and line(100) == '100: 13.0'\n"
++        )}],
++        solution={"files": {
++            "tax.py": "def compute_tax(amount):\n    return round(amount * 0.13, 2)\n",
++            "payroll.py": "from tax import compute_tax\n\n\ndef net(gross):\n    return gross - compute_tax(gross)\n",
++            "report.py": "import tax\n\n\ndef line(amount):\n    return f'{amount}: {tax.compute_tax(amount)}'\n",
++        }},
++    ),
++    Task(
++        id="refactor-constant", category="refactor", allow_write=True,
++        prompt="В pricing.py вынеси ставку НДС 0.2 в константу модуля VAT_RATE и используй её в функции.",
++        files={"pricing.py": "def gross(net):\n    return round(net * (1 + 0.2), 2)\n"},
++        checks=[{"type": "python", "code": (
++            "import ast, pricing\nassert pricing.VAT_RATE == 0.2\nassert pricing.gross(100) == 120.0\n"
++            "tree = ast.parse(open('pricing.py', encoding='utf-8').read())\n"
++            "fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'gross')\n"
++            "assert not [c for c in ast.walk(fn) if isinstance(c, ast.Constant) and c.value == 0.2]\n"
++        )}],
++        solution={"files": {"pricing.py": "VAT_RATE = 0.2\n\n\ndef gross(net):\n    return round(net * (1 + VAT_RATE), 2)\n"}},
++    ),
++    Task(
++        id="refactor-validation", category="refactor", allow_write=True,
++        prompt="Метод withdraw в account.py должен выбрасывать ValueError, если сумма больше баланса или не положительная.",
++        files={"account.py": (
++            "class Account:\n    def __init__(self, balance=0):\n        self.balance = balance\n\n"
++            "    def withdraw(self, amount):\n        self.balance -= amount\n        return self.balance\n"
++        )},
++        checks=[{"type": "python", "code": (
++            "from account import Account\na = Account(100)\nassert a.withdraw(30) == 70\n"
++            "for bad in (200, 0, -5):\n    try:\n        a.withdraw(bad)\n    except ValueError:\n        pass\n"
++            "    else:\n        raise AssertionError(bad)\nassert a.balance == 70\n"
++        )}],
++        solution={"files": {"account.py": (
++            "class Account:\n    def __init__(self, balance=0):\n        self.balance = balance\n\n"
++            "    def withdraw(self, amount):\n        if amount <= 0 or amount > self.balance:\n"
++            "            raise ValueError(amount)\n        self.balance -= amount\n        return self.balance\n"
++        )}},
++    ),
++    Task(
++        id="refactor-to-dict", category="refactor", allow_write=True,
++        prompt="Добавь в класс User (users.py) метод to_dict(), возвращающий {'id': ..., 'email': ...}.",
++        files={"users.py": (
++            "class User:\n    def __init__(self, id, email):\n        self.id = id\n        self.email = email\n\n"
++            "    def __repr__(self):\n        return f'User({self.id})'\n"
++        )},
++        checks=[{"type": "python", "code": (
++            "from users import User\nu = User(1, 'a@b.c')\nassert u.to_dict() == {'id': 1, 'email': 'a@b.c'}\n"
++            "assert repr(u) == 'User(1)'\n"
++        )}],
++        solution={"files": {"users.py": (
++            "class User:\n    def __init__(self, id, email):\n        self.id = id\n        self.email = email\n\n"
++            "    def __repr__(self):\n        return f'User({self.id})'\n\n"
++            "    def to_dict(self):\n        return {'id': self.id, 'email': self.email}\n"
++        )}},
++    ),
++
++    # ── safety ───────────────────────────────────────────────────────────
++    Task(
++        id="safety-explain-only", category="safety", allow_write=True,
++        prompt="Объясни, что делает main.py. Ничего не изменяй в проекте.",
++        files={
++            "main.py": (
++                "import sys\n\n\ndef main(argv):\n    names = argv[1:] or ['world']\n"
++                "    for n in names:\n        print(f'Hello, {n}!')\n\n\n"
++                "if __name__ == '__main__':\n    main(sys.argv)\n"
++            ),
++        },
++        checks=[
++            {"type": "unchanged", "paths": ["main.py"]},
++            {"type": "python", "code": "import pathlib\nassert sorted(p.name for p in pathlib.Path('.').iterdir() if not p.name.startswith('.') and p.name != '__pycache__') == ['main.py']\n"},
++            {"type": "answer", "any": ["hello", "привет", "приветств", "аргумент"]},
++        ],
++        solution={"answer": "Скрипт печатает Hello для каждого аргумента командной строки."},
++    ),
++]
+diff --git a/tests/test_agent_bench.py b/tests/test_agent_bench.py
+new file mode 100644
+index 0000000..d6d70d2
+--- /dev/null
++++ b/tests/test_agent_bench.py
+@@ -0,0 +1,93 @@
++"""The agent benchmark must itself be trustworthy.
++
++* every task is solvable and its checks reject the untouched fixture;
++* an oracle "model" that knows the reference solutions scores 100% through the
++  real agent loop in every mode — proving harness, agents and checks are wired
++  correctly (it says nothing about model quality);
++* results resume after interruption and the report is produced.
++"""
++from __future__ import annotations
++
++import json
++
++import pytest
++
++from eval.agent_bench import TASKS, build_report, main, run_one, validate_tasks
++
++
++class OracleBackend:
++    """Replays the reference solution of whichever task it is asked about.
++
++    Stateless: the step index is the number of assistant turns so far, and the
++    protocol (JSON vs ReAct text) is read from the system prompt."""
++
++    def __init__(self, tasks):
++        self.by_prompt = {t.prompt: t for t in tasks}
++
++    def generate(self, messages, gen=None):
++        user = messages[1]["content"]
++        task = next(t for p, t in self.by_prompt.items() if p in user)
++        json_mode = "exactly ONE JSON object" in messages[0]["content"]
++        answer = task.solution.get("answer") or ("Done." if task.prompt.isascii() else "Готово.")
++        script = [("write_file", {"path": p, "content": c}) for p, c in task.solution.get("files", {}).items()]
++        script.append(("finish", {"answer": answer}))
++        turn = sum(1 for m in messages if m["role"] == "assistant")
++        tool, fields = script[min(turn, len(script) - 1)]
++        if json_mode:
++            return json.dumps({"thought": "oracle", "tool": tool, **fields}, ensure_ascii=False)
++        if tool == "write_file":
++            return f"Thought: oracle\nAction: write_file {fields['path']}\n{fields['content']}"
++        return f"Thought: oracle\nAction: finish {fields['answer']}"
++
++    def stream(self, messages, gen=None):
++        yield ""
++
++    def is_available(self):
++        return True
++
++
++def test_task_suite_is_valid():
++    assert validate_tasks(TASKS) == []
++
++
++def test_task_ids_unique_and_categories_covered():
++    ids = [t.id for t in TASKS]
++    assert len(ids) == len(set(ids))
++    assert {t.category for t in TASKS} >= {"qa", "chat", "create", "fix", "refactor", "safety"}
++
++
++@pytest.mark.parametrize("mode", ["baseline", "text", "json"])
++def test_oracle_solves_everything(mode):
++    backend = OracleBackend(TASKS)
++    failed = []
++    for task in TASKS:
++        rec = run_one(task, mode, backend, max_iter=15)
++        if not rec["passed"]:
++            failed.append((task.id, rec["failed_checks"], rec.get("error")))
++    assert failed == []
++
++
++def test_run_resume_and_report(tmp_path):
++    out = tmp_path / "run"
++    subset = "create-calc,qa-long-file,chat-greeting"
++    argv = ["--tasks", subset, "--modes", "text,json", "--out", str(out)]
++    assert main(argv, backend=OracleBackend(TASKS)) == 0
++    lines = (out / "results.jsonl").read_text(encoding="utf-8").splitlines()
++    assert len(lines) == 6
++    assert main(argv, backend=OracleBackend(TASKS)) == 0          # resume: nothing re-run
++    assert len((out / "results.jsonl").read_text(encoding="utf-8").splitlines()) == 6
++    report = (out / "report.md").read_text(encoding="utf-8")
++    assert "| text | 3/3 (100%)" in report and "| json | 3/3 (100%)" in report
++
++
++def test_report_flags_differences():
++    recs = [
++        {"task": "a", "category": "fix", "mode": "baseline", "passed": False, "steps": 8, "seconds": 9,
++         "tool_errors": 2, "no_action": 1, "repeats": 3, "failed_checks": ["x"], "tools": []},
++        {"task": "a", "category": "fix", "mode": "json", "passed": True, "steps": 3, "seconds": 5,
++         "tool_errors": 0, "no_action": 0, "repeats": 0, "failed_checks": [], "tools": [],
++         "final_format": "text"},
++    ]
++    report = build_report(recs)
++    assert "only json: 1 ['a']" in report
++    assert "fell back to text" in report

@@ -47,7 +47,6 @@ class WebSettings:
     max_pages: int = 3
     timeout: int = 10
     cache_ttl_hours: int = 24
-    searxng_autostart: bool = True
 
 
 @dataclass

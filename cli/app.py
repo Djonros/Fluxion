@@ -480,31 +480,6 @@ def _safe_count(rag_service: RAGService) -> int:
         return 0
 
 
-def _llama_cpp_fallback(settings: Settings):
-    """Try the embedded llama.cpp engine when Ollama is unreachable."""
-    from core.backend_factory import (
-        _DEFAULT_CHAT_MODEL_ID,
-        _llama_cpp_installed,
-        _local_gguf_available,
-    )
-
-    if not _llama_cpp_installed() or not _local_gguf_available(settings):
-        return None
-    if not str(getattr(settings, "gguf_path", "") or ""):
-        try:
-            from core.model_manager import ModelManager
-
-            settings.gguf_path = str(ModelManager().path_for(_DEFAULT_CHAT_MODEL_ID))
-        except Exception:
-            return None
-    try:
-        from core.llama_cpp_backend import LlamaCppBackend
-
-        return LlamaCppBackend.from_settings(settings)
-    except Exception:
-        return None
-
-
 def _startup_backend(settings: Settings):
     """Pick the startup backend, enforcing the Pro gate for the API backend.
 
@@ -533,15 +508,6 @@ def main() -> int:
             "  Free tier: local Ollama or the embedded llama.cpp engine.\n"
             "  Activate with: /license activate <key>"
         )
-
-    if isinstance(backend, OllamaBackend) and not backend.client.is_alive():
-        fallback = _llama_cpp_fallback(settings)
-        if fallback is not None:
-            renderer.warn(
-                f"Ollama server not reachable at {settings.ollama_host}.\n"
-                "  Switching to the embedded llama.cpp engine."
-            )
-            backend = fallback
 
     if isinstance(backend, OllamaBackend):
         if not backend.client.is_alive():

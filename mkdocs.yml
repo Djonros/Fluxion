@@ -2,6 +2,11 @@ site_name: Fluxion
 site_description: Локальный AI-ассистент для вайб-кодинга на Python
 site_author: Djonros
 
+# Internal notes (test logs, roadmap, video script) are kept in the repo
+# but not published on the documentation site.
+exclude_docs: |
+  internal/
+
 theme:
   name: material
   language: ru

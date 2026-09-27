@@ -18,6 +18,7 @@ $appDir = Join-Path $root "dist\FluxionBrowserLite"
 $fullDir = Join-Path $root "dist\FluxionBrowserFull"
 $artifactDir = Join-Path $root "dist\artifacts"
 $wheelsDir = Join-Path $root "dist\training_pack_build\wheels"
+$py = if ($env:FLUXION_PYTHON) { $env:FLUXION_PYTHON } else { "python" }
 
 if (-not (Test-Path $appDir)) {
     if ($SkipLiteBuild) { throw "Not found: $appDir (run build_lite.ps1 first)" }
@@ -43,7 +44,7 @@ if ($RefreshWheels -and (Test-Path $wheelsDir)) {
 if (-not $hasTorch) {
     Write-Host "[full] downloading wheel pack ($torchSpec + ML stack, py3.12)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $wheelsDir | Out-Null
-    python -m pip download $torchSpec `
+    & $py -m pip download $torchSpec `
         --index-url $torchIndex `
         --python-version 3.12 --only-binary=:all: -d $wheelsDir
     if ($LASTEXITCODE -ne 0) { throw "pip download torch failed with code $LASTEXITCODE" }
@@ -55,7 +56,7 @@ if (-not $hasTorch) {
     "$torchSpec" | Set-Content -Path $constraints -Encoding ASCII
     Write-Host "[full] constraint: $torchSpec" -ForegroundColor Green
 
-    python -m pip download @TRAINING_PACKAGES -c $constraints `
+    & $py -m pip download @TRAINING_PACKAGES -c $constraints `
         --extra-index-url $torchIndex `
         --python-version 3.12 --only-binary=:all: -d $wheelsDir
     if ($LASTEXITCODE -ne 0) { throw "pip download ML stack failed with code $LASTEXITCODE" }

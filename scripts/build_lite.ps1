@@ -2,8 +2,11 @@
 #   1) PyInstaller via fluxion-desktop-browser-lite.spec
 #   2) trim debug/devtools paks + non-ru translations
 #   3) pack dist\FluxionBrowserLite into dist\artifacts\*.7z (< 200 MB target)
-# Usage: powershell -File scripts\build_lite.ps1 [-SkipBuild]
-param([switch]$SkipBuild)
+# Usage: powershell -File scripts\build_lite.ps1 [-SkipBuild] [-NoPack]
+#   -NoPack          build the app folder only, skip the 7z archive (no 7-Zip needed)
+#   $env:FLUXION_PYTHON  interpreter to build with (default: python from PATH);
+#                    it must have the app dependencies, PySide6 and llama-cpp-python
+param([switch]$SkipBuild, [switch]$NoPack)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -11,10 +14,11 @@ Set-Location $root
 
 $appDir = Join-Path $root "dist\FluxionBrowserLite"
 $artifactDir = Join-Path $root "dist\artifacts"
+$py = if ($env:FLUXION_PYTHON) { $env:FLUXION_PYTHON } else { "python" }
 
 if (-not $SkipBuild) {
     Write-Host "[lite] PyInstaller build..." -ForegroundColor Cyan
-    python -m PyInstaller fluxion-desktop-browser-lite.spec --noconfirm
+    & $py -m PyInstaller fluxion-desktop-browser-lite.spec --noconfirm
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with code $LASTEXITCODE" }
 }
 
@@ -62,6 +66,10 @@ $after = Get-DirMB $appDir
 Write-Host "[lite] installed size after trim: $after MB (saved $([math]::Round($before - $after, 1)) MB)" -ForegroundColor Green
 
 # --- 3) pack ---
+if ($NoPack) {
+    Write-Host "[lite] -NoPack: app folder ready, archive skipped: $appDir" -ForegroundColor Green
+    exit 0
+}
 $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
 if (-not $sevenZip) {
     $candidate = "C:\Program Files\7-Zip\7z.exe"

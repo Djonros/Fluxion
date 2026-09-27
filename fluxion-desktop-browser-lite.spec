@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for the Fluxion Browser LITE desktop app.
 
-Same feature set as fluxion-desktop-browser.spec (chat + agent + RAG +
-browser + wizard/health), minus the training stack: QLoRA training runs
+The app build (chat + agent + RAG + browser + wizard/health) without the
+training stack: QLoRA training runs
 inside the on-demand `data/training_env` venv (Phase 15), so torch /
 transformers / datasets and friends never ship inside the exe.
 Post-build trimming (debug paks, translations) + 7z packaging is done by
@@ -34,7 +34,7 @@ a = Analysis(
     pathex=[os.path.abspath(".")],
     binaries=llama_cpp_binaries,
     datas=[
-        ("assets", "assets"),
+        ("assets/icon-256.png", "assets"),  # runtime needs only the window icon
         ("config", "config"),
         ("finetune", "finetune"),
         ("licensing", "licensing"),

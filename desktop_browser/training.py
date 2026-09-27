@@ -303,17 +303,6 @@ def install_training_environment(
         log,
         stop_requested,
     )
-    _run_cmd(
-        [str(py), "-m", "pip", "install", "torch", "--index-url", torch_index],
-        log,
-        stop_requested,
-    )
-    log("Установка ML-стека (unsloth, peft, trl, ...)...")
-    _run_cmd(
-        [str(py), "-m", "pip", "install", *TRAINING_PACKAGES],
-        log,
-        stop_requested,
-    )
     (env_dir / ENV_MARKER).write_text(
         json.dumps({"python": str(py)}), encoding="utf-8"
     )
@@ -377,6 +366,7 @@ def run_pipeline(
 ) -> dict:
     """Run the full training pipeline. Raises TrainingError on failure."""
     from licensing import ProRequiredError, ensure_pro
+    from licensing.store import DEFAULT_LICENSE_PATH
 
     try:
         ensure_pro("qlora")
@@ -402,7 +392,12 @@ def run_pipeline(
         )
 
     if env_py:
-        subprocess_env = {"PYTHONPATH": str(_source_root())}
+        # The trainer runs under the venv python (not frozen): pass the licence
+        # location explicitly so it finds the activation of the frozen app.
+        subprocess_env = {
+            "PYTHONPATH": str(_source_root()),
+            "FLUXION_LICENSE_FILE": str(DEFAULT_LICENSE_PATH),
+        }
 
         def trainer(settings, dataset, max_samples):  # type: ignore[misc]
             module = (

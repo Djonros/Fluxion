@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-27
+
+Production-readiness release: agent reliability and security fixes, structured
+tool calls, semantic code search, agent benchmark, updater/test/release tooling,
+project cleanup. Plain-language summary: `RELEASE_NOTES_RU.md`.
+
+### Added — Release tooling
+- `fluxion-release.bat`: checks the repo and that tag `v<APP_VERSION>` is free (locally and on GitHub), runs tests, shows the changes, asks whether to publish local `config` edits, commits, tags, pushes and creates the GitHub release with the newest Lite/Full archives (files over GitHub's 2 GB limit are skipped) via GitHub CLI, or explains the web steps. `--check` runs the checks only. A folder downloaded as a zip can be connected to the repository without touching the files.
+- `tests/test_release.py`: CHANGELOG section and release notes for the current version, crash reports carry `APP_VERSION` (was hard-coded `desktop-0.9`), numeric update comparison.
+- Version 0.10.0; VS Code extension 0.1.1 (manifest fix).
+
+### Fixed — Tests hermetic for CI
+- `tests/test_training_pipeline.py` no longer depends on a Pro licence activated on the machine (CI has none), Windows-only auto-install tests are skipped elsewhere.
+
+### Fixed — Lite build failed ('tuple' object is not callable)
+- `fluxion-desktop-browser-lite.spec`: when the bundled assets were narrowed to the window icon, the comma after the tuple ended up inside the trailing comment, so two `datas` tuples became a call. New `tests/test_build_specs.py` compiles every spec with warnings as errors and checks that the entry script, `datas` sources and the exe icon exist; it runs in `fluxion-update.bat` before the build and in `fluxion-test.bat`.
+
+### Changed — Project cleanup, part 2 (owner decisions)
+- Removed the legacy desktop app (`desktop/`, `run_desktop.py`, `fluxion-desktop.spec`): the exe is built from `desktop_browser`. Its window tests (45) are ported to `tests/test_desktop_window.py`, `tests/test_training_pipeline.py` now tests `desktop_browser.training` (the only copy tested before was the legacy one). `fluxion-desktop.bat` launches `desktop_browser`.
+- **Fixed (found by the ported tests):** `desktop_browser.training.install_training_environment` had a merge leftover — the offline install from the Full build's wheel pack crashed with `UnboundLocalError`, and the online install installed an unpinned torch and the ML stack a second time. Restored the licence-file hand-over (`FLUXION_LICENSE_FILE`) to the trainer subprocess, which the legacy copy had and the new one lost. Regression tests added.
+- **Fixed:** tests of the desktop window wrote to the developer's real chat history (`data/chats.json`); `tests/conftest.py` isolates it for every test.
+- Removed `fluxion-desktop-browser.spec` (superseded by the Lite spec), `fluxion-license.bat` (superseded by `issue-key.bat`), `scripts/export_training_package.py` (unused).
+- Batch files consolidated: removed `fluxion-deploy.bat` (duplicated setup + launch menu + tests) and `fluxion-web.bat` (created SearXNG without the JSON-format settings → web search got 403; the app starts SearXNG itself, `scripts/setup_searxng.ps1` for CLI/server). `fluxion-setup.bat` rewritten for the llama.cpp product: optional `.venv`, requirements, embedded engine (prebuilt CPU wheel first, source/GPU build via `install_llamacpp.ps1` as fallback), optional server deps, verification; no Ollama. Launchers (`fluxion-desktop.bat`, `fluxion.bat`, `fluxion-server.bat`) use the project `.venv`. Fixed broken blocks (`echo … (~4.7 GB)` inside `( … )`) of the old setup/deploy.
+- **Fixed:** `fluxion-vscode.bat` branch without `code` in PATH never worked (missing `if`, variable expanded at parse time); rewritten. The VS Code extension manifest pointed to `./out/extension.js`, which nothing builds — the extension failed to activate; now `./src/extension.js`.
+- `scripts/install_llamacpp.ps1`: uses `$env:FLUXION_PYTHON`; `pip --user` only outside a virtual environment (it is rejected inside one).
+- `issue-key.bat` converted to CRLF line endings (LF breaks label jumps in cmd).
+- Internal notes moved to `docs/internal/` (DOGFOOD log, roadmap, video script) and excluded from the docs site; README/USER_GUIDE/install/web-search docs updated to the new set of batch files.
+
+### Changed — Project cleanup
+- Removed `reference/` (unrelated seq2seq/LSTM tutorial code, not used anywhere).
+- `REMOVED_FILES.txt` lists paths removed from the project; `fluxion-update.bat` deletes them from an installed copy (inside the program folder only, never config/data/models/.git/venvs; they stay in the backup for `--rollback`). Previously copy-over updates never removed anything.
+- Fixed: `fluxion-web.bat` and `fluxion-deploy.bat` managed a SearXNG container with the old project name `vibe-coder-searxng` on port 8080, while the app and `setup_searxng.ps1` use `fluxion-searxng` — the bats tried to create a second container on a busy port. Web fetcher user agent `VibeCoderBot` → `FluxionBot`.
+- Fixed: desktop_browser told users to run `python -m desktop` (the old app) when the engine is missing; now `python -m desktop_browser`.
+- Window icon: square `assets/icon-256.png` (from `icon.ico`, same as the exe icon) instead of the non-square 1664×928 `icon.png`; the exe bundles only this file instead of the whole `assets/` folder (−4.5 MB: logo, banner, .ico, full-size icon).
+- docs/quick-start: the Full build contains `FluxionBrowserLite.exe` (not `FluxionBrowser.exe`).
+
+### Added — Rebuild the exe from the updater
+- `fluxion-update.bat` step 6 rebuilds the app after successful checks: Lite or Full (asked, or `--build` / `--build-full` / `--no-build`), `--build-only` rebuilds without updating. Pre-checks: PyInstaller (offers to install), llama-cpp-python in the build Python (a build without it cannot run models), 7-Zip (without it the app folder is built and packing is skipped; Full falls back to Lite). Full is always built on top of a freshly rebuilt Lite. After the build the exe and the llama.cpp DLLs are verified.
+- `scripts/build_lite.ps1` / `build_full.ps1`: `$env:FLUXION_PYTHON` selects the interpreter (they used `python` from PATH, ignoring a project `.venv`); `build_lite.ps1 -NoPack` skips the 7z step (it failed at the end without 7-Zip although the exe was built).
+
+### Fixed — Agent answer shown twice in the chat (manual testing)
+- The chat printed the `finish` action with the full answer text and then the final answer again; the language-gate step also showed the answer in the wrong language. New `orchestrator/presentation.py` (no Qt) formats steps for both desktop apps: `finish` is not repeated, the language-gate step shows a short note, `write_file`/`edit_file` show code/diff blocks with a line count, test runs and auto-verification show a readable status.
+- Chat messages render ``` code blocks (monospace, escaped) and `inline code`; previously fences were shown as raw text, also in plain chat.
+- The agent's system prompt asks for thoughts and the final answer in the user's language (avoids an extra rewrite step) and requires the final answer to say which files were created/changed, how to use them and the key code when code was requested.
+- `language: off` now really disables language handling (it behaved like `auto`).
+
+### Fixed — Agent benchmark progress and time limit
+- A long task looked frozen (a CPU run stalled at #34, `chat-general` on the baseline agent): each agent step is now printed as it runs, and `--task-timeout` (default 900 s, checked after each step) stops a task and counts it as failed; new Timeouts column in the report. Time estimates updated from a real CPU run (~85 s/task); `fluxion-test.bat` option 5 runs one repeat by default.
+
 ### Fixed — Default backend
 - Without an explicit `backend`, the embedded llama.cpp engine is selected when llama-cpp-python is installed and a local GGUF model exists (`gguf_path`, `FLUXION_GGUF_PATH` or the chat model installed via the "Models" page); previously the default was always Ollama, contradicting the docs ("llama.cpp by default in builds"), so the app failed to pick up a downloaded model. Explicit `backend:`/`FLUXION_BACKEND` still wins. Factory tests made hermetic against models on the developer machine.
 - `RELEASE_NOTES_RU.md` — all changes of this release in plain Russian.

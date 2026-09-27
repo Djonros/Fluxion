@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
-from pathlib import Path
 
 from .config import GenerationSettings, Settings
 from .inference import ModelBackend
@@ -45,9 +44,6 @@ class LlamaCppBackend(ModelBackend):
             ) from exc
 
         self.model_path = model_path
-        self._n_ctx = n_ctx
-        self._n_gpu_layers = n_gpu_layers
-        self._verbose = verbose
         # Defaults for generate()/stream() when the caller passes no settings.
         # Previously a bare GenerationSettings() was used, silently ignoring
         # temperature/max_tokens from config.yaml.
@@ -70,34 +66,6 @@ class LlamaCppBackend(ModelBackend):
     def unload(self) -> None:
         """Drop the model from the registry (frees VRAM on GC)."""
         self._runtime.unregister(self._runtime_key)
-
-    def switch_model(self, model_path: str) -> None:
-        """Hot-swap to another GGUF in place; on failure keeps the old model."""
-        new_path = str(Path(model_path).resolve())
-        if new_path == str(Path(self.model_path).resolve()):
-            return
-        from llama_cpp import Llama
-
-        self._runtime.unregister(self._runtime_key)
-        old_llm = self._llm
-        self._llm = None
-        try:
-            self._llm = Llama(
-                model_path=new_path,
-                n_ctx=self._n_ctx,
-                n_gpu_layers=self._n_gpu_layers,
-                verbose=self._verbose,
-            )
-        except Exception:
-            self._llm = old_llm
-            self._runtime.register(
-                self._runtime_key, old_llm, n_gpu_layers=self._n_gpu_layers, task="chat"
-            )
-            raise
-        self._runtime.register(
-            self._runtime_key, self._llm, n_gpu_layers=self._n_gpu_layers, task="chat"
-        )
-        self.model_path = new_path
 
     @property
     def cpu_mode_note(self) -> str:

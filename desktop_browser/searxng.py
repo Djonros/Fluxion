@@ -82,8 +82,12 @@ def ensure_searxng(base_url: str, wait_secs: float = 45.0) -> bool:
     except (OSError, subprocess.SubprocessError):
         daemon_ok = False
     if not daemon_ok:
-        logger.info("docker daemon down; SearXNG autostart skipped")
-        return False
+        from .installer import ensure_docker
+
+        logger.info("docker daemon down; launching Docker Desktop")
+        if not ensure_docker():
+            logger.warning("docker daemon did not come up; cannot start SearXNG")
+            return False
 
     try:
         started = _docker([docker, "start", CONTAINER_NAME])

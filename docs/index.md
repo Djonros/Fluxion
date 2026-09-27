@@ -23,8 +23,8 @@ Fluxion — полностью локальный AI-ассистент на б�
 - **RAG по коду** — AST-aware чанкинг (tree-sitter), эмбеддинги bge-m3 (GGUF), ChromaDB
 - **Умная маршрутизация** — rule-based Router: DIRECT / RAG / WEB / RAG_THEN_WEB
 - **Веб-поиск** — SearXNG в Docker + trafilatura для чистого текста + SQLite-кэш
-- **ReAct-агент** — 10 инструментов: `read_file`, `write_file`, `edit_file`, `grep`, `run_tests`, `web_search`, `git_status`, `git_diff`, `git_commit`, `finish`
-- **Git integration** — auto-checkpoint (git stash) перед записью, rollback, commit из агента
+- **ReAct-агент** — 12 инструментов: `list_files`, `read_file` (по диапазонам строк), `grep`, `search_code` (поиск по смыслу через RAG), `write_file`, `edit_file`, `run_tests`, `web_search`, `git_status`, `git_diff`, `git_commit`, `finish`. Со встроенным llama.cpp и Ollama действия модели проверяются JSON-схемой — маленькая модель не может выдать неверный формат. Правки проверяются тестами до завершения
+- **Git integration** — снимок рабочей папки перед первой правкой (ваши незакоммиченные изменения не трогаются), откат `/rollback`, коммит только изменённых агентом файлов
 - **FastAPI сервер** — REST API: чат (SSE), агент, RAG-индексация, auth, billing
 - **VS Code extension** — чат-сайдбар, agent mode, индексация проекта
 - **QLoRA-дообучение** — unsloth (6 ГБ VRAM) или HF peft+trl (8–12 ГБ), экспорт в GGUF

@@ -24,23 +24,28 @@
 
 | Батник | Что делает |
 |--------|-----------|
-| **`fluxion-deploy.bat`** | Полное развертывание из исходников: Python, зависимости, модель. Интерактивное меню: CLI / сервер / оба / тесты. |
-| `fluxion.bat` | Запуск CLI REPL (чат, RAG, агент) |
-| `fluxion-server.bat` | Запуск FastAPI сервера на `:8765` |
-| `fluxion-web.bat` | Установка и запуск SearXNG в Docker (веб-поиск) |
-| `fluxion-vscode.bat` | Установка VS Code extension |
-| `fluxion-setup.bat` | Базовая установка зависимостей + модели (облегчённый deploy) |
+| **`fluxion-setup.bat`** | Установка из исходников: виртуальное окружение, зависимости, встроенный движок llama.cpp, по желанию — сервер. Запускается один раз, повторный запуск пропускает установленное |
+| **`fluxion-desktop.bat`** | Запуск приложения (то же, что `FluxionBrowserLite.exe`): чат, агент, RAG, веб-поиск, модели |
+| `fluxion.bat` | CLI в терминале (чат, RAG, агент) |
+| `fluxion-server.bat` | API-сервер на `127.0.0.1:8765` для расширения VS Code |
+| `fluxion-vscode.bat` | Установка расширения VS Code |
+| `fluxion-test.bat` | Тесты по группам и проверка агента на вашей модели |
+| `fluxion-update.bat` | Обновление из архива с резервной копией, откатом и пересборкой exe |
+| `fluxion-release.bat` | Выпуск новой версии на GitHub: тесты, коммит, тег, релиз со сборками (для владельца) |
+| `issue-key.bat` | Выпуск лицензионных ключей (для владельца) |
 
 ```
 Первый запуск:
-  1. fluxion-deploy.bat     → выберите режим в меню
-  2. fluxion-web.bat        → (опц.) веб-поиск через SearXNG
-  3. fluxion-vscode.bat     → (опц.) VS Code extension
+  1. fluxion-setup.bat      → установка
+  2. fluxion-desktop.bat    → программа; модель — страница «Модели»
 
-Повседневный запуск:
+Дополнительно:
+  fluxion-vscode.bat + fluxion-server.bat → расширение VS Code
   fluxion.bat               → CLI
-  fluxion-server.bat        → API сервер для extension
 ```
+
+Веб-поиск (SearXNG в Docker) программа запускает сама, если установлен
+Docker Desktop. Для CLI и сервера: `powershell -File scripts\setup_searxng.ps1`.
 
 ## Ручная установка (любая ОС)
 
@@ -70,8 +75,8 @@ GGUF-модель можно задать и вручную в `config/config.ya
 
 ```
 1. Вставить флешку
-2. Запустить fluxion-deploy.bat (установит Python-зависимости и модель)
-3. Запустить fluxion.bat
+2. Запустить fluxion-setup.bat (установит зависимости и движок)
+3. Запустить fluxion-desktop.bat
 ```
 
 Конфиги используют относительные пути — хардкод путей отсутствует.

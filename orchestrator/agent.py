@@ -97,6 +97,8 @@ _REPEAT_OBSERVATION = (
 
 _VERIFY_BUDGET = 2
 
+_LANG_PROMPT_NAMES = {"ru": "Russian", "en": "English"}
+
 _NO_TESTS_MARKERS = (
     "no tests ran",
     "collected 0 items",
@@ -133,7 +135,9 @@ Rules:
 - Explore before answering: list_files / grep to find code, read_file to see it.
 - If the user's message is a greeting, small talk, or a question you can
   answer from general knowledge, answer directly with 'finish' and NO tools.
-- The finish answer may span several lines and include code blocks.
+- The finish answer may span several lines and include code blocks. It must
+  tell the user what you did: which files you created or changed, how to run
+  or use them, and the key code if the user asked for code.
 """
 
 _RULES_WRITE = """\
@@ -295,6 +299,9 @@ def build_json_system_prompt(tool_names: list[str], allow_write: bool) -> str:
         "- If the user's message is a greeting, small talk, or a question you can",
         "  answer from general knowledge, answer directly with finish and NO tools.",
         "- Strings are JSON strings: escape newlines as \\n and quotes as \\\".",
+        "- The finish answer must tell the user what you did: which files you",
+        "  created or changed, how to run or use them, and the key code (in a",
+        "  ``` block) if the user asked for code.",
     ]
     if allow_write:
         lines += [
@@ -526,6 +533,17 @@ class CodingAgent:
         names.append("finish")
         return names
 
+    def _system_message(self) -> str:
+        """System prompt plus per-run instructions (answer language)."""
+        prompt = self.system_prompt
+        name = _LANG_PROMPT_NAMES.get(self._lang_target or "")
+        if name:
+            prompt += (
+                f"\nLanguage: the user writes in {name}. Write your thoughts and the "
+                f"final answer in {name}. Keep code, identifiers and file names as they are.\n"
+            )
+        return prompt
+
     def action_schema(self) -> dict:
         if self._schema_cache is None:
             self._schema_cache = build_action_schema(self.prompt_tool_names())
@@ -597,16 +615,15 @@ class CodingAgent:
         seen_actions: set[tuple[str, str]] = set()
         no_action_streak = 0
         generated_ok = False
+        self._lang_target = resolve_target(self.lang, task)
+        self._lang_fixes = 0
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": self._system_message()},
         ]
         if context:
             messages.append({"role": "user", "content": f"Context:\n{context}\n\nTask:\n{task}"})
         else:
             messages.append({"role": "user", "content": task})
-
-        self._lang_target = resolve_target(self.lang, task)
-        self._lang_fixes = 0
 
         extra = self.verify_budget if self.verify_after_write else 0
         for iteration in range(1, self.max_iterations + extra + 1):
@@ -621,7 +638,7 @@ class CodingAgent:
                     # schema: continue with the classic text protocol.
                     logger.warning("structured output rejected (%s); falling back to text mode", exc)
                     self._action_format = "text"
-                    messages[0] = {"role": "system", "content": self.system_prompt}
+                    messages[0] = {"role": "system", "content": self._system_message()}
                     try:
                         raw_response = self._generate(messages) or ""
                     except Exception as exc2:

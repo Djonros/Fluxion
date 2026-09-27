@@ -13,6 +13,8 @@ import urllib.parse
 from datetime import datetime
 from pathlib import Path
 
+from . import APP_VERSION
+
 REPORT_EMAIL = "djonros@gmail.com"
 
 _last_crash_log: Path | None = None
@@ -35,7 +37,7 @@ def crash_dir() -> Path:
 def app_context() -> dict[str, str]:
     return {
         "app": "Fluxion",
-        "version": "desktop-0.9",
+        "version": f"desktop-{APP_VERSION}",
         "frozen": str(bool(getattr(sys, "frozen", False))),
         "python": sys.version.split()[0],
         "os": f"{sys.platform} {os.name}",

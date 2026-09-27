@@ -86,7 +86,7 @@ echo      3. Все тесты одним прогоном, как в CI
 echo.
 echo    Проверка агента на реальной модели из config\config.yaml:
 echo      4. Пробный прогон, 3 задачи           5-10 мин на CPU
-echo      5. Полный замер качества              3-4 часа, можно прерывать
+echo      5. Полный замер качества              ~2,5 часа на CPU, можно прерывать
 echo      6. Открыть последний отчёт замера
 echo.
 echo      0. Выход
@@ -103,7 +103,7 @@ goto :quick
 :: ── 1. Быстрая проверка агента ──────────────────────────────────────────────
 :quick
 call :init_run quick
-call :run_group agent "Агент: инструменты, форматы, git, бенчмарк" "yaml, httpx, dotenv" "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py"
+call :run_group agent "Агент: инструменты, форматы, git, бенчмарк" "yaml, httpx, dotenv" "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py tests\test_presentation.py tests\test_build_specs.py tests\test_release.py"
 echo.
 echo ---- Проверка набора задач бенчмарка ----
 "%PY%" -m eval.agent_bench --validate
@@ -114,10 +114,10 @@ goto :after
 :: ── 2. Все тесты по группам ─────────────────────────────────────────────────
 :groups
 call :init_run groups
-call :run_group agent   "Агент"                      "yaml, httpx, dotenv"    "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py tests\test_phase3_router.py tests\test_eval_custom.py"
+call :run_group agent   "Агент"                      "yaml, httpx, dotenv"    "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py tests\test_presentation.py tests\test_build_specs.py tests\test_release.py tests\test_phase3_router.py tests\test_eval_custom.py"
 call :run_group core    "Ядро: бэкенды, RAG, веб, CLI" "yaml, httpx, dotenv, numpy" "tests\test_phase1_serving.py tests\test_phase12_multi_model.py tests\test_phase2_rag.py tests\test_phase4_web.py tests\test_phase15_lite.py tests\test_theme.py"
 call :run_group server  "Сервер: API, авторизация, биллинг" "fastapi, sqlalchemy" "tests\test_server.py tests\test_server_security.py tests\test_auth.py tests\test_phase13_orgs.py tests\test_w2_projects.py tests\test_w3_sessions.py tests\test_w4_usage.py tests\test_w5_billing.py tests\test_w6_streaming.py"
-call :run_group desktop "Десктоп-приложение"         "PySide6"                "tests\test_desktop.py tests\test_browser_app.py tests\test_phase14_onboarding.py tests\test_phase17.py tests\test_phase175.py tests\test_phase18.py tests\test_wizard_autoinstall.py tests\test_training_pipeline.py"
+call :run_group desktop "Десктоп-приложение"         "PySide6"                "tests\test_desktop_window.py tests\test_browser_app.py tests\test_phase14_onboarding.py tests\test_phase17.py tests\test_phase175.py tests\test_phase18.py tests\test_wizard_autoinstall.py tests\test_training_pipeline.py"
 call :run_group license "Лицензирование"             "cryptography"           "tests\test_licensing.py"
 call :run_group train   "Данные и дообучение"        "yaml"                   "tests\test_phase5_data.py tests\test_phase6_ft.py tests\test_phase13_marketplace.py"
 call :summary
@@ -151,18 +151,21 @@ goto :after
 :: ── 5. Полный замер ─────────────────────────────────────────────────────────
 :bench
 echo.
-echo Полный замер: 36 задач x 3 режима - baseline, text, json - x 3 повтора.
-echo На CPU это 3-4 часа. Результаты сохраняются после каждой задачи:
+echo Полный замер: 36 задач x 3 режима - baseline, text, json.
+echo На CPU около 2,5 часа, каждая задача не дольше 15 минут.
+echo Прогресс виден по шагам. Результаты сохраняются после каждой задачи:
 echo если закрыть окно, повторный запуск этого пункта продолжит с места остановки.
 if exist "results\agent_bench\full\results.jsonl" echo Найден незавершённый прогон - он будет продолжен.
 if defined INTERACTIVE (
     choice /c YN /m "Запустить"
     if errorlevel 2 goto :menu
 )
-"%PY%" -m eval.agent_bench --modes "baseline,text,json" --repeats 3 --out "results\agent_bench\full"
+"%PY%" -m eval.agent_bench --modes "baseline,text,json" --repeats 1 --out "results\agent_bench\full"
 if errorlevel 1 goto :bench_error
 echo.
 echo Отчёт: results\agent_bench\full\report.md
+echo Для большей точности - ещё 2 повтора в ту же папку:
+echo   "%PY%" -m eval.agent_bench --modes "baseline,text,json" --repeats 3 --out "results\agent_bench\full"
 if defined INTERACTIVE start "" notepad "results\agent_bench\full\report.md"
 goto :after
 

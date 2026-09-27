@@ -71,8 +71,3 @@ desktop.ini
 # Test logs and agent benchmark results (fluxion-test.bat)
 logs/
 results/
-
-# Session artifacts (patches, reference dumps, delivery archives)
-Fluxion-main-fixed.zip
-*.patch
-reference/

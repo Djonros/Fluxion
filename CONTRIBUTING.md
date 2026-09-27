@@ -56,7 +56,7 @@ python -m pytest tests/ -v
 | `fix` | Bug fix | `fix(retriever): handle empty query` |
 | `refactor` | Code restructuring | `refactor(inference): extract _options method` |
 | `test` | Test additions | `test(agent): add edit_file edge cases` |
-| `docs` | Documentation | `docs: add Phase 8 to ROADMAP` |
+| `docs` | Documentation | `docs: add Phase 8 to docs/internal/ROADMAP.md` |
 | `chore` | Maintenance | `chore: update dependencies` |
 
 ## Project Structure

@@ -1,1 +1,0 @@
-"""Fluxion desktop application."""

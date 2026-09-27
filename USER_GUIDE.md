@@ -29,19 +29,20 @@ qwen2.5-coder:7b). Docker — опционально (веб-поиск). GPU �
 Скачайте/склонируйте папку проекта и запустите батники:
 
 ```
-1. fluxion-deploy.bat    — установит зависимости, Ollama-модель, всё проверит
-                           (интерактивное меню; запускается один раз)
-2. fluxion.bat           — запуск CLI (ежедневно)
+1. fluxion-setup.bat     — установит зависимости и встроенный движок llama.cpp
+                           (запускается один раз)
+2. fluxion-desktop.bat   — запуск программы; модель скачивается на странице «Модели»
 ```
 
 Опционально:
 
 | Батник | Что делает |
 |--------|-----------|
-| `fluxion-web.bat` | поднимает SearXNG в Docker → веб-поиск |
-| `fluxion-server.bat` | поднимает API-сервер на `:8765` (для VS Code) |
+| `fluxion.bat` | CLI в терминале |
+| `fluxion-server.bat` | API-сервер на `:8765` (для VS Code) |
 | `fluxion-vscode.bat` | устанавливает расширение VS Code |
-| `fluxion-setup.bat` | лёгкая установка без проверок |
+| `fluxion-test.bat` | проверка установки и агента |
+| `fluxion-update.bat` | обновление из архива, откат, пересборка exe |
 
 ### 2.2. Любая ОС (ручная установка)
 
@@ -49,11 +50,10 @@ qwen2.5-coder:7b). Docker — опционально (веб-поиск). GPU �
 git clone https://github.com/djonros/fluxion.git
 cd fluxion
 
-# зависимости
-pip install -r requirements.txt
+# зависимости и встроенный движок
+pip install -r requirements.txt -r requirements-llamacpp.txt
 
-# модель
-ollama pull qwen2.5-coder:7b-instruct
+# модель: в программе на странице «Модели» или gguf_path в config/config.yaml
 
 # запуск
 python -m cli.app
@@ -62,7 +62,7 @@ python -m cli.app
 ### 2.3. Перенос на флешке
 
 Проект портативен: скопируйте папку целиком, на другом ПК выполните
-`fluxion-deploy.bat` (Windows) или шаги 2.2 — конфиги используют относительные пути.
+`fluxion-setup.bat` (Windows) или шаги 2.2 — конфиги используют относительные пути.
 
 ---
 
@@ -144,8 +144,9 @@ The Router in orchestrator/router.py...
 
 - **Без `--write` агент только читает** — ничего не изменит.
 - `--write` требует **Pro-лицензию** (см. раздел 8); read-режим бесплатен.
-- С `--write` перед каждой записью создаётся **авто-checkpoint**
-  (git stash): откатить — `git stash pop` / см. историю.
+- С `--write` перед первой записью создаётся **снимок** рабочей папки; ваши
+  незакоммиченные изменения при этом не трогаются. Откатить всё, что сделал
+  агент: `/rollback`.
 - Завершает работу сам, инструментом `finish` с итоговым отчётом.
 
 ---
@@ -153,11 +154,14 @@ The Router in orchestrator/router.py...
 ## 5. Веб-поиск (опционально)
 
 ```bash
-# Windows
-fluxion-web.bat
+# Windows: программа запускает SearXNG сама (нужен Docker Desktop);
+# для CLI и сервера:
+powershell -File scripts/setup_searxng.ps1
 
-# любая ОС: SearXNG в Docker
-docker run -d -p 8080:8080 searxng/searxng
+# любая ОС: SearXNG в Docker с включённым JSON-форматом
+# (settings.yml — как в scripts/setup_searxng.ps1; без него поиск получает 403)
+docker run -d --name fluxion-searxng -p 8080:8080 \
+  -v "$PWD/data/searxng:/etc/searxng" searxng/searxng
 ```
 
 Проверка: `curl "http://localhost:8080/search?q=python&format=json"`.
@@ -283,8 +287,8 @@ python -m eval.runner --benchmark custom --tasks-path my_tasks.json
 
 | Проблема | Решение |
 |----------|---------|
-| `Backend not available` | не запущен Ollama (`ollama serve`) или модель не скачана (`ollama pull qwen2.5-coder:7b-instruct`) |
-| `/web` не работает | SearXNG не поднят (`fluxion-web.bat`, проверка `localhost:8080`) |
+| `Backend not available` | модель не скачана (страница «Модели») или не установлен движок llama.cpp (`fluxion-setup.bat`); для Ollama — `ollama serve` |
+| `/web` не работает | SearXNG не поднят (`scripts/setup_searxng.ps1`, проверка `localhost:8080`) |
 | `/rag` отвечает не по делу | переиндексируйте: `/rag clear` → `/index .` |
 | Агент не меняет файлы | агент в режиме read-only — добавьте `--write` (нужна Pro-лицензия, раздел 8) |
 | `invalid license key` при активации | ключ скопирован не целиком или с опечаткой; повторите `/license activate <ключ>` |
