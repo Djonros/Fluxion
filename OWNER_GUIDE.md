@@ -308,22 +308,46 @@ GitHub не принимает файлы релиза больше 2 ГБ: Full
 Если папка проекта скачана архивом (без `.git`), батник предложит подключить
 её к репозиторию: файлы не меняются, git только сравнит их с версией на GitHub.
 
-## 7. Сайт документации в интернете
+## 7. Сайт: загрузки и документация
 
-Документация (MkDocs) публикуется на GitHub Pages:
+Сайт публикуется на GitHub Pages автоматически
+(`.github/workflows/pages.yml`) при каждой отправке в `main`, если изменились
+сайт, документация, пресеты или каталог моделей:
+
+- `https://djonros.github.io/fluxion/` — страница загрузки: программа, модели,
+  пресеты обучения (`website/`, собирается `scripts/build_site.py`);
+- `https://djonros.github.io/fluxion/docs/` — документация (MkDocs).
+
+**Один раз:** на GitHub **Settings → Pages → Build and deployment → Source:
+GitHub Actions**. Если раньше документация публиковалась через
+`mkdocs gh-deploy` в ветку `gh-pages`, эту ветку можно удалить. Запустить
+публикацию вручную: вкладка **Actions → Website → Run workflow**.
+
+Откуда берутся данные:
+
+- **Кнопки загрузки** страница берёт из последнего релиза на GitHub прямо в
+  браузере посетителя: новый релиз появляется на сайте без пересборки.
+  Файлы ищутся по именам `FluxionBrowser-Lite-*.7z` и `FluxionBrowser-Full-*.7z`.
+- **Full-сборка больше лимита GitHub (2 ГБ).** Выложите её в облако или на свой
+  сервер и укажите ссылку в `website/site.json` (`full_download_url`); без неё
+  кнопка Full ведёт на страницу выпуска.
+- **Модели** — из каталога программы (`core/model_manager.py`),
+  **пресеты** — из `presets/training/*.json`. Новый пресет: добавьте файл
+  (формат — в `docs/guides/finetune.md`), тест `tests/test_training_presets.py`
+  проверит его, а сайт опубликует после отправки.
+
+Проверить локально:
 
 ```bash
-# локально, в папке проекта (нужен pip install mkdocs-material)
-python -m mkdocs gh-deploy   # соберёт site/ и запушит в ветку gh-pages
+python scripts/build_site.py --out _site           # страница загрузки
+python -m mkdocs build --site-dir _site/docs       # документация (pip install mkdocs-material)
+python -m http.server -d _site 8000                # открыть http://localhost:8000
 ```
 
-Затем на GitHub: **Settings → Pages → Source: ветка `gh-pages`**.
-Сайт появится на `https://djonros.github.io/fluxion/`.
-
-Свой домен для документации: DNS `docs.fluxion.app → A <IP>` или CNAME на
-`djonros.github.io`; в Settings → Pages укажите custom domain
-`docs.fluxion.app`, GitHub выдаст HTTPS. Локальная проверка перед публикацией:
-`python -m mkdocs build --strict` (0 warnings).
+Свой домен (например, `fluxion.app`): DNS — CNAME на `djonros.github.io`, в
+Settings → Pages укажите custom domain, GitHub выдаст HTTPS. После этого
+поменяйте `site_url` в `website/site.json`: от него зависит картинка при
+пересылке ссылки в мессенджерах.
 
 ---
 

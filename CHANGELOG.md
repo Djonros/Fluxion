@@ -7,11 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-27
+
+Website with downloads, training presets as files.
+
+### Added — Website
+- Download page (`website/`, built by `scripts/build_site.py`): the app (Lite/Full buttons resolved in the browser from the latest GitHub release, newest archive per kind, fallbacks to the release page; Full can point to an external URL via `website/site.json` since it exceeds GitHub's 2 GB asset limit), models (table generated from `core/model_manager.MODEL_CATALOG` with Hugging Face links) and training presets (from `presets/training/*.json`). Hero: Bernoulli's lemniscate with a moving point and its tangent — the "fluxion"; static with reduced motion.
+- `.github/workflows/pages.yml`: publishes the page at the site root and the MkDocs documentation under `/docs/` on every relevant push (Pages source: GitHub Actions).
+- `tests/test_website.py`: every catalog model and preset is on the page, published presets are valid, internal links resolve, the site's repository matches the in-app update check.
+
+### Added — Training presets as files
+- `finetune/presets.py`: `fluxion-training-preset` v1 JSON — strict loading (known fields only, value ranges, size limit) and a base-model allowlist (Qwen2.5-Coder 1.5B/3B/7B Instruct): trainers load the base model with `trust_remote_code=True`, so a preset from the internet must not be able to name an arbitrary repository.
+- Presets `economy` and `standard` (identical to the built-in ones, enforced by a test) and `quick-check` (1 epoch, 200 samples).
+- Training page: **Load from file…** fills trainer, epochs, sample limit and base model; choosing a built-in preset drops the file. The pipeline applies the file and passes `--settings-file` to `finetune.train_unsloth` / `finetune.train_hf`.
+- `tests/test_training_presets.py` (validation, rejected base models, pipeline wiring) and window tests for the button.
+
 ## [0.10.0] — 2026-09-27
 
 Production-readiness release: agent reliability and security fixes, structured
 tool calls, semantic code search, agent benchmark, updater/test/release tooling,
-project cleanup. Plain-language summary: `RELEASE_NOTES_RU.md`.
+project cleanup. Plain-language summary: `docs/internal/RELEASE_NOTES_0.10.0.md`.
 
 ### Added — Release tooling
 - `fluxion-release.bat`: checks the repo and that tag `v<APP_VERSION>` is free (locally and on GitHub), runs tests, shows the changes, asks whether to publish local `config` edits, commits, tags, pushes and creates the GitHub release with the newest Lite/Full archives (files over GitHub's 2 GB limit are skipped) via GitHub CLI, or explains the web steps. `--check` runs the checks only. A folder downloaded as a zip can be connected to the repository without touching the files.

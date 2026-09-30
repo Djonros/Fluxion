@@ -2,8 +2,9 @@
 
 ## Готовые сборки (Windows x64)
 
-[:material-download: Скачать Lite (~130 МБ)](../download/FluxionBrowser-Lite-win64-latest.7z){ .md-button .md-button--primary }
-[:material-download: Скачать Full — офлайн-обучение (~2.9 ГБ)](../download/FluxionBrowser-Full-win64-latest.7z){ .md-button }
+[:material-download: Страница загрузки](../../){ .md-button .md-button--primary }
+
+Сборки **Lite** и **Full**, модели и пресеты обучения — на странице загрузки.
 
 | Сборка | Что внутри |
 |--------|-----------|

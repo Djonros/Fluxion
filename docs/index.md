@@ -12,10 +12,12 @@ Fluxion — полностью локальный AI-ассистент на б�
 
 ## Скачать
 
-[:material-download: Fluxion Lite — Windows x64, ~130 МБ](download/FluxionBrowser-Lite-win64-latest.7z){ .md-button .md-button--primary }
-[:material-download: Fluxion Full — офлайн-обучение, ~2.9 ГБ](download/FluxionBrowser-Full-win64-latest.7z){ .md-button }
+[:material-download: Страница загрузки](../){ .md-button .md-button--primary }
 
-**Lite** — готовый браузерный AI-ассистент в одном exe: чат, RAG по коду, веб-поиск, агент. **Full** = Lite + офлайн-пак CUDA-зависимостей (torch cu126, unsloth): кнопка «Установить окружение обучения» работает без интернета.
+Там программа для Windows (сборки **Lite** и **Full**), модели и пресеты
+обучения. **Lite** — чат, агент, поиск по проекту и веб-поиск в одном exe.
+**Full** = Lite + офлайн-пакет для дообучения: кнопка «Установить окружение
+обучения» работает без интернета.
 
 ## Возможности
 

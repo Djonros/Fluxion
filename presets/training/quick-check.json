@@ -1,0 +1,27 @@
+{
+  "format": "fluxion-training-preset",
+  "version": 1,
+  "id": "quick-check",
+  "name": "Быстрая проверка",
+  "description": "Одна эпоха на 200 примерах: убедиться, что обучение запускается и датасет читается, прежде чем тратить часы на полное обучение.",
+  "trainer": "low",
+  "min_vram_gb": 6,
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "max_samples": 200,
+  "settings": {
+    "lora_r": 32,
+    "lora_alpha": 64,
+    "lora_dropout": 0.05,
+    "target_modules": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj"
+    ],
+    "max_seq_length": 2048,
+    "num_train_epochs": 1,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 16,
+    "learning_rate": 0.0002
+  }
+}

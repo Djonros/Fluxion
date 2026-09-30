@@ -124,9 +124,21 @@ def main():
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--base-model", default=None)
+    parser.add_argument(
+        "--settings-file", default=None,
+        help="training preset JSON (fluxion-training-preset); applied on top of --preset",
+    )
     args = parser.parse_args()
 
     settings = QLoRASettings.from_preset(VRAMPreset(args.preset))
+    if args.settings_file:
+        from finetune.presets import PresetError, load_preset
+
+        try:
+            settings = load_preset(args.settings_file).apply(settings)
+        except PresetError as exc:
+            logger.error("%s", exc)
+            raise SystemExit(2)
     if args.epochs:
         settings.num_train_epochs = args.epochs
     if args.base_model:

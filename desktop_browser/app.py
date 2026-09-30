@@ -1982,6 +1982,20 @@ class FluxionWindow(QMainWindow):
         self.training_preset.addItem("low — 6 ГБ VRAM (unsloth)", "low")
         self.training_preset.addItem("standard — 8–12 ГБ (HF peft+trl)", "standard")
         form.addRow("Пресет:", self.training_preset)
+        # A preset file (e.g. downloaded from the Fluxion website) overrides the
+        # built-in preset; choosing a built-in preset again drops the file.
+        self._training_preset_path = ""
+        self._applying_training_preset = False
+        preset_file_row = QHBoxLayout()
+        self.training_preset_file_button = QPushButton("Загрузить из файла…")
+        self.training_preset_file_button.setObjectName("iconButton")
+        self.training_preset_file_button.clicked.connect(self._pick_training_preset_file)
+        preset_file_row.addWidget(self.training_preset_file_button)
+        self.training_preset_chip = QLabel("встроенный пресет")
+        self.training_preset_chip.setObjectName("statusChip")
+        preset_file_row.addWidget(self.training_preset_chip, 1)
+        form.addRow("", preset_file_row)
+        self.training_preset.currentIndexChanged.connect(self._on_training_preset_changed)
         self.training_epochs = QSpinBox()
         self.training_epochs.setRange(1, 20)
         self.training_epochs.setValue(TrainingParams().epochs)
@@ -2257,6 +2271,54 @@ class FluxionWindow(QMainWindow):
         self.models_status.setText(message)
         self._refresh_models()
 
+    def _pick_training_preset_file(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Выберите пресет обучения", str(Path.home()),
+            "Пресет Fluxion (*.json);;Все файлы (*.*)",
+        )
+        if path:
+            self._load_training_preset_file(path)
+
+    def _load_training_preset_file(self, path: str) -> bool:
+        """Apply a preset file to the training form. Returns success."""
+        from finetune.presets import PresetError, load_preset
+
+        try:
+            preset = load_preset(path)
+        except PresetError as exc:
+            self.training_preset_chip.setText("пресет не загружен")
+            self.training_view.setHtml(f"<p><b>Пресет не загружен.</b> {html.escape(str(exc))}</p>")
+            return False
+        self._applying_training_preset = True
+        try:
+            index = self.training_preset.findData(preset.trainer)
+            if index >= 0:
+                self.training_preset.setCurrentIndex(index)
+            epochs = preset.settings.get("num_train_epochs")
+            if epochs:
+                self.training_epochs.setValue(int(epochs))
+            self.training_max_samples.setValue(preset.max_samples or 0)
+            if preset.base_model:
+                self.training_base_model.setText(preset.base_model)
+        finally:
+            self._applying_training_preset = False
+        self._training_preset_path = path
+        self.training_preset_chip.setText(f"из файла: {preset.name}")
+        vram = f" Нужно от {preset.min_vram_gb:g} ГБ видеопамяти." if preset.min_vram_gb else ""
+        self.training_view.setHtml(
+            f"<p><b>Пресет «{html.escape(preset.name)}» загружен.</b>{vram}</p>"
+            f"<p>{html.escape(preset.description)}</p>"
+        )
+        return True
+
+    def _on_training_preset_changed(self, _index: int) -> None:
+        if self._applying_training_preset or not self._training_preset_path:
+            return
+        self._training_preset_path = ""
+        self.training_preset_chip.setText("встроенный пресет")
+
     def _pick_dataset_file(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
@@ -2478,6 +2540,7 @@ class FluxionWindow(QMainWindow):
                 self.training_ollama_model.text().strip() or TrainingParams().ollama_model_name
             ),
             export_gguf=self.training_export.isChecked(),
+            preset_file=self._training_preset_path,
         )
 
         self.training_running = True

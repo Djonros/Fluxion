@@ -5,6 +5,7 @@ out of: same widgets and behaviour (chat, agent, models, training, licence,
 project page).  The browser panel is disabled (no QtWebEngine in tests) and
 chat history is isolated by tests/conftest.py.
 """
+from pathlib import Path
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -972,3 +973,43 @@ def test_project_path_persisted(qapp, tmp_path):
 
     window = FluxionWindow(rag_service=FakeRagService(), qsettings=QSettings(str(ini), QSettings.IniFormat))
     assert window.project_path.text() == "C:/code/my-project"
+
+
+def test_training_preset_file_fills_form_and_reaches_pipeline(qapp, tmp_path, monkeypatch):
+    import licensing
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    pipeline, captured = _fake_pipeline()
+    window = _training_window(qapp, tmp_path, pipeline)
+    preset = Path(__file__).resolve().parents[1] / "presets" / "training" / "quick-check.json"
+
+    assert window._load_training_preset_file(str(preset))
+    assert window.training_preset.currentData() == "low"
+    assert window.training_epochs.value() == 1
+    assert window.training_max_samples.value() == 200
+    assert "Быстрая проверка" in window.training_preset_chip.text()
+
+    window.training_dataset.setText("ds.jsonl")
+    window.run_training()
+    _drain(qapp, window)
+    assert captured[0].preset_file == str(preset)
+
+    # choosing a built-in preset again drops the file
+    window.training_preset.setCurrentIndex(window.training_preset.findData("standard"))
+    assert window._training_preset_path == ""
+    assert window.training_preset_chip.text() == "встроенный пресет"
+
+
+def test_training_preset_file_invalid_shows_reason(qapp, tmp_path, monkeypatch):
+    import licensing
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    pipeline, _ = _fake_pipeline()
+    window = _training_window(qapp, tmp_path, pipeline)
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"format": "fluxion-training-preset", "version": 1, "id": "x", "name": "x", '
+                   '"trainer": "low", "base_model": "attacker/evil"}', encoding="utf-8")
+
+    assert not window._load_training_preset_file(str(bad))
+    assert window._training_preset_path == ""
+    assert "не поддерживается" in window.training_view.toPlainText()

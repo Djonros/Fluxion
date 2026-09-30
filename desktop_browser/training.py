@@ -235,6 +235,10 @@ class TrainingParams:
     description: str = ""
     ollama_model_name: str = "fluxion-coder-python"
     export_gguf: bool = True
+    # Training preset file (finetune/presets.py). Its trainer overrides
+    # `preset`; epochs / base model / max samples come from the fields above,
+    # which the UI pre-fills from the file.
+    preset_file: str = ""
 
 
 def install_training_environment(
@@ -376,7 +380,21 @@ def run_pipeline(
     if not Path(params.dataset).is_file():
         raise TrainingError(f"Датасет не найден: {params.dataset}")
 
+    preset_file = ""
+    if params.preset_file:
+        from finetune.presets import PresetError, load_preset
+
+        try:
+            file_preset = load_preset(params.preset_file)
+        except PresetError as exc:
+            raise TrainingError(f"Пресет не загружен: {exc}") from exc
+        params.preset = file_preset.trainer
+        preset_file = str(Path(params.preset_file).resolve())
+        log(f"Пресет из файла: {file_preset.name} ({params.preset_file})")
+
     settings = QLoRASettings.from_preset(VRAMPreset(params.preset))
+    if params.preset_file:
+        settings = file_preset.apply(settings)
     settings.base_model = params.base_model
     settings.num_train_epochs = params.epochs
     settings.ollama_model_name = params.ollama_model_name
@@ -420,6 +438,8 @@ def run_pipeline(
             ]
             if max_samples:
                 cmd += ["--max-samples", str(max_samples)]
+            if preset_file:
+                cmd += ["--settings-file", preset_file]
             _run_cmd(cmd, log, stop_requested, extra_env=subprocess_env)
             return str(Path(settings.output_dir) / "adapter")
 

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fluxion — помощник для Python-кода на вашем компьютере</title>
+  <meta name="description" content="Fluxion: чат, агент, поиск по проекту и дообучение модели. Модель работает локально, код не покидает компьютер. Скачать для Windows, модели и пресеты обучения.">
+  <meta property="og:title" content="Fluxion — помощник для Python-кода на вашем компьютере">
+  <meta property="og:description" content="Чат, агент и дообучение модели. Модель работает локально, код не покидает компьютер.">
+  <meta property="og:image" content="{{SITE_URL}}og-image.png">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#0B1620">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-repo="{{REPO}}" data-full-url="{{FULL_URL}}" data-full-size="{{FULL_SIZE}}" data-releases="{{RELEASES_URL}}">
+  <a class="skip" href="#download">К загрузке</a>
+
+  <header class="top">
+    <a class="wordmark" href="#" aria-label="Fluxion, начало страницы">F-L-U-X-I-O-N</a>
+    <nav aria-label="Разделы">
+      <a href="#download">Скачать</a>
+      <a href="#models">Модели</a>
+      <a href="#presets">Пресеты обучения</a>
+      <a href="{{DOCS_URL}}">Документация</a>
+      <a href="{{REPO_URL}}">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-text">
+        <h1 id="hero-title">Помощник для Python‑кода, который работает на вашем компьютере</h1>
+        <p class="lead">Чат о коде, агент, который сам читает и правит файлы проекта и проверяет правки тестами, поиск по проекту и дообучение модели на ваших данных. Модель запускается локально: код не покидает компьютер, интернет нужен только чтобы её скачать.</p>
+        <div class="cta">
+          <a class="button primary" id="dl-primary" href="{{LATEST_URL}}">Скачать для Windows</a>
+          <p class="cta-note" id="dl-primary-note">Для Windows 10 и 11, 64 бит</p>
+        </div>
+        <p class="secondary"><a href="{{LATEST_URL}}">Что нового в этой версии</a></p>
+      </div>
+
+      <figure class="flux">
+        <svg viewBox="20 64 560 232" role="img" aria-labelledby="flux-title">
+          <title id="flux-title">Точка движется по знаку бесконечности, стрелка показывает направление её движения</title>
+          <defs>
+            <linearGradient id="ribbon" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0" stop-color="#8B4BFF"/>
+              <stop offset="0.5" stop-color="#00E5FF"/>
+              <stop offset="1" stop-color="#8B4BFF"/>
+            </linearGradient>
+            <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#00E5FF"/>
+            </marker>
+          </defs>
+          <path class="curve" d="{{LEMNISCATE_PATH}}" fill="none" stroke="url(#ribbon)" stroke-width="3"/>
+          <text class="integral" x="300" y="196" text-anchor="middle">∫</text>
+          <line id="tangent" x1="480" y1="148" x2="532" y2="198" stroke="#00E5FF" stroke-width="2.5" marker-end="url(#tip)"/>
+          <text id="tangent-label" class="dot-x" x="546" y="222">ẋ</text>
+          <circle id="point" cx="480" cy="148" r="7" fill="#B4FF39"/>
+        </svg>
+        <figcaption><span class="dot-x">ẋ</span> — так Ньютон записывал флюксию, скорость изменения величины. Отсюда название: точка бежит по знаку бесконечности, стрелка показывает её флюксию.</figcaption>
+      </figure>
+    </section>
+
+    <section class="features" aria-label="Возможности">
+      <dl>
+        <div><dt>Чат</dt><dd>Вопросы о коде с учётом вашего проекта и, если нужно, веб-поиска.</dd></div>
+        <div><dt>Агент</dt><dd>Находит нужные файлы, правит код и запускает тесты, пока правка не пройдёт. Перед первой правкой делает снимок проекта, так что изменения можно откатить.</dd></div>
+        <div><dt>Поиск по проекту</dt><dd>Индекс кода на вашем диске: модель находит нужное место по смыслу, а не только по словам.</dd></div>
+        <div><dt>Дообучение</dt><dd>QLoRA на ваших примерах, чтобы модель писала в стиле вашей команды. Нужна лицензия Pro и видеокарта NVIDIA.</dd></div>
+      </dl>
+    </section>
+
+    <section id="download" aria-labelledby="download-title">
+      <h2 id="download-title">Скачать</h2>
+      <p class="section-lead">Две сборки. Если не собираетесь дообучать модель, берите Lite.</p>
+
+      <div class="builds">
+        <div class="build" id="build-lite">
+          <div class="build-text">
+            <h3>Fluxion Lite</h3>
+            <p>Программа целиком: чат, агент, поиск по проекту, веб-поиск, загрузка моделей.</p>
+          </div>
+          <div class="build-action">
+            <span class="size" data-size-for="Lite"></span>
+            <a class="button primary" data-asset="Lite" href="{{LATEST_URL}}">Скачать Lite</a>
+          </div>
+        </div>
+        <div class="build" id="build-full">
+          <div class="build-text">
+            <h3>Fluxion Full</h3>
+            <p>Lite и офлайн-пакет для дообучения: окружение QLoRA ставится без интернета.</p>
+          </div>
+          <div class="build-action">
+            <span class="size" data-size-for="Full">{{FULL_SIZE}}</span>
+            <a class="button" data-asset="Full" href="{{LATEST_URL}}">Скачать Full</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <h3>Установка</h3>
+          <ol class="steps">
+            <li>Распакуйте скачанный архив <code>.7z</code>, например бесплатным 7-Zip.</li>
+            <li>Запустите <code>FluxionBrowserLite.exe</code>. Если Windows предупредит о неизвестном издателе, нажмите «Подробнее» и «Выполнить в любом случае».</li>
+            <li>Мастер первичной настройки проверит компьютер. Модель скачайте на странице «Модели» или положите файл вручную, как описано ниже.</li>
+          </ol>
+        </div>
+        <div>
+          <h3>Что нужно компьютеру</h3>
+          <ul class="plain">
+            <li>Windows 10 или 11, 64 бит.</li>
+            <li>Память под модель: 7B занимает около 4,7 ГБ, 3B — около 2,2 ГБ.</li>
+            <li>Видеокарта не обязательна: модель работает на процессоре. С видеокартой NVIDIA ответы быстрее.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="models" aria-labelledby="models-title">
+      <h2 id="models-title">Модели</h2>
+      <p class="section-lead">Программа скачивает модели сама на странице «Модели». Скачать вручную пригодится для компьютера без интернета: положите файл в папку <code>%LOCALAPPDATA%\Fluxion\models</code> или выберите его кнопкой «Импорт с диска…».</p>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="models-title">
+        <table>
+          <thead>
+            <tr><th scope="col">Модель</th><th scope="col">Для чего</th><th scope="col" class="num">Размер</th><th scope="col" class="num">Видеопамять</th><th scope="col">Файл</th></tr>
+          </thead>
+          <tbody>
+{{MODEL_ROWS}}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Файлы загружаются с Hugging Face. Видеопамять нужна только для ускорения на видеокарте.</p>
+    </section>
+
+    <section id="presets" aria-labelledby="presets-title">
+      <h2 id="presets-title">Пресеты обучения</h2>
+      <p class="section-lead">Пресет — готовый набор параметров дообучения под объём видеопамяти. Загрузка пресета из файла появилась в Fluxion 0.11.</p>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="presets-title">
+        <table>
+          <thead>
+            <tr><th scope="col">Пресет</th><th scope="col">Кому подойдёт</th><th scope="col" class="num">Видеопамять</th><th scope="col">Параметры</th><th scope="col">Файл</th></tr>
+          </thead>
+          <tbody>
+{{PRESET_ROWS}}
+          </tbody>
+        </table>
+      </div>
+      <div class="two-col">
+        <div>
+          <h3>Как применить</h3>
+          <ol class="steps">
+            <li>Скачайте файл пресета.</li>
+            <li>В программе откройте «Обучение» и нажмите «Загрузить из файла…».</li>
+            <li>Выберите датасет и нажмите «Начать обучение».</li>
+          </ol>
+        </div>
+        <div>
+          <h3>Свой пресет</h3>
+          <p>Пресет — это небольшой JSON-файл. Формат и допустимые значения описаны в <a href="{{DOCS_URL}}guides/finetune/">руководстве по дообучению</a>. Программа проверяет каждый файл и принимает только поддерживаемые базовые модели.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p class="wordmark small">F-L-U-X-I-O-N</p>
+    <nav aria-label="Ссылки">
+      <a href="{{DOCS_URL}}">Документация</a>
+      <a href="{{REPO_URL}}">Исходный код</a>
+      <a href="{{RELEASES_URL}}">Все версии</a>
+      <a href="{{DOCS_URL}}privacy/">Приватность</a>
+    </nav>
+    <p class="fine">Fluxion распространяется под лицензией Apache 2.0.</p>
+  </footer>
+
+  <script src="site.js" defer></script>
+</body>
+</html>

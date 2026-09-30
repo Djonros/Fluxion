@@ -71,3 +71,6 @@ desktop.ini
 # Test logs and agent benchmark results (fluxion-test.bat)
 logs/
 results/
+
+# Website build output (scripts/build_site.py)
+_site/

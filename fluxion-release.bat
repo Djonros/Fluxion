@@ -68,7 +68,7 @@ echo [3/7] Тесты...
 if errorlevel 1 goto :no_pytest
 set "PYTHONUTF8=1"
 set "QT_QPA_PLATFORM=offscreen"
-"%PY%" -m pytest -q -p no:cacheprovider tests\test_release.py tests\test_build_specs.py tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_presentation.py tests\test_training_pipeline.py tests\test_phase7_agent.py tests\test_phase11_git.py
+"%PY%" -m pytest -q -p no:cacheprovider tests\test_release.py tests\test_build_specs.py tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_presentation.py tests\test_training_pipeline.py tests\test_training_presets.py tests\test_website.py tests\test_phase7_agent.py tests\test_phase11_git.py
 if errorlevel 1 goto :tests_failed
 "%PY%" -m eval.agent_bench --validate
 if errorlevel 1 goto :tests_failed

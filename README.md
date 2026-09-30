@@ -10,6 +10,7 @@
 
 **Локальный AI-ассистент для вайб-кодинга на Python**
 
+> ⬇️ Скачать программу, модели и пресеты обучения — **[djonros.github.io/fluxion](https://djonros.github.io/fluxion/)**, документация — **[/docs](https://djonros.github.io/fluxion/docs/)**.
 > 📘 Пользователям: полное руководство по установке и работе — **[USER_GUIDE.md](USER_GUIDE.md)**.
 > Владельцам (деплой сервера, цены, домен) — **[OWNER_GUIDE.md](OWNER_GUIDE.md)**.
 
@@ -302,7 +303,9 @@ fluxion/
 ├── cli/               # REPL, команды, рендеринг (prompt_toolkit + rich)
 ├── config/            # config.yaml, .env, repos.yaml, continue_config.json
 ├── desktop_browser/   # Десктоп-приложение (PySide6): чат, агент, браузер, модели, обучение
-├── scripts/           # Сборка exe, установка llama.cpp, SearXNG
+├── scripts/           # Сборка exe и сайта, установка llama.cpp, SearXNG
+├── website/           # Страница загрузки (GitHub Pages)
+├── presets/training/  # Пресеты обучения (JSON)
 ├── tests/             # pytest; запуск по группам — fluxion-test.bat
 ├── docs/              # Документация (mkdocs); docs/internal — внутренние заметки
 ├── requirements.txt   # Инференс/RAG/веб/CLI

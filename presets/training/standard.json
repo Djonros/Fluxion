@@ -1,0 +1,29 @@
+{
+  "format": "fluxion-training-preset",
+  "version": 1,
+  "id": "standard",
+  "name": "Стандартный",
+  "description": "Для видеокарт с 8–12 ГБ памяти. Обучение через HF peft и trl, адаптер на всех слоях внимания и MLP, контекст 4096 токенов.",
+  "trainer": "standard",
+  "min_vram_gb": 8,
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "settings": {
+    "lora_r": 64,
+    "lora_alpha": 128,
+    "lora_dropout": 0.05,
+    "target_modules": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+    ],
+    "max_seq_length": 4096,
+    "num_train_epochs": 3,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 0.0002
+  }
+}
