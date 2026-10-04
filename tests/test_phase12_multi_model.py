@@ -13,17 +13,8 @@ import httpx
 import pytest
 
 from core.api_backend import APIBackend
-import core.backend_factory as _bf
 from core.backend_factory import BackendFactory, _detect_backend_type, _build_chain
 
-_REAL_LOCAL_GGUF_AVAILABLE = _bf._local_gguf_available
-
-
-@pytest.fixture(autouse=True)
-def _no_local_models(monkeypatch):
-    """Hermetic: a GGUF model downloaded on the developer's machine must not
-    switch the default backend to llama.cpp (and load 4.7 GB) in these tests."""
-    monkeypatch.setattr(_bf, "_local_gguf_available", lambda settings: False)
 from core.config import Settings, GenerationSettings
 from core.inference import ModelBackend, OllamaBackend
 
@@ -140,36 +131,21 @@ class TestBackendDetection:
             with patch.dict(os.environ, env, clear=True):
                 assert _detect_backend_type(settings) == "ollama"
 
-    def test_detect_llama_cpp_when_local_model_present(self):
-        """No backend configured + embedded engine + downloaded model → llama.cpp."""
+    def test_detect_llama_cpp_when_engine_installed_without_model(self):
+        """Clean machine: engine shipped, model not downloaded yet -> llama.cpp.
+
+        Regression: requiring a downloaded model sent a fresh install to Ollama,
+        so the app could not start without it."""
         with patch.dict(os.environ, {}, clear=True), \
-                patch("core.backend_factory._llama_cpp_installed", return_value=True), \
-                patch("core.backend_factory._local_gguf_available", return_value=True):
+                patch("core.backend_factory._llama_cpp_installed", return_value=True):
             assert _detect_backend_type(Settings()) == "llama_cpp"
             # an explicit choice still wins
             assert _detect_backend_type(Settings(backend="ollama")) == "ollama"
 
     def test_no_llama_cpp_package_keeps_ollama_default(self):
         with patch.dict(os.environ, {}, clear=True), \
-                patch("core.backend_factory._llama_cpp_installed", return_value=False), \
-                patch("core.backend_factory._local_gguf_available", return_value=True):
+                patch("core.backend_factory._llama_cpp_installed", return_value=False):
             assert _detect_backend_type(Settings()) == "ollama"
-
-    def test_local_gguf_available(self):
-        import tempfile
-        _local_gguf_available = _REAL_LOCAL_GGUF_AVAILABLE
-
-        d = Path(tempfile.mkdtemp())
-        model = d / "m.gguf"
-        with patch.dict(os.environ, {"LOCALAPPDATA": str(d)}, clear=True):
-            assert not _local_gguf_available(Settings(gguf_path=str(model)))
-            model.write_bytes(b"GGUF")
-            assert _local_gguf_available(Settings(gguf_path=str(model)))
-            assert not _local_gguf_available(Settings())          # catalog model absent
-            cat = d / "Fluxion" / "models"
-            cat.mkdir(parents=True)
-            (cat / "qwen2.5-coder-7b-instruct-q4_k_m.gguf").write_bytes(b"GGUF")
-            assert _local_gguf_available(Settings())               # installed via Models page
 
     def test_detect_api_by_env_key(self):
         settings = Settings()

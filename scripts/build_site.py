@@ -69,23 +69,26 @@ def hf_url(repo_id: str, filename: str) -> str:
 
 def model_rows(catalog: list) -> str:
     rows = []
-    for m in catalog:
+    for m in sorted(catalog, key=lambda m: getattr(m, "pro", False)):  # free first
         name = m.name.split(" — ")[0]
-        if m.task == "embedding":
-            purpose = "Поиск по коду проекта (RAG)"
-        elif m.default:
-            purpose = "Чат и агент. Модель по умолчанию"
-        else:
-            purpose = "Чат и агент на слабых компьютерах"
+        purpose = getattr(m, "summary", "") or ("Поиск по коду проекта (RAG)" if m.task == "embedding" else "Чат и агент")
         vram = f"от {m.vram_gb:g} ГБ" if m.vram_gb else "не нужна"
+        if getattr(m, "pro", False):
+            name_cell = f'{html.escape(name)} <span class="pro">Pro</span>'
+            file_cell = '<span class="via-app">в программе, с лицензией Pro</span>'
+        else:
+            name_cell = html.escape(name)
+            file_cell = (
+                f'<a href="{html.escape(hf_url(m.repo_id, m.filename), quote=True)}" '
+                f'download>{html.escape(m.filename)}</a>'
+            )
         rows.append(
             "<tr>"
-            f'<th scope="row">{html.escape(name)}</th>'
+            f'<th scope="row">{name_cell}</th>'
             f"<td>{html.escape(purpose)}</td>"
             f'<td class="num">{gigabytes(m.size_bytes)}</td>'
             f'<td class="num">{vram}</td>'
-            f'<td><a href="{html.escape(hf_url(m.repo_id, m.filename), quote=True)}" '
-            f'download>{html.escape(m.filename)}</a></td>'
+            f"<td>{file_cell}</td>"
             "</tr>"
         )
     return "\n".join(rows)
@@ -171,8 +174,9 @@ def build(out: Path) -> Path:
         "models": [
             {
                 "id": m.model_id, "name": m.name, "task": m.task, "default": m.default,
-                "size_bytes": m.size_bytes, "vram_gb": m.vram_gb,
-                "url": hf_url(m.repo_id, m.filename), "filename": m.filename,
+                "pro": getattr(m, "pro", False), "summary": getattr(m, "summary", ""),
+                "size_bytes": m.size_bytes, "vram_gb": m.vram_gb, "filename": m.filename,
+                **({} if getattr(m, "pro", False) else {"url": hf_url(m.repo_id, m.filename)}),
             }
             for m in catalog
         ],

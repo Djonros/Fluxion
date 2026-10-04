@@ -84,7 +84,13 @@ class WebSearch:
         except Exception as exc:
             logger.warning("Search via %s failed: %s", self.provider_name, exc)
             results = []
-        if not results and self.provider.tier == "enhanced":
+        # A provider that switches between tiers itself (desktop: optional
+        # SearXNG) must not be replaced — that would undo the user's choice.
+        if (
+            not results
+            and self.provider.tier == "enhanced"
+            and getattr(self.provider, "manages_fallback", False) is not True
+        ):
             # Golden Rule of Silence: degrade to the keyless tier, never fail quietly.
             try:
                 results = self._fallback.search(query, max_results=limit * 3)

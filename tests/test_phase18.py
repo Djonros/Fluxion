@@ -71,7 +71,6 @@ def test_detect_config_backend(monkeypatch):
 
 def test_detect_api_key_only_without_explicit_backend(monkeypatch):
     monkeypatch.delenv("FLUXION_BACKEND", raising=False)
-    monkeypatch.setattr("core.backend_factory._local_gguf_available", lambda s: False)
     monkeypatch.setenv("FLUXION_API_KEY", "sk-x")
     assert _detect_backend_type(Settings()) == "api"
     assert _detect_backend_type(Settings(backend="ollama")) == "ollama"
@@ -383,7 +382,33 @@ def test_models_page_builds_with_catalog(make_window):
     buttons = window._model_buttons
     assert set(buttons) >= {"qwen2.5-coder-7b-q4km", "bge-m3-gguf"}
     for button in buttons.values():
-        assert button.text().startswith(("Скачать", "Удалить"))
+        assert button.text().startswith(("Скачать", "Удалить", "Доступно в Pro"))
+
+
+def test_models_page_pro_models_follow_licence(make_window, monkeypatch, tmp_path):
+    import licensing
+
+    monkeypatch.setenv("FLUXION_MODELS_DIR", str(tmp_path / "models"))
+    window = make_window()
+    from core.model_manager import ModelManager
+
+    window.model_mgr = ModelManager(tmp_path / "models")
+    pro_id = "qwen2.5-coder-14b-q4km"
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
+    window._refresh_models()
+    assert window._model_buttons[pro_id].text() == "Доступно в Pro"
+    window._on_model_button(pro_id)
+    assert "Pro" in window.models_status.text()
+    assert getattr(window, "_model_download_worker", None) is None   # nothing started
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    window._refresh_models()
+    assert window._model_buttons[pro_id].text().startswith("Скачать")
+    # free models never show the Pro label
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
+    window._refresh_models()
+    assert window._model_buttons["qwen2.5-coder-7b-q4km"].text() != "Доступно в Pro"
 
 
 # ── 18.6: wizard/health under llama_cpp backend ──────────────────────────

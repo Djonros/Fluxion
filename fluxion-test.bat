@@ -103,7 +103,7 @@ goto :quick
 :: ── 1. Быстрая проверка агента ──────────────────────────────────────────────
 :quick
 call :init_run quick
-call :run_group agent "Агент: инструменты, форматы, git, бенчмарк" "yaml, httpx, dotenv" "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py tests\test_presentation.py tests\test_build_specs.py tests\test_release.py"
+call :run_group agent "Агент: инструменты, форматы, git, бенчмарк" "yaml, httpx, dotenv" "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py tests\test_presentation.py tests\test_clean_machine.py tests\test_build_specs.py tests\test_release.py"
 echo.
 echo ---- Проверка набора задач бенчмарка ----
 "%PY%" -m eval.agent_bench --validate
@@ -114,12 +114,12 @@ goto :after
 :: ── 2. Все тесты по группам ─────────────────────────────────────────────────
 :groups
 call :init_run groups
-call :run_group agent   "Агент"                      "yaml, httpx, dotenv"    "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py tests\test_presentation.py tests\test_build_specs.py tests\test_release.py tests\test_phase3_router.py tests\test_eval_custom.py"
+call :run_group agent   "Агент"                      "yaml, httpx, dotenv"    "tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_language.py tests\test_presentation.py tests\test_clean_machine.py tests\test_build_specs.py tests\test_release.py tests\test_phase3_router.py tests\test_eval_custom.py"
 call :run_group core    "Ядро: бэкенды, RAG, веб, CLI" "yaml, httpx, dotenv, numpy" "tests\test_phase1_serving.py tests\test_phase12_multi_model.py tests\test_phase2_rag.py tests\test_phase4_web.py tests\test_phase15_lite.py tests\test_theme.py"
 call :run_group server  "Сервер: API, авторизация, биллинг" "fastapi, sqlalchemy" "tests\test_server.py tests\test_server_security.py tests\test_auth.py tests\test_phase13_orgs.py tests\test_w2_projects.py tests\test_w3_sessions.py tests\test_w4_usage.py tests\test_w5_billing.py tests\test_w6_streaming.py"
 call :run_group desktop "Десктоп-приложение"         "PySide6"                "tests\test_desktop_window.py tests\test_browser_app.py tests\test_phase14_onboarding.py tests\test_phase17.py tests\test_phase175.py tests\test_phase18.py tests\test_wizard_autoinstall.py tests\test_training_pipeline.py"
 call :run_group license "Лицензирование"             "cryptography"           "tests\test_licensing.py"
-call :run_group train   "Данные и дообучение"        "yaml"                   "tests\test_phase5_data.py tests\test_phase6_ft.py tests\test_phase13_marketplace.py tests\test_training_presets.py tests\test_website.py"
+call :run_group train   "Данные и дообучение"        "yaml"                   "tests\test_phase5_data.py tests\test_phase6_ft.py tests\test_phase13_marketplace.py tests\test_training_presets.py tests\test_website.py tests\test_model_catalog_pro.py tests\test_model_download.py tests\test_license_key_file.py tests\test_search_optional.py tests\test_config_env.py"
 call :summary
 goto :after
 

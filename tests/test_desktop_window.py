@@ -794,7 +794,7 @@ def test_license_dialog_activate_success(qapp, tmp_path, monkeypatch):
 
     lic = _pro_license()
     state = {"active": None}
-    monkeypatch.setattr(ld, "activate", lambda key, path=None: state.update(active=key) or lic)
+    monkeypatch.setattr(ld, "activate_text", lambda key, path=None: state.update(active=key) or lic)
     monkeypatch.setattr(ld, "load_activation", lambda path=None: lic)
 
     dialog = ld.LicenseDialog()
@@ -819,7 +819,7 @@ def test_license_dialog_activate_error(qapp, tmp_path, monkeypatch):
     def _fail(key, path=None):
         raise LicenseError("malformed license key")
 
-    monkeypatch.setattr(ld, "activate", _fail)
+    monkeypatch.setattr(ld, "activate_text", _fail)
     dialog = ld.LicenseDialog()
     dialog.key_input.setText("bad-key")
     dialog.activate_button.click()
@@ -833,7 +833,7 @@ def test_license_dialog_activate_empty_key(qapp, tmp_path, monkeypatch):
 
     called = {"activate": False}
     monkeypatch.setattr(
-        ld, "activate", lambda key, path=None: called.update(activate=True) or _pro_license()
+        ld, "activate_text", lambda key, path=None: called.update(activate=True) or _pro_license()
     )
     monkeypatch.setattr(ld, "load_activation", lambda path=None: None)
     dialog = ld.LicenseDialog()
@@ -1013,3 +1013,86 @@ def test_training_preset_file_invalid_shows_reason(qapp, tmp_path, monkeypatch):
     assert not window._load_training_preset_file(str(bad))
     assert window._training_preset_path == ""
     assert "не поддерживается" in window.training_view.toPlainText()
+
+
+def test_license_dialog_activates_key_file(qapp, tmp_path, monkeypatch):
+    import desktop_browser.license_dialog as ld
+
+    key_file = tmp_path / "client-20261001.key"
+    key_file.write_text("key", encoding="utf-8")
+    lic = _pro_license()
+    state = {"file": None, "active": None}
+    monkeypatch.setattr(ld, "load_activation", lambda path=None: state["active"])
+
+    def _activate_file(path, target=None):
+        state["file"] = str(path)
+        state["active"] = lic
+        return lic
+
+    monkeypatch.setattr(ld, "activate_file", _activate_file)
+    monkeypatch.setattr(ld.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(key_file), "")))
+    dialog = ld.LicenseDialog(search_dirs=[])
+    dialog.file_button.click()
+    assert state["file"] == str(key_file)
+    assert "PRO" in dialog.status_label.text()
+    assert "Активирована" in dialog.message_label.text()
+
+
+def test_license_dialog_offers_found_key(qapp, tmp_path, monkeypatch):
+    import desktop_browser.license_dialog as ld
+
+    found = tmp_path / "fluxion-license.key"
+    found.write_text("key", encoding="utf-8")
+    lic = _pro_license()
+    state = {"active": None, "file": None}
+    monkeypatch.setattr(ld, "load_activation", lambda path=None: state["active"])
+    monkeypatch.setattr(ld, "find_key_files", lambda dirs=None: [found])
+
+    def _activate_file(path, target=None):
+        state.update(file=str(path), active=lic)
+        return lic
+
+    monkeypatch.setattr(ld, "activate_file", _activate_file)
+    dialog = ld.LicenseDialog(search_dirs=[tmp_path])
+    assert not dialog.found_button.isHidden()
+    assert "fluxion-license.key" in dialog.found_button.text()
+    dialog.found_button.click()
+    assert state["file"] == str(found)
+    assert dialog.found_button.isHidden()
+
+
+def test_license_dialog_no_offer_when_pro(qapp, monkeypatch, tmp_path):
+    import desktop_browser.license_dialog as ld
+
+    monkeypatch.setattr(ld, "load_activation", lambda path=None: _pro_license())
+    monkeypatch.setattr(ld, "find_key_files", lambda dirs=None: [tmp_path / "x.key"])
+    dialog = ld.LicenseDialog(search_dirs=[tmp_path])
+    assert dialog.found_button.isHidden()
+
+
+def test_training_advanced_settings_open_readably(qapp, tmp_path, monkeypatch):
+    """The advanced block used to squeeze its fields into thin strips."""
+    import licensing
+    from PySide6.QtWidgets import QScrollArea
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    pipeline, _ = _fake_pipeline()
+    window = _training_window(qapp, tmp_path, pipeline)
+    assert window.training_advanced.isHidden()
+    assert window.training_advanced_button.text().startswith("▸")
+
+    window.training_advanced_button.setChecked(True)
+    assert not window.training_advanced.isHidden()
+    assert window.training_advanced_button.text().startswith("▾")
+    # the page scrolls instead of compressing the form
+    parent = window.training_advanced.parentWidget()
+    while parent is not None and not isinstance(parent, QScrollArea):
+        parent = parent.parentWidget()
+    assert isinstance(parent, QScrollArea)
+    assert window.training_view.minimumHeight() >= 200
+    # plain-language labels, no Ollama jargon by default
+    assert window.training_export.text() == "Собрать готовую модель для чата (GGUF)"
+    assert window.training_export_note.text()
+
+    window.training_advanced_button.setChecked(False)
+    assert window.training_advanced.isHidden()

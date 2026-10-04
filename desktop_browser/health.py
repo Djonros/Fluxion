@@ -127,8 +127,10 @@ def check_gguf_model(settings) -> DependencyStatus:
     """Chat model for the llama_cpp backend: configured path or catalog default."""
     from core.model_manager import ModelManager
 
+    from core.llama_cpp_backend import resolve_gguf_path
+
     mm = ModelManager()
-    path = str(getattr(settings, "gguf_path", "") or "").strip()
+    path = resolve_gguf_path(settings) if str(getattr(settings, "gguf_path", "") or "").strip() else ""
     if path:
         if Path(path).is_file():
             return DependencyStatus("model", "Модель", True, Path(path).name)
@@ -196,8 +198,9 @@ def check_searxng(web_search) -> DependencyStatus:
         "searxng",
         "Веб-поиск (базовый режим)",
         True,
-        "один движок, без SearXNG",
-        "Поставьте Docker + SearXNG для расширенного поиска — или продолжайте в базовом.",
+        "встроенный, Docker не нужен",
+        "Расширенный поиск (SearXNG в Docker) включается в меню Правка "
+        "или кнопкой «Исправить».",
         fix="searxng" if url else "",
     )
 

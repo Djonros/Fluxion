@@ -12,7 +12,7 @@ FREE = "free"
 PRO = "pro"
 PLANS = (FREE, PRO)
 
-PRO_FEATURES = frozenset({"agent_write", "qlora", "multi_model"})
+PRO_FEATURES = frozenset({"agent_write", "qlora", "multi_model", "model_catalog"})
 
 _KEY_ID_RE = re.compile(r"^[0-9a-f]{16,64}$")
 

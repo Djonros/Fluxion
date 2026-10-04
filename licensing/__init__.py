@@ -15,7 +15,16 @@ from .models import (
     validate_key_id,
 )
 from .verifier import PUBLIC_KEY_B64, verify_license
-from .store import DEFAULT_LICENSE_PATH, activate, clear_activation, load_activation
+from .store import (
+    DEFAULT_LICENSE_PATH,
+    activate,
+    activate_file,
+    activate_text,
+    clear_activation,
+    extract_key,
+    find_key_files,
+    load_activation,
+)
 from .gate import (
     ProRequiredError,
     current_license,
@@ -38,6 +47,10 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "DEFAULT_LICENSE_PATH",
+    "activate_file",
+    "activate_text",
+    "extract_key",
+    "find_key_files",
     "DEFAULT_PRIVATE_KEY_PATH",
     "PUBLIC_KEY_B64",
     "FREE",

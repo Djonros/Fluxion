@@ -58,11 +58,14 @@ nano .env
 Обязательное и важное:
 
 ```ini
-# Сгенерируйте: openssl rand -hex 32
+# Сгенерируйте: openssl rand -hex 32  (не короче 32 символов — иначе сервер не стартует)
 FLUXION_JWT_SECRET=<длинная случайная строка>
 
-# База (пароль придумайте; compose создаст БД сам)
+# База (пароль придумайте; compose создаст БД сам). Обязателен.
 POSTGRES_PASSWORD=<сильный пароль>
+
+# Адреса сайтов, которым можно обращаться к API из браузера (через запятую)
+FLUXION_CORS_ORIGINS=https://fluxion.app
 
 # Инференс — вариант А: API-бэкенд
 FLUXION_BACKEND=api
@@ -249,6 +252,12 @@ print(base64.b64encode(pub).decode())  # вставить в licensing/verifier.
 
 ### 6.2. Выпуск ключа покупателю
 
+Проще всего — `issue-key.bat`: спросит почту и срок, сохранит ключ в
+`keys\issued\<почта>-<дата>.key`, запишет его в журнал и откроет файл в
+проводнике, чтобы сразу прикрепить к письму.
+
+Вручную:
+
 ```bash
 # бессрочная (perpetual)
 python -m licensing.issuer --email customer@example.com
@@ -257,12 +266,15 @@ python -m licensing.issuer --email customer@example.com
 python -m licensing.issuer --email customer@example.com --expires 2027-08-20
 
 # в файл сразу
-python -m licensing.issuer --email customer@example.com > key.txt
+python -m licensing.issuer --email customer@example.com > fluxion-license.key
 ```
 
-Ключ отправляется покупателю (email/бот); тот активирует его в CLI:
-`/license activate <ключ>`. Проверить выданный ключ можно так же, как это
-делает приложение:
+**Отправляйте покупателю файл ключа**, а не строку: в программе он выбирает
+**Помощь → Лицензия… → «Загрузить файл ключа…»** или просто перетаскивает
+файл в окно, а если файл лежит в «Загрузках», программа сама предложит
+активировать его одной кнопкой. Ключ в теле письма тоже сработает — вставкой в
+то же окно или командой `/license activate` в CLI. Проверить выданный ключ
+можно так же, как это делает приложение:
 
 ```bash
 python -c "from licensing.verifier import verify_license; print(verify_license('<ключ>'))"
@@ -289,7 +301,7 @@ python -c "from licensing.verifier import verify_license; print(verify_license('
    добавьте раздел `## [X.Y.Z] — дата` в `CHANGELOG.md`; первую строку
    `RELEASE_NOTES_RU.md` — «Fluxion X.Y.Z — что нового» (это текст релиза).
    Тест `tests/test_release.py` не даст выпустить версию без этих правок.
-2. **Сборка.** `fluxion-update.bat --build-only` — Lite (и при желании Full).
+2. **Сборка.** `fluxion-build.bat` — Lite (и при желании Full); без вопроса — `fluxion-build.bat --lite` или `--full`.
    Архивы появятся в `dist\artifacts`.
 3. **Проверка без изменений:** `fluxion-release.bat --check` — репозиторий,
    свободен ли тег, тесты.
@@ -402,4 +414,4 @@ docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 5. [ ] Stripe: продукты/цены, webhook, test-оплата `4242…` прошла, план сменился
 6. [ ] Live-ключи включены, тестовый юзер не имеет доступа
 7. [ ] Cron-бэкап базы настроен, uptime-мониторинг добавлен
-8. [ ] `mkdocs gh-deploy` — документация опубликована
+8. [ ] Сайт и документация опубликованы (раздел 7: Pages → GitHub Actions, вкладка Actions → Website)

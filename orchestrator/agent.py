@@ -1454,7 +1454,15 @@ class CodingAgent:
             return ToolResult("web_search", args, "", False, "Web search not configured")
 
         client = getattr(self.web_search, "client", None)
-        if client is not None and hasattr(client, "is_alive") and not client.is_alive():
+        provider = getattr(self.web_search, "provider", None)
+        # A provider with its own fallback (desktop: built-in search when
+        # SearXNG is off) works without SearXNG — do not report it missing.
+        if (
+            client is not None
+            and hasattr(client, "is_alive")
+            and getattr(provider, "manages_fallback", False) is not True
+            and not client.is_alive()
+        ):
             base_url = getattr(client, "base_url", "SearXNG")
             return ToolResult(
                 "web_search",
@@ -1462,8 +1470,8 @@ class CodingAgent:
                 "",
                 False,
                 f"SearXNG is not reachable at {base_url}. "
-                "Start Docker Desktop (the container starts automatically) "
-                "or use the Status dashboard to fix it.",
+                "Turn on extended search (menu Правка) with Docker Desktop "
+                "running, or use the Status page to fix it.",
             )
 
         try:

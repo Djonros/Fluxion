@@ -67,10 +67,15 @@ python -m finetune.export_gguf --model data/merged_model --llama-cpp-dir C:\path
 
 Or set `LLAMA_CPP_DIR` instead of `--llama-cpp-dir`. Output: `data/gguf`.
 
-## 5. Use with Ollama
+## 5. Use the model
 
-Create a `Modelfile` with `FROM ./data/gguf/model-q4_K_M.gguf`, then
-`ollama create fluxion-coder -f Modelfile`.
+**In Fluxion:** page «Модели» → «Импорт с диска…» → the `.gguf` file from
+`data/gguf` (or copy it to `%LOCALAPPDATA%\Fluxion\models`), then pick it in the
+chat's «Модель» list. Training from the app's «Обучение» page does this
+automatically when `LLAMA_CPP_DIR` is set.
+
+**With Ollama (optional):** create a `Modelfile` with
+`FROM ./data/gguf/model-q4_K_M.gguf`, then `ollama create fluxion-coder -f Modelfile`.
 
 ## Contents
 

@@ -133,6 +133,71 @@ def parse_ddg_lite(html_text: str) -> list[SearchResult]:
     return results
 
 
+class OptionalSearxngProvider(SearchProvider):
+    """Built-in search, or SearXNG when the user switched it on and it answers.
+
+    SearXNG runs in Docker, so it is opt-in: while it is off the app never
+    touches Docker.  When it is on, it is used as soon as the container
+    answers (no restart needed) and every query falls back to the built-in
+    search if SearXNG fails.  Liveness is cached for a few seconds.
+    """
+
+    manages_fallback = True  # web.pipeline must not replace this provider
+
+    def __init__(self, client, fallback: SearchProvider, enabled: bool = False,
+                 probe_ttl: float = 30.0):
+        self.client = client
+        self.fallback = fallback
+        self._enabled = bool(enabled)
+        self._probe_ttl = probe_ttl
+        self._alive: bool | None = None
+        self._probed_at = 0.0
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def set_enabled(self, value: bool) -> None:
+        self._enabled = bool(value)
+        self._alive = None
+
+    def _searxng_alive(self) -> bool:
+        import time
+
+        if not self._enabled:
+            return False
+        now = time.monotonic()
+        if self._alive is None or now - self._probed_at > self._probe_ttl:
+            try:
+                self._alive = bool(self.client.is_alive())
+            except Exception:
+                self._alive = False
+            self._probed_at = now
+        return bool(self._alive)
+
+    @property
+    def tier(self) -> str:  # type: ignore[override]
+        return "enhanced" if self._searxng_alive() else getattr(self.fallback, "tier", "basic")
+
+    @property
+    def name(self) -> str:  # type: ignore[override]
+        return "searxng" if self._searxng_alive() else getattr(self.fallback, "name", "basic")
+
+    def search(self, query: str, max_results: int = 10) -> list[SearchResult]:
+        if self._searxng_alive():
+            try:
+                results = self.client.search(query, max_results=max_results)
+                if results:
+                    return results
+            except Exception as exc:
+                logger.info("SearXNG failed, using built-in search: %s", exc)
+                self._alive = False
+        return self.fallback.search(query, max_results=max_results)
+
+    def is_alive(self) -> bool:
+        return True
+
+
 def create_search_provider(settings=None) -> SearchProvider:
     """Pick tier 1 when a local SearXNG answers; otherwise tier 3."""
     base_url = getattr(settings, "searxng_url", None) or "http://localhost:8080"

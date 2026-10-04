@@ -68,7 +68,7 @@ echo [3/7] Тесты...
 if errorlevel 1 goto :no_pytest
 set "PYTHONUTF8=1"
 set "QT_QPA_PLATFORM=offscreen"
-"%PY%" -m pytest -q -p no:cacheprovider tests\test_release.py tests\test_build_specs.py tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_presentation.py tests\test_training_pipeline.py tests\test_training_presets.py tests\test_website.py tests\test_phase7_agent.py tests\test_phase11_git.py
+"%PY%" -m pytest -q -p no:cacheprovider tests\test_release.py tests\test_build_specs.py tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_presentation.py tests\test_training_pipeline.py tests\test_training_presets.py tests\test_clean_machine.py tests\test_website.py tests\test_model_catalog_pro.py tests\test_model_download.py tests\test_license_key_file.py tests\test_search_optional.py tests\test_config_env.py tests\test_phase7_agent.py tests\test_phase11_git.py
 if errorlevel 1 goto :tests_failed
 "%PY%" -m eval.agent_bench --validate
 if errorlevel 1 goto :tests_failed
@@ -97,6 +97,24 @@ echo.
 echo [5/7] Коммит и тег...
 git add -A
 if defined KEEP_CONFIG git reset -q -- config/config.yaml config/repos.yaml config/continue_config.json
+
+:: Guard: build output (dist, its copies like "dist — копия", exe/dll) and
+:: files over 50 MB must not reach GitHub - it rejects files over 100 MB.
+:: Also checks commits not pushed yet: a bad commit left by an earlier run.
+echo       Проверка файлов выпуска...
+git fetch -q origin 2>nul
+set "BASE_REF="
+git rev-parse -q --verify "origin/%BRANCH%" >nul 2>&1
+if not errorlevel 1 set "BASE_REF=origin/%BRANCH%"
+if not exist "%~dp0scripts\check_release_files.ps1" if exist "%~dp0check_release_files.ps1" (
+    echo       Переношу check_release_files.ps1 из корня в папку scripts...
+    move /y "%~dp0check_release_files.ps1" "%~dp0scripts\" >nul
+    git add -A
+    if defined KEEP_CONFIG git reset -q -- config/config.yaml config/repos.yaml config/continue_config.json
+)
+if not exist "%~dp0scripts\check_release_files.ps1" goto :no_guard
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\check_release_files.ps1" -BaseRef "%BASE_REF%"
+if errorlevel 1 goto :bad_files
 git diff --cached --quiet
 if not errorlevel 1 goto :nothing_to_commit
 git commit -q -m "Release %TAG%" -m "See CHANGELOG.md and RELEASE_NOTES_RU.md"
@@ -235,6 +253,29 @@ goto :fail
 echo.
 echo [ОШИБКА] Проверки не прошли - выпуск остановлен, ничего не изменено.
 goto :fail
+:no_guard
+git reset -q
+echo [ОШИБКА] Не найден scripts\check_release_files.ps1 - без проверки файлов
+echo          выпуск не делается. Положите файл в папку scripts внутри папки
+echo          программы, рядом с build_lite.ps1, и запустите выпуск снова.
+goto :fail
+
+:bad_files
+:: Undo commits that were not pushed (they hold the files) and unstage;
+:: the working folder is untouched, nothing is lost.
+if defined BASE_REF git reset -q --soft "%BASE_REF%"
+git reset -q
+if not defined BASE_REF echo          Отмените неотправленные коммиты вручную: git reset --soft origin/main
+echo.
+echo [ОШИБКА] Выпуск остановлен: GitHub такие файлы не примет, и в репозитории
+echo          им не место. Неотправленный коммит отменён, файлы на диске не тронуты.
+echo          Что сделать:
+echo            - копию сборки, например папку «dist — копия», удалите или перенесите
+echo              за пределы папки проекта; новые копии .gitignore уже исключает;
+echo            - нужный крупный файл добавьте в .gitignore;
+echo          затем запустите fluxion-release.bat снова.
+goto :fail
+
 :commit_failed
 echo [ОШИБКА] Не удалось создать коммит или тег - см. вывод выше.
 echo          Если git просит представиться, выполните один раз:

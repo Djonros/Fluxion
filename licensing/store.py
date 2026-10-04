@@ -98,3 +98,139 @@ def clear_activation(path: Path | None = None) -> bool:
         target.unlink()
         return True
     return False
+
+
+# ── Activation from a key file (simpler than copy-paste) ──────────────────
+
+MAX_KEY_FILE_BYTES = 64 * 1024
+KEY_FILE_SUFFIXES = (".key", ".txt", ".lic")
+_KEY_RE = None
+
+
+def _key_candidates(text: str) -> list[str]:
+    """Possible keys in arbitrary text: a key file, an e-mail body, a key
+    wrapped over several lines by a mail client.
+
+    Consecutive whitespace-separated pieces made only of key characters are
+    joined — that reassembles a wrapped key, while ordinary words around it
+    ("Ваш ключ:", "Спасибо!") break the run and stay out of it."""
+    import re
+
+    global _KEY_RE
+    if _KEY_RE is None:
+        _KEY_RE = re.compile(r"[A-Za-z0-9_\-+/=]{16,}\.[A-Za-z0-9_\-+/=]{16,}")
+    piece = re.compile(r"^[A-Za-z0-9_\-+/=.]+$")
+    text = (text or "").replace("\ufeff", "")
+    candidates: list[str] = []
+    run: list[str] = []
+    for token in text.split() + [" "]:          # sentinel flushes the last run
+        if piece.match(token):
+            run.append(token)
+            continue
+        if run:
+            joined = "".join(run)
+            if "." in joined:
+                candidates.append(joined)
+                candidates.extend(_KEY_RE.findall(joined))
+            run = []
+    candidates.extend(_KEY_RE.findall(text))
+    seen: dict[str, None] = {}
+    for candidate in candidates:
+        seen.setdefault(candidate, None)
+    return list(seen)
+
+
+def extract_key(text: str) -> str:
+    """The first valid licence key found in *text*.
+
+    Raises LicenseError with the most useful reason (expired, other device…)
+    when a key is present but cannot be activated."""
+    from .models import LicenseError
+
+    last_error: LicenseError | None = None
+    for candidate in _key_candidates(text):
+        try:
+            verify_license(candidate)
+            return candidate
+        except LicenseError as exc:
+            if "." in candidate and len(candidate) > 40:
+                last_error = exc
+    if last_error is not None and "malformed" not in str(last_error):
+        raise last_error
+    raise LicenseError("лицензионный ключ Fluxion не найден")
+
+
+def activate_text(text: str, path: Path | None = None) -> License:
+    """Activate from pasted text (whitespace, line breaks, BOM tolerated)."""
+    return activate(extract_key(text), path)
+
+
+def read_key_file(file_path: Path | str) -> str:
+    from .models import LicenseError
+
+    file_path = Path(file_path)
+    try:
+        if file_path.stat().st_size > MAX_KEY_FILE_BYTES:
+            raise LicenseError("файл слишком большой для лицензионного ключа")
+        return file_path.read_text(encoding="utf-8-sig", errors="replace")
+    except FileNotFoundError:
+        raise LicenseError(f"файл не найден: {file_path}") from None
+    except OSError as exc:
+        raise LicenseError(f"не удалось прочитать файл: {exc}") from None
+
+
+def activate_file(file_path: Path | str, path: Path | None = None) -> License:
+    """Activate from a key file, e.g. the one issue-key.bat produces."""
+    return activate_text(read_key_file(file_path), path)
+
+
+def key_search_dirs() -> list[Path]:
+    """Where a user is likely to have saved a key file."""
+    dirs: list[Path] = []
+    if getattr(sys, "frozen", False):
+        dirs.append(Path(sys.executable).resolve().parent)
+    else:
+        dirs.append(Path(__file__).resolve().parent.parent)
+    home = Path.home()
+    for name in ("Downloads", "Загрузки", "Desktop", "Рабочий стол"):
+        dirs.append(home / name)
+    seen: dict[str, Path] = {}
+    for d in dirs:
+        seen.setdefault(str(d).lower(), d)
+    return [d for d in seen.values() if d.is_dir()]
+
+
+def find_key_files(dirs: list[Path] | None = None, limit_per_dir: int = 200) -> list[Path]:
+    """Valid, not yet activated key files in *dirs*, newest first.
+
+    Only the top level of each folder is scanned, files are small and every
+    candidate must pass the offline signature check."""
+    current = None
+    try:
+        if DEFAULT_LICENSE_PATH.exists():
+            current = DEFAULT_LICENSE_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    found: list[tuple[float, Path]] = []
+    for folder in dirs if dirs is not None else key_search_dirs():
+        try:
+            entries = sorted(folder.iterdir(), key=lambda p: p.name)[:5000]
+        except OSError:
+            continue
+        checked = 0
+        for item in entries:
+            if checked >= limit_per_dir:
+                break
+            if item.suffix.lower() not in KEY_FILE_SUFFIXES:
+                continue
+            try:
+                stat = item.stat()
+                if not item.is_file() or stat.st_size > MAX_KEY_FILE_BYTES:
+                    continue
+                checked += 1
+                key = extract_key(read_key_file(item))
+            except Exception:
+                continue
+            if key != current:
+                found.append((stat.st_mtime, item))
+    return [p for _, p in sorted(found, key=lambda t: t[0], reverse=True)]

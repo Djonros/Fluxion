@@ -23,7 +23,7 @@ python -m pytest tests/ -v
    git checkout -b feature/your-feature-name
    ```
 
-3. **Write tests first** — every new feature or bug fix should include tests. We aim to maintain >95% pass rate across the suite.
+3. **Write tests first** — every new feature or bug fix should include tests; a bug fix should come with a test that fails without the fix. The whole suite must pass.
 
 4. **Run tests locally** before submitting:
    ```bash
@@ -70,7 +70,7 @@ cli/            REPL, command registry, renderer
 eval/           HumanEval evaluation framework
 data/           Datasets, ChromaDB, repos (gitignored)
 config/         YAML configuration
-tests/          Pytest test suite (phase-organised)
+tests/          Pytest suite; on Windows run it by groups with fluxion-test.bat
 ```
 
 ## Reporting Issues

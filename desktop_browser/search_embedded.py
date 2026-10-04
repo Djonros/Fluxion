@@ -15,6 +15,7 @@ import threading
 from PySide6.QtCore import QEventLoop, QMetaObject, QObject, QTimer, Qt, Signal, Slot
 
 from web.search_backend import (
+    OptionalSearxngProvider,
     DuckDuckGoLiteProvider,
     SearchProvider,
     _clean_ddg_href,
@@ -167,11 +168,17 @@ class EmbeddedBrowserProvider(SearchProvider):
         return self._fallback.search(query, max_results)
 
 
-def create_desktop_search_provider(settings=None) -> SearchProvider:
-    """Tier chain for the desktop app: SearXNG → embedded incognito → DDG lite."""
-    base = create_search_provider(settings)
-    if base.tier == "enhanced":
-        return base
+def create_desktop_search_provider(settings=None, use_searxng: bool = False) -> SearchProvider:
+    """Desktop search: built-in (embedded incognito browser → DDG lite), plus
+    SearXNG only when the user enabled it (``use_searxng``)."""
+    from web.searxng import SearXNGClient
+
+    timeout = getattr(settings, "timeout", 10)
+    basic: SearchProvider = DuckDuckGoLiteProvider(timeout=timeout)
     if embedded_browser_available():
-        return EmbeddedBrowserProvider(fallback=base)
-    return base
+        basic = EmbeddedBrowserProvider(fallback=basic)
+    client = SearXNGClient(
+        base_url=getattr(settings, "searxng_url", None) or "http://localhost:8080",
+        timeout=timeout,
+    )
+    return OptionalSearxngProvider(client, basic, enabled=use_searxng)

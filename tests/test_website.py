@@ -31,11 +31,17 @@ def test_page_is_complete(site):
     assert 'lang="ru"' in page
 
 
-def test_every_catalog_model_is_downloadable(site):
+def test_every_catalog_model_is_listed(site):
+    """Free models link to the file; Pro models point to the app (licence)."""
     page = (site / "index.html").read_text(encoding="utf-8")
     for model in MODEL_CATALOG:
-        assert hf_download_url(model.repo_id, model.filename) in page
-        assert model.filename in page
+        url = hf_download_url(model.repo_id, model.filename)
+        if model.pro:
+            assert url not in page
+            assert model.name.split(" — ")[0] in page
+        else:
+            assert url in page and model.filename in page
+    assert page.count('class="pro"') == sum(1 for m in MODEL_CATALOG if m.pro)
 
 
 def test_every_preset_is_published_and_valid(site):
@@ -90,7 +96,8 @@ def test_page_text_escaped(site, monkeypatch):
     spec = importlib.util.spec_from_file_location("build_site3", ROOT / "scripts" / "build_site.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    fake = type("M", (), dict(name="<b>x</b>", task="chat", default=False, vram_gb=0,
-                              size_bytes=1, repo_id="a/b", filename="f.gguf"))
+    fake = type("M", (), dict(name="<b>x</b>", task="chat", default=False, vram_gb=0, pro=False,
+                              summary="<i>y</i>", size_bytes=1, repo_id="a/b", filename="f.gguf"))
     rows = module.model_rows([fake])
     assert "<b>x</b>" not in rows and "&lt;b&gt;x&lt;/b&gt;" in rows
+    assert "<i>y</i>" not in rows

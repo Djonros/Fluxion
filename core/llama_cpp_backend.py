@@ -132,3 +132,116 @@ class LlamaCppBackend(ModelBackend):
 
     def is_available(self) -> bool:
         return bool(self.model_path) and os.path.isfile(self.model_path)
+
+
+class ModelNotReadyError(RuntimeError):
+    """The GGUF model is not downloaded yet (message is user-facing)."""
+
+
+def default_gguf_path() -> str:
+    """Where the app keeps the default chat model (the "Models" page)."""
+    from .model_manager import MODEL_CATALOG, _default_models_dir
+
+    entry = next((m for m in MODEL_CATALOG if m.task == "chat" and m.default), None)
+    return str(_default_models_dir() / entry.filename) if entry else ""
+
+
+def resolve_gguf_path(settings) -> str:
+    """The chat model file to use.
+
+    An explicit path (``gguf_path`` / ``FLUXION_GGUF_PATH``) wins when the
+    file exists.  If it does not — e.g. a path from the machine the exe was
+    built on — but the model is in the app's models folder (where the wizard
+    and the "Models" page download it), that one is used instead of failing.
+    """
+    configured = str(getattr(settings, "gguf_path", "") or "").strip() or os.environ.get(
+        "FLUXION_GGUF_PATH", ""
+    ).strip()
+    if configured and os.path.isfile(configured):
+        return configured
+    default = default_gguf_path()
+    if default and os.path.isfile(default):
+        return default
+    return configured or default
+
+
+class LazyLlamaCppBackend(ModelBackend):
+    """Embedded llama.cpp engine that loads the model on first use.
+
+    On a clean machine the model is not downloaded yet: creating
+    :class:`LlamaCppBackend` would fail at startup and the app could not even
+    open its first-run wizard to download the model.  This wrapper starts
+    without a model, reports ``is_available() == False`` until the file
+    exists, and loads it on the first request — so a model downloaded while
+    the app runs is picked up without a restart.  If ``settings.gguf_path``
+    changes (another model chosen), the next request loads that model.
+    """
+
+    supports_json_schema = True
+
+    def __init__(self, settings: Settings):
+        import threading
+
+        self.settings = settings
+        self.generation = settings.generation
+        self._backend: LlamaCppBackend | None = None
+        self._loaded_path = ""
+        self._lock = threading.Lock()
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "LazyLlamaCppBackend":
+        return cls(settings)
+
+    @property
+    def model_path(self) -> str:
+        return resolve_gguf_path(self.settings)
+
+    def is_available(self) -> bool:
+        path = self.model_path
+        if not path or not os.path.isfile(path):
+            return False
+        from .backend_factory import _llama_cpp_installed
+
+        return _llama_cpp_installed()
+
+    def _engine(self) -> LlamaCppBackend:
+        path = self.model_path
+        with self._lock:
+            if self._backend is not None and self._loaded_path == path:
+                return self._backend
+            if not path or not os.path.isfile(path):
+                raise ModelNotReadyError(
+                    "Модель не скачана. Откройте страницу «Модели» и скачайте "
+                    "модель — после загрузки она подключится без перезапуска."
+                )
+            if self._backend is not None:
+                self._backend.unload()
+                self._backend = None
+            n_gpu = int(getattr(self.settings, "n_gpu_layers", 0) or 0)
+            if not n_gpu:
+                n_gpu = int(os.environ.get("FLUXION_N_GPU_LAYERS", "0") or 0)
+            logger.info("loading GGUF model %s", path)
+            self._backend = LlamaCppBackend(
+                model_path=path,
+                n_ctx=self.settings.generation.num_ctx,
+                n_gpu_layers=n_gpu,
+                generation=self.settings.generation,
+            )
+            self._loaded_path = path
+            return self._backend
+
+    def generate(self, messages, gen: GenerationSettings | None = None) -> str:
+        return self._engine().generate(messages, gen)
+
+    def stream(self, messages, gen: GenerationSettings | None = None) -> Iterator[str]:
+        yield from self._engine().stream(messages, gen)
+
+    def unload(self) -> None:
+        with self._lock:
+            if self._backend is not None:
+                self._backend.unload()
+            self._backend = None
+            self._loaded_path = ""
+
+    def cpu_mode_note(self) -> str:
+        return self._backend.cpu_mode_note() if self._backend is not None else ""

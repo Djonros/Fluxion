@@ -387,14 +387,16 @@ def build_registry(repl: REPL, backend: OllamaBackend, settings: Settings) -> Co
 
     def _license(args):
         from licensing import LicenseError
-        from licensing.store import activate, clear_activation, load_activation
+        from pathlib import Path as _Path
+
+        from licensing.store import activate_file, activate_text, clear_activation, load_activation
 
         action = args[0].lower() if args else "status"
 
         if action == "activate" and len(args) > 1:
             key = " ".join(args[1:]).strip()
             try:
-                lic = activate(key)
+                lic = activate_file(key.strip('"')) if _Path(key.strip('"')).is_file() else activate_text(key)
             except LicenseError as exc:
                 repl.renderer.error(f"Activation failed: {exc}")
                 return
@@ -409,7 +411,7 @@ def build_registry(repl: REPL, backend: OllamaBackend, settings: Settings) -> Co
             lic = load_activation()
             if lic is None:
                 repl.renderer.info("License: free (no Pro activation)")
-                repl.renderer.info("Activate with: /license activate <key>")
+                repl.renderer.info("Activate with: /license activate <key or path to .key file>")
             else:
                 repl.renderer.info(f"License: {lic.plan.upper()}")
                 repl.renderer.info(f"Email:   {lic.email}")
@@ -491,6 +493,12 @@ def _startup_backend(settings: Settings):
 
     backend_type = _detect_backend_type(settings)
     if backend_type == "api" and not feature_enabled("multi_model"):
+        # Free fallback: the embedded engine when it is there (always in the
+        # builds — a clean machine has no Ollama), otherwise Ollama.
+        from core.backend_factory import _instantiate, _llama_cpp_installed
+
+        if _llama_cpp_installed():
+            return _instantiate("llama_cpp", settings), True
         return OllamaBackend(settings), True
     if backend_type == "ollama":
         return OllamaBackend(settings), False
@@ -505,7 +513,7 @@ def main() -> int:
     if gated:
         renderer.error(
             "The API backend requires a Pro license.\n"
-            "  Free tier: local Ollama or the embedded llama.cpp engine.\n"
+            "  Using the free embedded llama.cpp engine (or local Ollama) instead.\n"
             "  Activate with: /license activate <key>"
         )
 

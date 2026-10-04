@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Lite build failed with `WinError 32` when `dist\FluxionBrowserLite` was held: `scripts/build_lite.ps1` now closes copies of the app (and QtWebEngineProcess) running from that folder, removes the old build with retries (antivirus/search indexer), builds into `dist\_build_tmp` and moves the result in when only an empty folder is left that Explorer or a terminal holds, and names the locked file when a file itself cannot be deleted.
+
+### Added
+- `fluxion-build.bat`: rebuild the exe from the current code without updating (`--lite`, `--full`); a thin wrapper over `fluxion-update.bat --build-only`, so the pre-build checks and the post-build verification stay in one place.
+
+## [0.12.1] — 2026-10-02
+
+### Changed — Docker/SearXNG only on request
+- The app no longer starts Docker Desktop and the SearXNG container at every launch (it rarely helped: the search provider was chosen once at startup, before the container came up). Built-in web search (DuckDuckGo via the embedded browser / lite page) is the default; **Правка → «Расширенный веб-поиск (SearXNG в Docker)»** switches SearXNG on or off, remembered in QSettings (`FLUXION_SEARXNG=1` without the menu), and the health page's fix button enables it too. `OptionalSearxngProvider` (web/search_backend.py) uses SearXNG as soon as it answers, without a restart, and falls back per query; `web.pipeline` no longer replaces such a provider. Switching off stops the container without launching Docker.
+- Fixed: with SearXNG off, the agent's `web_search` reported "SearXNG is not reachable" although built-in search worked.
+
+### Fixed — Training page
+- "⚙ Дополнительно" squeezed its fields into thin strips (the page could not grow): the page scrolls now, the toggle reads «▸/▾ Дополнительные настройки», labels are plain-language with tooltips, and a note explains what building the GGUF needs (`LLAMA_CPP_DIR`).
+- A trained model was registered only in Ollama and never reached the app's own engine: after the GGUF export it is copied into the models folder under the chosen name and appears in the chat's model list (`ModelManager.import_from_disk(target_name=…)`).
+
+### Fixed — Behaviour the docs described but the code did not do
+- `SEARXNG_URL` was documented but not read; `config/.env` (the documented place) was not loaded — both work now (real environment variables still win).
+- The agent page started agents with 8 steps although the agent's default is 15 — the window now uses 15.
+- Without Pro, a configured API backend fell back to Ollama; it now falls back to the free embedded llama.cpp engine when available (a clean machine has no Ollama).
+
+### Documentation
+- README, USER_GUIDE (now app-first), configuration (every variable the code reads, engine selection), quick start, install, FAQ (what leaves the computer: search queries go to DuckDuckGo; where data is stored), web search, agent, chat, fine-tuning, troubleshooting, privacy, deployment (SaaS mode, required secrets), OWNER_GUIDE, CONTRIBUTING, README-TRAIN and the extension README checked against the code and rewritten where stale.
+- Tests never touch the developer's real models folder (`tests/conftest.py`).
+
+## [0.12.0] — 2026-09-30
+
+### Added — Pro model catalog
+- Three Pro models in `core/model_manager.MODEL_CATALOG`, all Qwen2.5-Coder (same chat template, agent grammar and llama.cpp support as the default model; Apache-2.0; single-file GGUFs verified on Hugging Face): 7B Instruct Q8_0 (8.10 GB), 14B Instruct Q4_K_M (8.99 GB), 32B Instruct Q4_K_M (19.85 GB), from `bartowski/*-GGUF`.
+- New Pro feature `model_catalog` (enabled by every Pro licence, existing keys included). `ModelManager.download` refuses Pro models without it before any network request, so no caller can skip the check; `model_allowed()` is shared with the UI.
+- "Models" page: each card shows a one-line summary and a PRO mark; without a licence the button reads "Доступно в Pro" and explains how to activate; activating a licence refreshes the buttons. Licence dialog lists the catalog among Pro features.
+- Website: Pro models in the table with a Pro label and "in the app, with a Pro licence" instead of a file link; `catalog.json` carries `pro` and `summary`.
+- Docs: new `guides/models.md`; the Pro table in `guides/licensing.md`.
+
+### Fixed — Model download stuck with "416 Range Not Satisfiable"
+- Resuming asked the server for bytes past the end when the `.part` file was already complete (or larger than the remote file), and every retry failed with 416. Now a complete part is finished, an oversized one restarts from scratch; a stream that ends early keeps the part and says that the next click resumes; the result must be a GGUF file (an error page is no longer saved as a model). Errors are short and readable instead of a long signed CDN URL (`ModelDownloadError`).
+- The status bar showed the Ollama `model` setting (e.g. `qwen3.5:9b — offline`) on the llama.cpp engine; it now shows the GGUF file or "не скачана", and refreshes after a download.
+
+### Added — Simpler licence activation
+- Licence dialog: **Загрузить файл ключа…**, drag & drop of a key file, and a one-click **Активировать ключ из файла …** when a valid key file is in Downloads, on the Desktop or next to the program (top level only, every candidate passes the offline signature check). Pasted text may be a whole e-mail or a key wrapped over several lines (`licensing.store.extract_key / activate_text / activate_file / find_key_files`). Activating refreshes Pro features in the window at once.
+- `/license activate` in the CLI accepts a path to a key file; `issue-key.bat` tells the owner to send the `.key` file and opens it in Explorer.
+
+### Fixed — Website text
+- The site said the agent edits code and runs tests without mentioning that writing files is a Pro feature (free agent is read-only).
+
+## [0.11.1] — 2026-09-27
+
+### Fixed — The app required Ollama on a clean machine
+- Without an explicit `backend`, the embedded llama.cpp engine was chosen only if a model was already downloaded, so a fresh install fell back to Ollama. It is now chosen whenever llama-cpp-python is available (the builds ship it); installation detection falls back to an import for frozen builds.
+- The llama.cpp engine loaded the model at startup; without a model the engine failed, the window opened without settings and the first-run wizard, which downloads the model, never appeared. New `LazyLlamaCppBackend` (used by `BackendFactory`) starts without a model, reports unavailable until the file exists and loads it on the first request: a model downloaded while the app runs works without a restart, and choosing another model reloads it.
+- A `gguf_path` bundled from the build machine (non-existent elsewhere) no longer hides the model downloaded into the app's models folder: `resolve_gguf_path` is shared by the engine and the wizard's model check.
+- Downloading a model on the "Models" page now selects it with the auto-detected engine too (it required an explicit `backend: llama_cpp`).
+- Tests: `tests/test_clean_machine.py`; the default backend in tests no longer depends on whether llama.cpp is installed on the developer machine (`tests/conftest.py`).
+
 ## [0.11.0] — 2026-09-27
 
 Website with downloads, training presets as files.

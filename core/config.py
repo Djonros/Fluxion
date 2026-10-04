@@ -73,15 +73,24 @@ class Settings:
     @classmethod
     def load(cls, config_path: str | None = None) -> "Settings":
         """Load settings from YAML, with .env and environment overrides."""
-        load_dotenv()
         path = Path(config_path or os.environ.get("AI_AGENT_CONFIG", _DEFAULT_CONFIG))
+        # .env next to config.yaml (config/.env, as the docs and .env.example
+        # say), then the default search (project root).  Real environment
+        # variables always win: load_dotenv does not override them.
+        config_env = path.parent / ".env"
+        if config_env.is_file():
+            load_dotenv(config_env)
+        load_dotenv()
         data: dict[str, Any] = {}
         if path.exists():
             with path.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
         gen = data.get("generation") or {}
         rag = data.get("rag") or {}
-        web = data.get("web") or {}
+        web = dict(data.get("web") or {})
+        if os.environ.get("SEARXNG_URL", "").strip():
+            # documented override (docs/configuration.md, .env.example)
+            web["searxng_url"] = os.environ["SEARXNG_URL"].strip()
         paths = data.get("paths") or {}
         return cls(
             backend=str(data.get("backend", "")).strip().lower(),

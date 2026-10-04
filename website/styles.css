@@ -207,6 +207,18 @@ tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 tbody th { font-weight: 600; color: var(--text); min-width: 11ch; }
 tbody td { color: var(--muted); line-height: 1.5; }
 th.num, td.num { text-align: right; white-space: nowrap; }
+.pro {
+  display: inline-block;
+  margin-left: 0.4em;
+  padding: 0.05em 0.45em;
+  border: 1px solid var(--violet);
+  border-radius: 4px;
+  color: #C4A6FF;
+  font-size: 0.8em;
+  font-weight: 600;
+  vertical-align: 0.1em;
+}
+.via-app { color: var(--muted); }
 td:last-child { white-space: nowrap; }
 
 /* ── footer ─────────────────────────────────────────────────────────── */

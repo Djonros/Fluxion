@@ -717,6 +717,21 @@ class TestStartupBackendGate:
         assert gated is True
         assert backend.__class__.__name__ == "OllamaBackend"
 
+    def test_api_without_pro_falls_back_to_embedded_engine(self, keypair, tmp_path, monkeypatch):
+        """A clean machine has no Ollama: fall back to the free llama.cpp engine."""
+        import licensing.store
+
+        monkeypatch.setattr(licensing.store, "DEFAULT_LICENSE_PATH", tmp_path / "license.key")
+        self._patch_env(monkeypatch, FLUXION_API_KEY="sk-test")
+        monkeypatch.setattr("core.backend_factory._llama_cpp_installed", lambda: True)
+
+        from cli.app import _startup_backend
+        from core.config import Settings
+
+        backend, gated = _startup_backend(Settings())
+        assert gated is True
+        assert backend.__class__.__name__ == "LazyLlamaCppBackend"
+
     def test_llama_cpp_not_gated_for_free(self, keypair, tmp_path, monkeypatch):
         import licensing.store
 

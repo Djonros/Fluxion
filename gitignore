@@ -1,0 +1,89 @@
+# ── Python ────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ──────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── IDE ───────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Testing & CI ──────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ── Docs (MkDocs build output) ────────────────────
+site/
+
+# ── Build outputs / artifacts ─────────────────────
+build-debug/
+*.7z
+
+# ── Fluxion runtime data (db, licenses, indexes) ──
+data/
+
+# ── License keys — never commit ───────────────────
+keys/
+
+# ── Fluxion backups ───────────────────────────────
+.fluxion-backup/
+
+# ── Models (fine-tuned, downloaded) ───────────────
+*.gguf
+*.bin
+*.safetensors
+models/
+adapters/
+outputs/
+
+# ── Environment / secrets ─────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── OS ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test logs and agent benchmark results (fluxion-test.bat)
+logs/
+results/
+
+# Website build output (scripts/build_site.py)
+_site/
+
+# Build output and its copies — never in the repository (GitHub rejects
+# files over 100 MB). Windows names copied folders "dist — копия", "dist - Copy".
+/dist*/
+/build*/
+*копия*/
+*- Copy*/
+*.exe
+*.dll
+*.pyd
+*.pak
+*.msi
+*.safetensors

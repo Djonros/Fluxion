@@ -180,7 +180,7 @@ if errorlevel 1 (
     echo           Установить: "%PY%" -m pip install pytest
     goto :build_offer
 )
-"%PY%" -m pytest -q -p no:cacheprovider tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_presentation.py tests\test_build_specs.py tests\test_release.py
+"%PY%" -m pytest -q -p no:cacheprovider tests\test_agent_regressions.py tests\test_agent_structured.py tests\test_agent_bench.py tests\test_phase7_agent.py tests\test_phase11_git.py tests\test_presentation.py tests\test_clean_machine.py tests\test_build_specs.py tests\test_release.py
 if errorlevel 1 (
     echo       [ОШИБКА] Часть тестов не прошла.
     goto :offer_rollback

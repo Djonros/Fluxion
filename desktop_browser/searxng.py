@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import os
 import shutil
 import subprocess
 import sys
@@ -124,3 +125,37 @@ def ensure_searxng(base_url: str, wait_secs: float = 45.0) -> bool:
             return True
     logger.warning("SearXNG did not become healthy at %s", base_url)
     return False
+
+
+# ── opt-in: SearXNG (and therefore Docker) only when the user enables it ──
+
+SETTING_KEY = "web/searxng"
+
+
+def searxng_enabled() -> bool:
+    """User choice, remembered between runs. Default: off (built-in search)."""
+    if os.environ.get("FLUXION_SEARXNG", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    from PySide6.QtCore import QSettings
+
+    value = QSettings("Fluxion", "Fluxion").value(SETTING_KEY, False)
+    return str(value).lower() in ("1", "true", "yes")
+
+
+def set_searxng_enabled(enabled: bool) -> None:
+    from PySide6.QtCore import QSettings
+
+    QSettings("Fluxion", "Fluxion").setValue(SETTING_KEY, bool(enabled))
+
+
+def stop_searxng() -> bool:
+    """Stop the container if Docker is already running; never launches Docker."""
+    docker = shutil.which("docker")
+    if docker is None:
+        return False
+    try:
+        if _docker([docker, "info"]).returncode != 0:
+            return False  # daemon down: nothing to stop, and do not start it
+        return _docker([docker, "stop", CONTAINER_NAME]).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False

@@ -48,5 +48,6 @@ Or press `F5` in VS Code with this folder open to launch an Extension Developmen
 
 ## Requirements
 
-- [Fluxion API server](../server/) running on `localhost:8765`
-- [Ollama](https://ollama.com) with `qwen2.5-coder:7b-instruct` model
+- [Fluxion API server](../server/) running on `localhost:8765` (`fluxion-server.bat`)
+- A model in Fluxion: the server uses the same engine as the app — the built-in
+  llama.cpp with a model downloaded on the «Модели» page. Ollama is optional.

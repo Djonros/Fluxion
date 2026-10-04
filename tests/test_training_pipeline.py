@@ -154,6 +154,15 @@ def test_pipeline_full_flow_registers_and_creates(tmp_path, monkeypatch):
     assert created["modelfile"].startswith(
         f"FROM {(tmp_path / 'data' / 'gguf' / 'model.q4_K_M.gguf').resolve()}"
     )
+    # the trained model is also added to the app's own models folder (llama.cpp),
+    # so it shows up in the chat's model list without Ollama
+    import os
+
+    installed = Path(result["installed_model"])
+    assert installed.name == "fluxion-test.gguf"
+    assert installed.parent == Path(os.environ["FLUXION_MODELS_DIR"])
+    assert installed.read_text(encoding="utf-8") == "gguf"
+    assert any("добавлена в программу" in line for line in logs)
 
     from finetune.marketplace import AdapterRegistry
 

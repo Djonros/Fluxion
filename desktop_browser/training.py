@@ -551,6 +551,23 @@ def run_pipeline(
                 except SystemExit as exc:
                     raise TrainingError(f"Экспорт GGUF прерван (exit {exc.code})") from exc
                 result["gguf"] = str(gguf_path)
+                # The app's own engine (llama.cpp) reads the models folder:
+                # add the trained model there so it shows up in the chat's
+                # model list — not only in Ollama.
+                try:
+                    from core.model_manager import ModelManager
+
+                    installed = ModelManager().import_from_disk(
+                        gguf_path, target_name=f"{params.ollama_model_name}.gguf",
+                        source="training",
+                    )
+                    result["installed_model"] = str(installed.path)
+                    log(
+                        f"Модель «{installed.filename}» добавлена в программу — "
+                        "выберите её в списке «Модель» в чате."
+                    )
+                except Exception as exc:
+                    log(f"Не удалось добавить модель в программу: {exc}")
 
                 modelfile = Path(settings.gguf_dir) / "Modelfile"
                 if client is not None and modelfile.is_file():

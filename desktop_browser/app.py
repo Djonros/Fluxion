@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import os
 import sys
 import time
 import uuid
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
+    QScrollArea,
     QToolButton,
     QTextBrowser,
     QTextEdit,
@@ -638,6 +640,13 @@ class HealthDialog(QDialog):
         return row
 
     def _fix_searxng(self, button: QPushButton) -> None:
+        # Pressing "fix" is an explicit choice of extended search: remember it.
+        action = getattr(self.window, "act_searxng", None)
+        if action is not None and not action.isChecked():
+            action.blockSignals(True)
+            action.setChecked(True)
+            action.blockSignals(False)
+        self.window._apply_searxng_choice(True)
         client = getattr(self.window.web_search, "client", None)
         base_url = getattr(client, "base_url", "http://localhost:8080")
         button.setEnabled(False)
@@ -1220,6 +1229,12 @@ class FluxionWindow(QMainWindow):
         act_copy.setShortcut("Ctrl+C")
         act_copy.triggered.connect(self._copy_selection)
         m_edit.addAction(act_copy)
+        m_edit.addSeparator()
+        self.act_searxng = QAction("Расширенный веб-поиск (SearXNG в Docker)", self)
+        self.act_searxng.setCheckable(True)
+        self.act_searxng.setChecked(self._searxng_on())
+        self.act_searxng.toggled.connect(self._toggle_searxng)
+        m_edit.addAction(self.act_searxng)
 
         # Вид
         m_view = bar.addMenu("&Вид")
@@ -1260,6 +1275,51 @@ class FluxionWindow(QMainWindow):
         act_about = QAction("О Fluxion", self)
         # act_about.triggered.connect(self._show_about)
         m_help.addAction(act_about)
+
+    def _searxng_on(self) -> bool:
+        try:
+            from .searxng import searxng_enabled
+
+            return searxng_enabled()
+        except Exception:
+            return False
+
+    def _apply_searxng_choice(self, enabled: bool) -> None:
+        from .searxng import set_searxng_enabled
+
+        set_searxng_enabled(enabled)
+        provider = getattr(self.web_search, "provider", None)
+        if hasattr(provider, "set_enabled"):
+            provider.set_enabled(enabled)
+
+    def _toggle_searxng(self, enabled: bool) -> None:
+        """Menu Правка: switch SearXNG (Docker) on or off, remembered."""
+        self._apply_searxng_choice(enabled)
+        client = getattr(self.web_search, "client", None)
+        base_url = getattr(client, "base_url", "") or "http://localhost:8080"
+        if enabled:
+            self.statusBar().showMessage("Запускаю SearXNG в Docker…", 8000)
+            worker = SearxFixWorker(base_url, self)
+            worker.done.connect(self._on_searxng_started)
+            self._searxng_worker = worker
+            worker.start()
+        else:
+            from threading import Thread
+
+            from .searxng import stop_searxng
+
+            Thread(target=stop_searxng, daemon=True, name="searxng-stop").start()
+            self.statusBar().showMessage(
+                "Расширенный поиск выключен: используется встроенный, Docker не нужен.", 8000
+            )
+
+    def _on_searxng_started(self, ok: bool) -> None:
+        if ok:
+            self.statusBar().showMessage("SearXNG запущен: веб-поиск в расширенном режиме.", 8000)
+        else:
+            self.statusBar().showMessage(
+                "SearXNG не запустился (нужен Docker Desktop) — пока работает встроенный поиск.", 12000
+            )
 
     def _copy_selection(self) -> None:
         widget = QApplication.focusWidget()
@@ -1667,7 +1727,9 @@ class FluxionWindow(QMainWindow):
         adv.addWidget(QLabel("Макс. итераций:"))
         self.agent_iterations = QSpinBox()
         self.agent_iterations.setRange(1, 50)
-        self.agent_iterations.setValue(8)
+        # the agent's own default (orchestrator.agent); 8 was too few for
+        # read → edit → test → fix cycles
+        self.agent_iterations.setValue(15)
         adv.addWidget(self.agent_iterations)
         adv.addStretch()
         self.agent_advanced.setVisible(False)
@@ -2007,36 +2069,58 @@ class FluxionWindow(QMainWindow):
         form.addRow("Макс. примеров:", self.training_max_samples)
         c2.addLayout(form)
 
-        self.training_advanced_button = QPushButton("⚙ Дополнительно")
+        self.training_advanced_button = QPushButton("▸ Дополнительные настройки")
         self.training_advanced_button.setObjectName("iconButton")
         self.training_advanced_button.setCheckable(True)
-        self.training_advanced_button.clicked.connect(
-            lambda checked=False: self.training_advanced.setVisible(
-                self.training_advanced_button.isChecked()
-            )
-        )
-        c2.addWidget(self.training_advanced_button)
+        self.training_advanced_button.toggled.connect(self._toggle_training_advanced)
+        c2.addWidget(self.training_advanced_button, 0, Qt.AlignLeft)
 
         self.training_advanced = QFrame()
         self.training_advanced.setObjectName("advancedBox")
-        adv = QFormLayout(self.training_advanced)
-        adv.setContentsMargins(12, 10, 12, 10)
+        adv_box = QVBoxLayout(self.training_advanced)
+        adv_box.setContentsMargins(14, 12, 14, 12)
+        adv_box.setSpacing(10)
+        adv_hint = QLabel(
+            "Обычно менять не нужно: значения по умолчанию подходят для первого обучения."
+        )
+        adv_hint.setObjectName("subtitle")
+        adv_hint.setWordWrap(True)
+        adv_box.addWidget(adv_hint)
+        adv = QFormLayout()
         adv.setSpacing(10)
+        adv.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        adv.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.training_base_model = QLineEdit()
         self.training_base_model.setText(TrainingParams().base_model)
-        adv.addRow("Базовая модель (HF):", self.training_base_model)
-        self.training_adapter_name = QLineEdit()
-        self.training_adapter_name.setText(TrainingParams().adapter_name)
-        adv.addRow("Имя адаптера:", self.training_adapter_name)
+        self.training_base_model.setToolTip(
+            "Модель с Hugging Face, которую дообучаем. Пресет из файла задаёт её сам."
+        )
+        adv.addRow("Базовая модель:", self.training_base_model)
         self.training_ollama_model = QLineEdit()
         self.training_ollama_model.setText(TrainingParams().ollama_model_name)
-        adv.addRow("Имя модели Ollama:", self.training_ollama_model)
+        self.training_ollama_model.setToolTip(
+            "Под этим названием дообученная модель появится в списке «Модель» в чате "
+            "(и в Ollama, если она установлена)."
+        )
+        adv.addRow("Название модели:", self.training_ollama_model)
+        self.training_adapter_name = QLineEdit()
+        self.training_adapter_name.setText(TrainingParams().adapter_name)
+        self.training_adapter_name.setToolTip(
+            "Под этим именем адаптер LoRA сохранится в реестре адаптеров."
+        )
+        adv.addRow("Название адаптера:", self.training_adapter_name)
         self.training_description = QLineEdit()
-        self.training_description.setPlaceholderText("Короткое описание (необязательно)")
+        self.training_description.setPlaceholderText("Необязательно: для чего эта модель")
         adv.addRow("Описание:", self.training_description)
-        self.training_export = QCheckBox("Экспорт GGUF + ollama create (нужен LLAMA_CPP_DIR)")
+        adv_box.addLayout(adv)
+        self.training_export = QCheckBox("Собрать готовую модель для чата (GGUF)")
         self.training_export.setChecked(True)
-        adv.addRow("", self.training_export)
+        adv_box.addWidget(self.training_export)
+        self.training_export_note = QLabel()
+        self.training_export_note.setObjectName("subtitle")
+        self.training_export_note.setWordWrap(True)
+        adv_box.addWidget(self.training_export_note)
+        self._refresh_training_export_note()
         self.training_advanced.setVisible(False)
         c2.addWidget(self.training_advanced)
         layout.addWidget(card2)
@@ -2061,12 +2145,23 @@ class FluxionWindow(QMainWindow):
         c3.addLayout(buttons)
         self.training_view = QTextBrowser()
         self.training_view.setObjectName("messages")
-        self.training_view.setHtml("<p>QLoRA: обучение → merge → GGUF → Ollama → реестр адаптеров.</p>")
+        self.training_view.setMinimumHeight(220)
+        self.training_view.setHtml(
+            "<p>Этапы: обучение → объединение с базовой моделью → готовая модель (GGUF) "
+            "→ список моделей программы.</p>"
+        )
         c3.addWidget(self.training_view, 1)
         layout.addWidget(card3, 1)
 
         self._refresh_training_steps()
-        return page
+        # Scrollable: opening "Дополнительные настройки" used to squeeze the
+        # fields into thin strips because the page had no room to grow.
+        scroll = QScrollArea()
+        scroll.setObjectName("pageScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
     # ── models page (roadmap 18.2) ────────────────────────────────────────
 
@@ -2117,8 +2212,16 @@ class FluxionWindow(QMainWindow):
             row = QHBoxLayout(card)
             row.setContentsMargins(16, 12, 16, 12)
             row.setSpacing(10)
-            name = QLabel(f"<b>{entry.name}</b>")
+            pro_mark = (
+                ' <span style="color:#8B4BFF; font-weight:600;">PRO</span>' if entry.pro else ""
+            )
+            summary = (
+                f'<br><span style="color:#94A3B8;">{html.escape(entry.summary)}</span>'
+                if entry.summary else ""
+            )
+            name = QLabel(f"<b>{html.escape(entry.name)}</b>{pro_mark}{summary}")
             name.setTextFormat(Qt.RichText)
+            name.setWordWrap(True)
             row.addWidget(name, 1)
             meta = QLabel(
                 f"{entry.size_bytes / 1_000_000_000:.1f} ГБ"
@@ -2157,6 +2260,8 @@ class FluxionWindow(QMainWindow):
         return page
 
     def _refresh_models(self) -> None:
+        from core.model_manager import model_allowed
+
         mm = getattr(self, "model_mgr", None)
         if mm is None:
             return
@@ -2166,6 +2271,8 @@ class FluxionWindow(QMainWindow):
                 continue
             if mm.is_installed(model_id):
                 button.setText("Удалить")
+            elif not model_allowed(entry):
+                button.setText("Доступно в Pro")
             else:
                 button.setText(f"Скачать ({entry.size_bytes / 1_000_000_000:.1f} ГБ)")
         installed = mm.list_installed()
@@ -2176,6 +2283,8 @@ class FluxionWindow(QMainWindow):
             self.models_installed.setText("Установленных моделей нет.")
 
     def _on_model_button(self, model_id: str) -> None:
+        from core.model_manager import model_allowed
+
         mm = getattr(self, "model_mgr", None)
         if mm is None:
             return
@@ -2191,6 +2300,12 @@ class FluxionWindow(QMainWindow):
                 mm.delete(entry.filename)
                 self.models_status.setText(f"Удалено: {entry.filename}")
                 self._refresh_models()
+            return
+        if not model_allowed(entry):
+            self.models_status.setText(
+                f"«{entry.name}» доступна в Fluxion Pro. "
+                "Активируйте лицензию: меню Помощь → Лицензия…"
+            )
             return
         self._start_model_download(model_id)
 
@@ -2220,6 +2335,8 @@ class FluxionWindow(QMainWindow):
             self.models_progress.setRange(0, 0)
 
     def _on_model_download_done(self, path: str) -> None:
+        from core.backend_factory import _detect_backend_type
+
         self._model_download_worker = None
         self.models_progress.setVisible(False)
         for button in self._model_buttons.values():
@@ -2232,11 +2349,12 @@ class FluxionWindow(QMainWindow):
             if (
                 default_entry is not None
                 and default_entry.task == "chat"
-                and str(getattr(self.settings, "backend", "") or "").lower() in ("llama_cpp", "llamacpp")
+                and _detect_backend_type(self.settings) == "llama_cpp"
             ):
                 self.settings.gguf_path = path
         except Exception:
             pass
+        self._start_status_check()  # the engine picks the model up: show it online
 
     def _on_model_download_failed(self, message: str) -> None:
         self._model_download_worker = None
@@ -2270,6 +2388,25 @@ class FluxionWindow(QMainWindow):
         self._model_import_worker = None
         self.models_status.setText(message)
         self._refresh_models()
+
+    def _toggle_training_advanced(self, opened: bool) -> None:
+        self.training_advanced.setVisible(opened)
+        self.training_advanced_button.setText(
+            ("▾ " if opened else "▸ ") + "Дополнительные настройки"
+        )
+
+    def _refresh_training_export_note(self) -> None:
+        if os.environ.get("LLAMA_CPP_DIR", "") and Path(os.environ["LLAMA_CPP_DIR"]).is_dir():
+            text = (
+                "После обучения модель соберётся в один файл и появится в списке "
+                "«Модель» в чате."
+            )
+        else:
+            text = (
+                "Для сборки нужна папка llama.cpp в переменной окружения LLAMA_CPP_DIR. "
+                "Без неё сохранится адаптер, а готовую модель можно собрать позже."
+            )
+        self.training_export_note.setText(text)
 
     def _pick_training_preset_file(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -2706,7 +2843,7 @@ class FluxionWindow(QMainWindow):
         if self.assistant is None:
             self.status_label.setText("Движок: не подключён")
             return
-        model = getattr(self.settings, "model", "")
+        model = self._status_model_name()
         self.status_label.setText(f"Модель: {model} — проверка...")
         if self.backend is None:
             return
@@ -2714,8 +2851,18 @@ class FluxionWindow(QMainWindow):
         self.status_worker.result.connect(self._on_status_result)
         self.status_worker.start()
 
+    def _status_model_name(self) -> str:
+        """The model the engine actually uses: the GGUF file for llama.cpp
+        (the "model" setting is an Ollama name and misled on llama.cpp)."""
+        path = getattr(self.backend, "model_path", None)
+        if isinstance(path, str):
+            if path and Path(path).is_file():
+                return Path(path).name
+            return "не скачана (страница «Модели»)"
+        return getattr(self.settings, "model", "")
+
     def _on_status_result(self, available: bool) -> None:
-        model = getattr(self.settings, "model", "")
+        model = self._status_model_name()
         state = "online" if available else "offline"
         text = f"Модель: {model} — {state}" if model else f"Движок: {state}"
         self.status_label.setText(text)
@@ -2991,6 +3138,8 @@ class FluxionWindow(QMainWindow):
             self.style().polish(btn)
         self._refresh_training_gate()
         self._refresh_training_env()
+        if getattr(self, "_model_buttons", None):
+            self._refresh_models()  # Pro models become downloadable after activation
 
     def _open_license_dialog(self) -> None:
         from .license_dialog import LicenseDialog
@@ -3243,7 +3392,15 @@ def main() -> int:
         try:
             assistant, backend, settings, rag_service, web_search = build_engine()
 
-            if web_search is not None and os.environ.get("FLUXION_DESKTOP_SMOKE") != "1":
+            from .searxng import searxng_enabled
+
+            # Docker/SearXNG only if the user switched extended search on
+            # (menu Правка); by default the built-in search needs no Docker.
+            if (
+                web_search is not None
+                and searxng_enabled()
+                and os.environ.get("FLUXION_DESKTOP_SMOKE") != "1"
+            ):
                 from threading import Thread
 
                 from .searxng import ensure_searxng

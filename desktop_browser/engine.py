@@ -25,6 +25,15 @@ def _wire_gguf_paths(settings: Settings) -> None:
             settings.rag.embedding_gguf = emb
 
 
+def _searxng_choice() -> bool:
+    try:
+        from .searxng import searxng_enabled
+
+        return searxng_enabled()
+    except Exception:
+        return False
+
+
 def build_engine(settings: Settings | None = None):
     """Return ``(assistant, backend, settings, rag_service, web_search)``.
 
@@ -62,7 +71,9 @@ def build_engine(settings: Settings | None = None):
 
         web_search = WebSearch.from_settings(
             settings.web,
-            provider=create_desktop_search_provider(settings.web),
+            provider=create_desktop_search_provider(
+                settings.web, use_searxng=_searxng_choice()
+            ),
         )
     except Exception:
         web_search = None

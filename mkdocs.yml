@@ -53,6 +53,7 @@ nav:
   - Конфигурация: configuration.md
   - Руководства:
       - Чат в приложении: guides/chat.md
+      - Модели: guides/models.md
       - RAG по коду: guides/rag.md
       - ReAct-агент: guides/agent.md
       - Веб-поиск: guides/web-search.md

@@ -8,8 +8,11 @@
 
 | Сборка | Что внутри |
 |--------|-----------|
-| **FluxionBrowser-Lite-win64.7z** | Один exe: чат, RAG, веб-поиск, агент. Распакуйте и запускайте `FluxionBrowserLite.exe` |
-| **FluxionBrowser-Full-win64.7z** | Lite + `training_pack\wheels` (torch cu126 + unsloth-стек). Обучение ставится кнопкой на странице «Обучение» **без интернета** — нужен только Python 3.12 |
+| **FluxionBrowser-Lite-win64-<дата>.7z** | Программа целиком: чат, поиск по коду, веб-поиск, агент, модели. Распакуйте и запустите `FluxionBrowserLite.exe` |
+| **FluxionBrowser-Full-win64-<дата>.7z** | Lite + офлайн-пакет обучения (`training_pack\wheels`: PyTorch с CUDA, unsloth). Окружение обучения ставится кнопкой на странице «Обучение» **без интернета** — нужен только Python 3.12 |
+
+Если Windows предупредит о неизвестном издателе, нажмите «Подробнее» →
+«Выполнить в любом случае».
 
 Для QLoRA-обучения в любой сборке нужен Python 3.12 и NVIDIA GPU (6–12 ГБ VRAM).
 
@@ -18,7 +21,7 @@
 - Готовые сборки: **только Windows x64** — движок llama.cpp уже внутри exe
 - Запуск из исходников: **Python 3.11+** + `pip install -r requirements.txt -r requirements-llamacpp.txt`
 - Ollama — **опционально**, как альтернативный бэкенд (`backend: ollama`)
-- Docker — опционально, для веб-поиска через SearXNG
+- Docker — опционально, только для расширенного веб-поиска через SearXNG
 - Python 3.12 venv — опционально, для QLoRA-дообучения
 
 ## Windows — батники
@@ -32,6 +35,7 @@
 | `fluxion-vscode.bat` | Установка расширения VS Code |
 | `fluxion-test.bat` | Тесты по группам и проверка агента на вашей модели |
 | `fluxion-update.bat` | Обновление из архива с резервной копией, откатом и пересборкой exe |
+| `fluxion-build.bat` | Пересборка exe из текущего кода, без обновления (`--lite`, `--full`) |
 | `fluxion-release.bat` | Выпуск новой версии на GitHub: тесты, коммит, тег, релиз со сборками (для владельца) |
 | `issue-key.bat` | Выпуск лицензионных ключей (для владельца) |
 
@@ -45,20 +49,24 @@
   fluxion.bat               → CLI
 ```
 
-Веб-поиск (SearXNG в Docker) программа запускает сама, если установлен
-Docker Desktop. Для CLI и сервера: `powershell -File scripts\setup_searxng.ps1`.
+Веб-поиск работает сразу встроенным способом. Расширенный поиск через SearXNG в
+Docker включается в программе: меню **Правка → «Расширенный веб-поиск»**; для CLI и
+сервера — `powershell -File scripts\setup_searxng.ps1`.
 
 ## Ручная установка (любая ОС)
 
 ```bash
 # 1. Клонировать репозиторий
-git clone <repo-url> fluxion
+git clone https://github.com/djonros/fluxion.git
 cd fluxion
 
 # 2. Установить зависимости (включая llama.cpp)
 pip install -r requirements.txt -r requirements-llamacpp.txt
 
-# 3. Запустить — мастер первого запуска сам скачает GGUF-модель
+# 3. Запустить программу — мастер первого запуска предложит скачать модель
+python -m desktop_browser
+
+# CLI (модель — скачанная в программе или gguf_path в config/config.yaml):
 python -m cli.app
 
 # API сервер (опционально):
@@ -91,7 +99,7 @@ GGUF-модель можно задать и вручную в `config/config.ya
     ❯ /status
     ```
 
-    Команда `/status` покажет состояние движка, модели, RAG и SearXNG.
+    Команда `/status` покажет состояние движка, модели, индекса и веб-поиска.
 
 === "Сервер"
 
