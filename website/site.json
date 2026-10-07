@@ -4,5 +4,13 @@
   "docs_url": "docs/",
   "full_download_url": "",
   "full_size_text": "около 2,9 ГБ",
-  "_comment": "full_download_url: Full-сборка больше лимита GitHub (2 ГБ) — укажите здесь ссылку на неё (облако, свой сервер). Пусто — сайт ищет Full в последнем релизе."
+  "_comment": "full_download_url: Full-сборка больше лимита GitHub (2 ГБ) — укажите здесь ссылку на неё (облако, свой сервер). Пусто — сайт ищет Full в последнем релизе.",
+  "pricing": {
+    "pro_price": 1990,
+    "launch_price": 990,
+    "launch_note": "первым 30 покупателям в обмен на честный отзыв",
+    "renewal_price": 990,
+    "contact_email": "djonros@gmail.com",
+    "_comment": "Цены в рублях. launch_price: 0 — стартовая скидка выключена. Письмо с заявкой уходит на contact_email."
+  }
 }

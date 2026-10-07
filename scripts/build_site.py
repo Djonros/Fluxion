@@ -145,6 +145,51 @@ def render(template: str, values: dict[str, str]) -> str:
     return out
 
 
+# ── pricing ──────────────────────────────────────────────────────────────────
+
+ORDER_SUBJECT = "Fluxion Pro — заявка на лицензию"
+ORDER_BODY = (
+    "Здравствуйте! Хочу купить лицензию Fluxion Pro.\n\n"
+    "Почта для ключа: \n"
+    "Способ оплаты (перевод или счёт): \n"
+)
+
+
+def format_price(amount: int) -> str:
+    """Return a ruble price like ``1 990 ₽`` with non-breaking spaces."""
+    return f"{amount:,}".replace(",", "\u00a0") + "\u00a0₽"
+
+
+def order_link(email: str) -> str:
+    """Return a ``mailto:`` link that opens a pre-filled order letter."""
+    from urllib.parse import quote
+
+    return f"mailto:{email}?subject={quote(ORDER_SUBJECT)}&body={quote(ORDER_BODY)}"
+
+
+def pricing_values(pricing: dict) -> dict[str, str]:
+    """Return the template values of the price section from ``site.json``."""
+    pro = int(pricing["pro_price"])
+    launch = int(pricing.get("launch_price") or 0)
+    discounted = 0 < launch < pro
+    if discounted:
+        price_html = (
+            f'<s class="price-old">{html.escape(format_price(pro))}</s> '
+            f'<strong class="price">{html.escape(format_price(launch))}</strong>'
+        )
+        note = f"Стартовая цена: {pricing.get('launch_note', '').strip()}. Обычная цена — {format_price(pro)}."
+    else:
+        price_html = f'<strong class="price">{html.escape(format_price(pro))}</strong>'
+        note = ""
+    return {
+        "PRO_PRICE_HTML": price_html,
+        "PRO_PRICE_NOTE": html.escape(note),
+        "RENEWAL_PRICE": html.escape(format_price(int(pricing["renewal_price"]))),
+        "ORDER_URL": html.escape(order_link(pricing["contact_email"]), quote=True),
+        "CONTACT_EMAIL": html.escape(pricing["contact_email"]),
+    }
+
+
 # ── build ────────────────────────────────────────────────────────────────────
 
 def build(out: Path) -> Path:
@@ -202,6 +247,7 @@ def build(out: Path) -> Path:
         "PRESET_ROWS": preset_rows(presets),
         "SITE_URL": html.escape(config.get("site_url", ""), quote=True),
         "LEMNISCATE_PATH": lemniscate_path(),
+        **pricing_values(config["pricing"]),
     }
     template = (WEBSITE / "index.html").read_text(encoding="utf-8")
     (out / "index.html").write_text(render(template, values), encoding="utf-8")

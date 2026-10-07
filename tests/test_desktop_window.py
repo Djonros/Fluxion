@@ -1194,6 +1194,11 @@ def test_license_dialog_free_status(qapp, tmp_path, monkeypatch):
     dialog = ld.LicenseDialog()
     assert dialog.status_label.text() == "Текущий план: FREE"
     assert not dialog.deactivate_button.isEnabled()
+    assert not dialog.buy_button.isHidden()
+    opened = []
+    monkeypatch.setattr(ld.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    dialog.buy_button.click()
+    assert opened == [ld.PRO_PAGE_URL]
 
 
 def test_license_dialog_activate_success(qapp, tmp_path, monkeypatch):

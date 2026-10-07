@@ -23,6 +23,7 @@
     <a class="wordmark" href="#" aria-label="Fluxion, начало страницы">F-L-U-X-I-O-N</a>
     <nav aria-label="Разделы">
       <a href="#download">Скачать</a>
+      <a href="#pro">Цены</a>
       <a href="#models">Модели</a>
       <a href="#presets">Пресеты обучения</a>
       <a href="{{DOCS_URL}}">Документация</a>
@@ -116,6 +117,64 @@
             <li>Windows 10 или 11, 64 бит.</li>
             <li>Память под модель: 7B занимает около 4,7 ГБ, 3B — около 2,2 ГБ.</li>
             <li>Видеокарта не обязательна: модель работает на процессоре. С видеокартой NVIDIA ответы быстрее.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="pro" aria-labelledby="pro-title">
+      <h2 id="pro-title">Цены</h2>
+      <p class="section-lead">Программа бесплатна. Pro покупается один раз и остаётся у вас: без подписки и без аккаунта, ключ проверяется на вашем компьютере.</p>
+
+      <div class="builds">
+        <div class="build">
+          <div class="build-text">
+            <h3>Fluxion</h3>
+            <p>Чат, поиск по проекту, веб-поиск, агент в режиме чтения, модели 7B и 3B. Три пробные правки файлов агентом, чтобы оценить Pro.</p>
+          </div>
+          <div class="build-action">
+            <strong class="price">Бесплатно</strong>
+            <a class="button" href="#download">Скачать</a>
+          </div>
+        </div>
+        <div class="build" id="plan-pro">
+          <div class="build-text">
+            <h3>Fluxion Pro</h3>
+            <p>Агент сам правит код и проверяет правки тестами, дообучение на ваших примерах, модели 7B Q8_0, 14B и 32B, облачные модели через API. Обновления — год.</p>
+            <p class="price-note">{{PRO_PRICE_NOTE}}</p>
+          </div>
+          <div class="build-action">
+            <span class="price-box">{{PRO_PRICE_HTML}}<span class="price-term">разово</span></span>
+            <a class="button primary" href="{{ORDER_URL}}">Купить Pro</a>
+          </div>
+        </div>
+        <div class="build">
+          <div class="build-text">
+            <h3>Продление обновлений</h3>
+            <p>По желанию, через год после покупки. Без продления Pro продолжает работать.</p>
+          </div>
+          <div class="build-action">
+            <span class="price-box"><strong class="price">{{RENEWAL_PRICE}}</strong><span class="price-term">в год</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <h3>Как купить</h3>
+          <ol class="steps">
+            <li>Нажмите «Купить Pro» — откроется письмо. Укажите почту для ключа и способ оплаты: перевод или счёт. Если письмо не открылось, напишите на <a href="{{ORDER_URL}}">{{CONTACT_EMAIL}}</a>.</li>
+            <li>В ответ придут реквизиты или счёт. После оплаты вы получите чек.</li>
+            <li>Ключ придёт на почту файлом <code>.key</code>.</li>
+            <li>В программе откройте «Помощь → Лицензия…» и выберите «Загрузить файл ключа…». Pro включится сразу.</li>
+          </ol>
+        </div>
+        <div>
+          <h3>Условия</h3>
+          <ul class="plain">
+            <li>Лицензия бессрочная и выдаётся на одного человека.</li>
+            <li>Ключ проверяется на вашем компьютере: интернет и регистрация не нужны.</li>
+            <li>Для организаций выставляется счёт; оплату принимает самозанятый.</li>
           </ul>
         </div>
       </div>

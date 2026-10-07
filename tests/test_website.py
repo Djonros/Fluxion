@@ -101,3 +101,49 @@ def test_page_text_escaped(site, monkeypatch):
     rows = module.model_rows([fake])
     assert "<b>x</b>" not in rows and "&lt;b&gt;x&lt;/b&gt;" in rows
     assert "<i>y</i>" not in rows
+
+
+def test_prices_come_from_site_json(site):
+    from urllib.parse import unquote
+
+    page = (site / "index.html").read_text(encoding="utf-8")
+    pricing = json.loads((ROOT / "website" / "site.json").read_text(encoding="utf-8"))["pricing"]
+    assert 'id="pro"' in page and 'href="#pro"' in page
+    assert f"{pricing['pro_price']:,}".replace(",", "\u00a0") + "\u00a0₽" in page
+    assert f"{pricing['renewal_price']:,}".replace(",", "\u00a0") + "\u00a0₽" in page
+    assert f"mailto:{pricing['contact_email']}?subject=" in page
+    assert "Fluxion Pro" in unquote(page.split("mailto:", 1)[1].split('"', 1)[0])
+    if pricing.get("launch_price"):
+        assert 'class="price-old"' in page
+        assert pricing["launch_note"] in page
+
+
+def test_launch_discount_can_be_switched_off():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("build_site", ROOT / "scripts" / "build_site.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    base = {"pro_price": 1990, "renewal_price": 990, "contact_email": "a@example.com"}
+    plain = module.pricing_values({**base, "launch_price": 0})
+    assert "price-old" not in plain["PRO_PRICE_HTML"]
+    assert plain["PRO_PRICE_NOTE"] == ""
+    assert module.format_price(1990) == "1\u00a0990\u00a0₽"
+    sale = module.pricing_values({**base, "launch_price": 990, "launch_note": "первым десяти"})
+    assert "price-old" in sale["PRO_PRICE_HTML"]
+    assert "первым десяти" in sale["PRO_PRICE_NOTE"]
+
+
+def test_license_dialog_points_to_the_price_section():
+    import ast
+
+    source = (ROOT / "desktop_browser" / "license_dialog.py").read_text(encoding="utf-8")
+    url = next(
+        node.value.value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Assign)
+        and getattr(node.targets[0], "id", "") == "PRO_PAGE_URL"
+    )
+    site_url = json.loads((ROOT / "website" / "site.json").read_text(encoding="utf-8"))["site_url"]
+    assert url == site_url + "#pro"
+

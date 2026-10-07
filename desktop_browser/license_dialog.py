@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -22,6 +24,8 @@ from licensing.store import (
     find_key_files,
     load_activation,
 )
+
+PRO_PAGE_URL = "https://djonros.github.io/fluxion/#pro"
 
 
 class LicenseDialog(QDialog):
@@ -83,12 +87,17 @@ class LicenseDialog(QDialog):
         self.deactivate_button = QPushButton("Деактивировать")
         self.deactivate_button.setObjectName("stopButton")
         self.deactivate_button.clicked.connect(self._deactivate)
+        self.buy_button = QPushButton("Купить Pro…")
+        self.buy_button.setObjectName("themeButton")
+        self.buy_button.setToolTip("Цены и порядок покупки на сайте Fluxion")
+        self.buy_button.clicked.connect(self._open_pro_page)
         close_button = QPushButton("Закрыть")
         close_button.setObjectName("themeButton")
         close_button.clicked.connect(self.accept)
         buttons.addWidget(self.activate_button)
         buttons.addWidget(self.deactivate_button)
         buttons.addStretch()
+        buttons.addWidget(self.buy_button)
         buttons.addWidget(close_button)
         layout.addLayout(buttons)
 
@@ -116,9 +125,14 @@ class LicenseDialog(QDialog):
             device = "привязка к этому ПК" if lic.device else "без привязки"
             self.expires_label.setToolTip(f"Ключ: {device}")
             self.deactivate_button.setEnabled(True)
+        self.buy_button.setVisible(lic is None or not lic.is_pro)
         self.status_label.setProperty("plan", "pro" if lic is not None and lic.is_pro else "free")
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
+
+    def _open_pro_page(self) -> None:
+        """Open the price section of the site in the system browser."""
+        QDesktopServices.openUrl(QUrl(PRO_PAGE_URL))
 
     def _activate(self) -> None:
         text = self.key_input.text().strip()

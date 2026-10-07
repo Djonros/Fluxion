@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Prices: the site has a "Цены" section (Free, Pro 1 990 ₽ one-time with a year of updates, renewal 990 ₽ a year, launch price) with an order button that opens a pre-filled letter. Numbers and the launch offer live in `website/site.json` (`pricing`).
+- The licence dialog has a "Купить Pro…" button that opens the price section of the site.
+
 ## [0.12.2] — 2026-10-06
 
 ### Fixed
