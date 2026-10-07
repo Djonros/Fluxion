@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Prices: the site has a "Цены" section (Free, Pro 1 990 ₽ one-time with a year of updates, renewal 990 ₽ a year, launch price) with an order button that opens a pre-filled letter. Numbers and the launch offer live in `website/site.json` (`pricing`).
 - The licence dialog has a "Купить Pro…" button that opens the price section of the site.
+- Update period of a licence: a Pro key covers every build released within 365 days of the day it was issued (`licensing/release.py`: `RELEASE_DATE`, `UPDATE_PERIOD_DAYS`). Those builds keep Pro forever; a later build runs as Free, shows "PRO (обновления закончились)" with the covered date and offers a renewal, which is a fresh key. Keys without an issue date are not limited. `/license status` prints the covered date.
 
 ## [0.12.2] — 2026-10-06
 

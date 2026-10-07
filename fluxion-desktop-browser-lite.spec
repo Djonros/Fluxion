@@ -115,6 +115,7 @@ a = Analysis(
         "licensing.gate",
         "licensing.fingerprint",
         "licensing.trial",
+        "licensing.release",
         "cryptography.hazmat.primitives.asymmetric.ed25519",
         "yaml",
         "dotenv",

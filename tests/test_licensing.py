@@ -916,3 +916,63 @@ class TestTrial:
         monkeypatch.setattr(sys, "frozen", False, raising=False)
         assert fresh.trial_path().parts[-2:] == ("data", "trial.json")
 
+
+class TestUpdatePeriod:
+    @staticmethod
+    def _issued(year: int, month: int, day: int) -> License:
+        return License(
+            email="buyer@example.com", plan=PRO,
+            issued_at=datetime(year, month, day, tzinfo=timezone.utc),
+        )
+
+    @pytest.fixture()
+    def build(self, monkeypatch):
+        import licensing.release as release
+
+        def set_date(value: str) -> None:
+            monkeypatch.setattr(release, "RELEASE_DATE", value)
+
+        return set_date
+
+    def test_build_inside_the_year_is_covered(self, build):
+        build("2027-03-01")
+        lic = self._issued(2026, 10, 7)
+        assert lic.updates_until == datetime(2027, 10, 7, tzinfo=timezone.utc)
+        assert not lic.updates_lapsed
+        assert lic.is_pro
+        assert lic.feature_enabled("agent_write")
+
+    def test_build_released_after_the_year_needs_renewal(self, build):
+        build("2027-10-08")
+        lic = self._issued(2026, 10, 7)
+        assert lic.updates_lapsed
+        assert not lic.is_pro
+        assert not lic.feature_enabled("agent_write")
+        assert lic.feature_enabled("chat")
+
+    def test_last_covered_day_still_works(self, build):
+        build("2027-10-07")
+        assert self._issued(2026, 10, 7).is_pro
+
+    def test_old_build_keeps_working_forever(self, build):
+        build("2026-10-06")
+        assert self._issued(2020, 1, 1).updates_lapsed
+        assert self._issued(2026, 10, 7).is_pro
+
+    def test_renewal_is_a_fresh_key(self, build):
+        build("2028-01-15")
+        assert not self._issued(2026, 10, 7).is_pro
+        assert self._issued(2027, 10, 20).is_pro
+
+    def test_key_without_issue_date_is_not_limited(self, build):
+        build("2099-01-01")
+        lic = License(email="old@example.com", plan=PRO)
+        assert lic.updates_until is None
+        assert lic.is_pro
+
+    def test_release_date_is_a_real_date(self):
+        from licensing import RELEASE_DATE, UPDATE_PERIOD_DAYS, release_date
+
+        assert release_date().strftime("%Y-%m-%d") == RELEASE_DATE
+        assert UPDATE_PERIOD_DAYS == 365
+

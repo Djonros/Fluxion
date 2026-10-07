@@ -117,11 +117,24 @@ class LicenseDialog(QDialog):
             self.expires_label.setText("Срок: —")
             self.deactivate_button.setEnabled(False)
         else:
-            plan = "PRO" if lic.is_pro else f"{lic.plan.upper()} (истекла)"
+            if lic.is_pro:
+                plan = "PRO"
+            elif lic.updates_lapsed and not lic.is_expired:
+                plan = f"{lic.plan.upper()} (обновления закончились)"
+            else:
+                plan = f"{lic.plan.upper()} (истекла)"
             self.status_label.setText(f"Текущий план: {plan}")
             self.email_label.setText(f"Почта: {lic.email}")
             expires = lic.expires_at.strftime("%Y-%m-%d") if lic.expires_at else "бессрочная"
-            self.expires_label.setText(f"Срок: {expires}")
+            updates = lic.updates_until
+            covered = f" · обновления до {updates:%Y-%m-%d}" if updates is not None else ""
+            self.expires_label.setText(f"Срок: {expires}{covered}")
+            if lic.updates_lapsed and not lic.is_expired:
+                self.message_label.setText(
+                    f"Ключ покрывает версии, выпущенные до {updates:%Y-%m-%d}; эта версия вышла "
+                    "позже. В тех версиях Pro работает как прежде. Чтобы включить Pro здесь, "
+                    "продлите обновления — кнопка «Купить Pro…»."
+                )
             device = "привязка к этому ПК" if lic.device else "без привязки"
             self.expires_label.setToolTip(f"Ключ: {device}")
             self.deactivate_button.setEnabled(True)

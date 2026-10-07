@@ -1254,6 +1254,32 @@ def test_license_dialog_activate_empty_key(qapp, tmp_path, monkeypatch):
     assert "Вставьте ключ" in dialog.message_label.text()
 
 
+def test_license_dialog_explains_lapsed_updates(qapp, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    import desktop_browser.license_dialog as ld
+    import licensing.release as release
+    from licensing.models import License
+
+    lic = License(
+        email="buyer@example.com", plan="pro",
+        issued_at=datetime(2026, 10, 7, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(ld, "load_activation", lambda path=None: lic)
+
+    monkeypatch.setattr(release, "RELEASE_DATE", "2027-01-10")
+    dialog = ld.LicenseDialog()
+    assert dialog.status_label.text() == "Текущий план: PRO"
+    assert "обновления до 2027-10-07" in dialog.expires_label.text()
+    assert dialog.buy_button.isHidden()
+
+    monkeypatch.setattr(release, "RELEASE_DATE", "2028-02-01")
+    dialog = ld.LicenseDialog()
+    assert dialog.status_label.text() == "Текущий план: PRO (обновления закончились)"
+    assert "2027-10-07" in dialog.message_label.text()
+    assert not dialog.buy_button.isHidden()
+
+
 def test_license_dialog_deactivate(qapp, tmp_path, monkeypatch):
     import desktop_browser.license_dialog as ld
 

@@ -5,8 +5,10 @@ import base64
 import binascii
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from . import release
 
 FREE = "free"
 PRO = "pro"
@@ -102,8 +104,21 @@ class License:
         return self.expires_at is not None and datetime.now(timezone.utc) >= self.expires_at
 
     @property
+    def updates_until(self) -> datetime | None:
+        """Return the last moment whose builds this key covers; None for keys without a date."""
+        if self.issued_at is None:
+            return None
+        return self.issued_at + timedelta(days=release.UPDATE_PERIOD_DAYS)
+
+    @property
+    def updates_lapsed(self) -> bool:
+        """Tell whether this build was released after the key's update period."""
+        until = self.updates_until
+        return until is not None and release.release_date() > until
+
+    @property
     def is_pro(self) -> bool:
-        return self.plan == PRO and not self.is_expired
+        return self.plan == PRO and not self.is_expired and not self.updates_lapsed
 
     def feature_enabled(self, feature: str) -> bool:
         if feature not in PRO_FEATURES:

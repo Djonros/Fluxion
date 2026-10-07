@@ -418,6 +418,9 @@ def build_registry(repl: REPL, backend: OllamaBackend, settings: Settings) -> Co
                 repl.renderer.info(
                     f"Expires: {lic.expires_at:%Y-%m-%d %H:%M %Z}" if lic.expires_at is not None else "Expires: never (perpetual)"
                 )
+                if lic.updates_until is not None:
+                    state = " (this build is newer: Pro is off, renew updates)" if lic.updates_lapsed else ""
+                    repl.renderer.info(f"Updates: builds released until {lic.updates_until:%Y-%m-%d}{state}")
                 from licensing.fingerprint import device_code
                 from licensing.models import normalize_device
 

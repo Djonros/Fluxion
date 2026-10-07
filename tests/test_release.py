@@ -36,3 +36,14 @@ def test_update_check_sees_minor_bump_as_newer():
     assert is_newer("0.10.0", "0.9.0")
     assert is_newer(f"v{APP_VERSION}".lstrip("v"), "0.9.0")
     assert not is_newer("0.9.9", "0.10.0")
+
+
+def test_release_date_matches_changelog():
+    """The update period of a licence is counted from this build's release date."""
+    from licensing import RELEASE_DATE
+
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    heading = re.search(rf"^## \[{re.escape(APP_VERSION)}\] — (\d{{4}}-\d{{2}}-\d{{2}})", changelog, re.M)
+    assert heading, f"no dated changelog heading for {APP_VERSION}"
+    assert heading.group(1) == RELEASE_DATE, "bump licensing/release.py together with the version"
+

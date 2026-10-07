@@ -14,6 +14,7 @@ from .models import (
     parse_datetime,
     validate_key_id,
 )
+from .release import RELEASE_DATE, UPDATE_PERIOD_DAYS, release_date
 from .verifier import PUBLIC_KEY_B64, verify_license
 from .store import (
     DEFAULT_LICENSE_PATH,
@@ -76,6 +77,9 @@ __all__ = [
     "current_license",
     "ensure_pro",
     "feature_enabled",
+    "RELEASE_DATE",
+    "UPDATE_PERIOD_DAYS",
+    "release_date",
     "TRIAL_WRITES",
     "trial_consume",
     "trial_remaining",
