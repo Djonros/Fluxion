@@ -200,7 +200,7 @@ def test_theme_toggle_persists(qapp, tmp_path):
 
     second = FluxionWindow(qsettings=QSettings(str(ini), QSettings.IniFormat))
     assert second.theme == LIGHT
-    assert second.theme_button.text() == "Тёмная тема"
+    assert second.act_theme.text() == "Тёмная тема"
 
 
 # ── agent page ──────────────────────────────────────────────────────────────
@@ -255,23 +255,31 @@ def _agent_window(qapp, tmp_path, steps, result, delay=0.0):
     return window, created
 
 
-def test_agent_streams_steps(qapp, tmp_path):
+def _send_to_agent(qapp, window, text):
+    window.chat_agent_files.setChecked(True)
+    window.prompt.setText(text)
+    window.send_message()
+    _drain(qapp, window, timeout=5.0)
+
+
+def test_agent_streams_steps(qapp, tmp_path, monkeypatch):
+    import licensing
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
     steps = [
         _step(1, thought="Прочитаю файл", tool="read_file", args="main.py", observation="print('hi')"),
         _step(2, tool="finish", args="Готово"),
     ]
     window, created = _agent_window(qapp, tmp_path, steps, _agent_result())
-    window.agent_task.setText("Прочитай main.py")
     window.agent_iterations.setValue(3)
-    window.run_agent()
-    _drain(qapp, window, timeout=5.0)
+    _send_to_agent(qapp, window, "Прочитай main.py")
 
-    assert not window.agent_running
-    text = window.agent_view.toPlainText()
-    assert "Итерация 1" in text
+    assert not window.generating
+    text = window.messages.toPlainText()
+    assert "Прочитай main.py" in text
     assert "read_file" in text
-    assert "Агент выполнено" in text or "выполнено" in text
     assert "Готово" in text
+    assert "2 итер." in text
     assert created[0].task == "Прочитай main.py"
     assert created[0].max_iter == 3
     assert not created[0].allow_write
@@ -284,33 +292,37 @@ def test_agent_stop_between_steps(qapp, tmp_path):
         _step(3, tool="finish", args="done"),
     ]
     window, _ = _agent_window(qapp, tmp_path, steps, _agent_result(), delay=0.05)
-    window.agent_task.setText("Задача")
-    window.run_agent()
+    window.chat_agent_files.setChecked(True)
+    window.prompt.setText("Задача")
+    window.send_message()
 
     deadline = time.time() + 5
-    while "Итерация 1" not in window.agent_view.toPlainText() and time.time() < deadline:
+    while "a.py" not in window.messages.toPlainText() and time.time() < deadline:
         qapp.processEvents()
         time.sleep(0.01)
 
-    window.stop_agent()
+    window.stop_generation()
     _drain(qapp, window)
 
-    assert not window.agent_running
-    text = window.agent_view.toPlainText()
-    assert "Остановлено пользователем" in text
-    assert "Итерация 1" in text
-    assert not window.agent_stop_button.isVisible()
+    assert not window.generating
+    text = window.messages.toPlainText()
+    assert "остановлено пользователем" in text
+    assert "a.py" in text
+    assert not window.stop_button.isVisible()
 
 
 def test_agent_write_gate_blocked_without_pro(qapp, tmp_path, monkeypatch):
     import licensing
 
     monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
-    window, _ = _agent_window(qapp, tmp_path, [], _agent_result())
+    steps = [_step(1, tool="read_file", args="x.py", observation="x = 1")]
+    window, created = _agent_window(qapp, tmp_path, steps, _agent_result())
 
-    window.agent_write.setChecked(True)
-    assert not window.agent_write.isChecked()
-    assert "Pro" in window.agent_view.toPlainText()
+    _send_to_agent(qapp, window, "Создай файл")
+    assert window.chat_agent_files.isChecked()
+    assert created[0].allow_write is False
+    assert "agent_write" in window.banners._keys
+    assert "Pro" in window.chat_agent_files.toolTip()
 
 
 def test_agent_write_allowed_with_pro(qapp, tmp_path, monkeypatch):
@@ -319,21 +331,407 @@ def test_agent_write_allowed_with_pro(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
     steps = [_step(1, tool="write_file", args="x.py", observation="Wrote x.py")]
     window, created = _agent_window(qapp, tmp_path, steps, _agent_result())
-    window.agent_write.setChecked(True)
-    assert window.agent_write.isChecked()
 
-    window.agent_task.setText("Создай файл")
-    window.run_agent()
-    _drain(qapp, window)
+    _send_to_agent(qapp, window, "Создай файл")
     assert created[0].allow_write
+    assert "agent_write" not in window.banners._keys
 
 
 def test_agent_without_factory_shows_message(qapp, tmp_path):
     window = _window(qapp, tmp_path)
-    window.agent_task.setText("Задача")
-    window.run_agent()
-    assert "Движок не подключён" in window.agent_view.toPlainText()
-    assert not window.agent_running
+    window.prompt.setText("Задача")
+    window.send_agent_once()
+    assert "Движок не подключён" in window.messages.toPlainText()
+    assert not window.generating
+
+
+def test_agent_has_no_page_and_no_menu(qapp, tmp_path):
+    window = _window(qapp, tmp_path)
+    nav = [button.text() for button in window.nav_group.buttons()]
+    assert nav == ["Чат", "Проект", "Обучение", "Модели"]
+    assert window.pages.count() == 4
+    menus = [action.text().replace("&", "") for action in window.menuBar().actions()]
+    assert "Агент" not in menus
+    for name in ("agent_view", "agent_task", "agent_write", "run_agent", "act_write"):
+        assert not hasattr(window, name)
+
+
+def test_ctrl_enter_runs_agent_once_without_touching_chips(qapp, tmp_path, monkeypatch):
+    import licensing
+    from PySide6.QtGui import QShortcut
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    steps = [_step(1, tool="read_file", args="main.py", observation="x")]
+    fake = FakeAssistant(tokens=["Ответ"])
+    window, created = _chat_agent_window(qapp, tmp_path, steps, _agent_result(), assistant=fake)
+
+    keys = {s.key().toString() for s in window.prompt.findChildren(QShortcut)}
+    assert {"Ctrl+Return", "Ctrl+Enter"} <= keys
+
+    window.prompt.setText("Прочитай main.py")
+    window.send_agent_once()
+    _drain(qapp, window)
+
+    assert len(created) == 1
+    assert created[0].task == "Прочитай main.py"
+    assert created[0].allow_write is False
+    assert not window.chat_agent_files.isChecked()
+    assert not window.chat_plan.isChecked()
+    assert fake.calls == []
+
+    window.prompt.setText("Обычный вопрос")
+    window.send_message()
+    _drain(qapp, window)
+    assert len(created) == 1
+    assert len(fake.calls) == 1
+
+
+def test_plan_mode_sends_prefix_and_never_writes(qapp, tmp_path, monkeypatch):
+    import licensing
+    from desktop_browser.app import PLAN_RUN_URL, PLAN_TASK_PREFIX
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    plan = "1. Прочитать main.py\n2. Исправить ошибку"
+    window, created = _chat_agent_window(
+        qapp, tmp_path, [], _agent_result(answer=plan), assistant=FakeAssistant()
+    )
+    window.chat_agent_files.setChecked(True)
+    window.chat_plan.setChecked(True)
+    window.prompt.setText("Почини расчёт")
+    window.send_message()
+    _drain(qapp, window)
+
+    assert created[0].task == f"{PLAN_TASK_PREFIX}\n\nПочини расчёт"
+    assert created[0].task.startswith("Составь нумерованный план действий по задаче.")
+    assert created[0].allow_write is False
+    assert window._last_plan == plan
+    assert PLAN_TASK_PREFIX not in window.messages.toPlainText()
+    assert "Выполнить план" in window.messages.toPlainText()
+    assert PLAN_RUN_URL in window.messages.toHtml()
+
+
+def test_run_plan_passes_saved_plan_with_chip_write_access(qapp, tmp_path, monkeypatch):
+    import licensing
+    from PySide6.QtCore import QUrl
+    from desktop_browser.app import PLAN_RUN_URL
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    plan = "1. Шаг один\n2. Шаг два"
+    window, created = _chat_agent_window(
+        qapp, tmp_path, [], _agent_result(answer=plan), assistant=FakeAssistant()
+    )
+    window.chat_plan.setChecked(True)
+    window.prompt.setText("Задача")
+    window.send_message()
+    _drain(qapp, window)
+    assert window._last_plan == plan
+
+    window.chat_plan.setChecked(False)
+    window.chat_agent_files.setChecked(True)
+    window._on_anchor(QUrl(PLAN_RUN_URL))
+    _drain(qapp, window)
+
+    assert len(created) == 2
+    assert created[1].task == "Реализуй план:\n" + plan
+    assert created[1].allow_write is True
+    assert PLAN_RUN_URL not in window.messages.toHtml()
+
+    window.chat_agent_files.setChecked(False)
+    window.run_plan()
+    _drain(qapp, window)
+    assert created[2].task == "Реализуй план:\n" + plan
+    assert created[2].allow_write is False
+
+
+def test_run_plan_without_a_plan_does_nothing(qapp, tmp_path):
+    window, created = _chat_agent_window(qapp, tmp_path, [], _agent_result())
+    window.run_plan()
+    assert created == []
+    assert not window.generating
+
+
+def test_unlimited_iterations_available_with_pro(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+
+    monkeypatch.setattr(app_module, "load_activation", lambda: _pro_license())
+    window, created = _chat_agent_window(qapp, tmp_path, [], _agent_result())
+    assert not window.agent_unlimited.isHidden()
+    assert window.agent_unlimited.isEnabled()
+    assert window.agent_iterations.minimum() == 1
+    assert window.agent_iterations.maximum() == 50
+
+    window.agent_iterations.setValue(7)
+    assert window._agent_max_iterations() == 7
+    window.agent_unlimited.setChecked(True)
+    assert not window.agent_iterations.isEnabled()
+    assert window._agent_max_iterations() == 0
+
+    window.prompt.setText("Задача")
+    window.send_agent_once()
+    _drain(qapp, window)
+    assert created[0].max_iter == 0
+
+
+def test_free_plan_has_only_the_iteration_spinbox(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+
+    monkeypatch.setattr(app_module, "load_activation", lambda: None)
+    window, created = _chat_agent_window(qapp, tmp_path, [], _agent_result())
+    assert window.agent_unlimited.isHidden()
+    assert not window.agent_unlimited.isEnabled()
+    window.agent_iterations.setValue(9)
+    window.agent_unlimited.setChecked(True)
+    assert window._agent_max_iterations() == 9
+
+    window.prompt.setText("Задача")
+    window.send_agent_once()
+    _drain(qapp, window)
+    assert created[0].max_iter == 9
+
+
+def test_unlimited_is_dropped_when_pro_ends(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+
+    state = {"lic": _pro_license()}
+    monkeypatch.setattr(app_module, "load_activation", lambda: state["lic"])
+    window = _window(qapp, tmp_path)
+    window.agent_unlimited.setChecked(True)
+    state["lic"] = None
+    window._refresh_license_badge()
+    assert not window.agent_unlimited.isChecked()
+    assert window.agent_unlimited.isHidden()
+    assert window.agent_iterations.isEnabled()
+
+
+def test_git_button_lives_in_chat_and_reflects_state(qapp, tmp_path, monkeypatch):
+    from orchestrator import git_helper
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state = {"repo": False}
+    monkeypatch.setattr(git_helper, "is_repo", lambda root: state["repo"])
+    window = _window(qapp, tmp_path)
+    window.qsettings.setValue("project_path", str(project))
+
+    window._refresh_git_button()
+    assert window.agent_git_button.text() == "Git: нет репозитория"
+    state["repo"] = True
+    window._refresh_git_button()
+    assert window.agent_git_button.text() == "Git: репозиторий"
+    window.qsettings.setValue("agent_git_enabled", 0)
+    window._refresh_git_button()
+    assert window.agent_git_button.text() == "Git: выключен"
+    window.qsettings.setValue("agent_git_enabled", 1)
+    window._refresh_git_button()
+    assert window.agent_git_button.text() == "Git: репозиторий"
+    assert window.agent_git_button.parent() is window.agent_settings
+
+
+def test_chat_settings_hold_model_and_modes_sit_under_the_input(qapp, tmp_path):
+    window = _window(qapp, tmp_path)
+    settings = window.agent_settings
+    for widget in (
+        window.model_combo,
+        window.model_refresh_button,
+        window.agent_iterations,
+        window.agent_unlimited,
+        window.agent_git_button,
+    ):
+        assert widget.parent() is settings
+    composer = window.prompt.parent()
+    assert window.send_button.parent() is composer
+    for chip in (window.chat_agent_files, window.chat_plan):
+        assert chip.parent() is not composer
+        assert chip.objectName() == "modeChip"
+    assert "Настройки чата" in window.agent_settings_button.text()
+
+    window.show()
+    window._show_agent_settings()
+    qapp.processEvents()
+    assert settings.isVisible()
+    assert settings.y() > window.agent_settings_button.mapToGlobal(
+        window.agent_settings_button.rect().topLeft()
+    ).y()
+    settings.hide()
+
+
+# ── trial edits ─────────────────────────────────────────────────────────────
+
+
+def test_trial_gives_write_access_and_counts_in_tooltip(qapp, tmp_path, monkeypatch):
+    import licensing
+    from licensing import trial_reset
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
+    trial_reset()
+    steps = [_step(1, tool="write_file", args="x.py", observation="Wrote x.py")]
+    window, created = _agent_window(qapp, tmp_path, steps, _agent_result())
+
+    _send_to_agent(qapp, window, "Создай файл")
+    assert created[0].allow_write is True
+    assert "осталось 3 пробных правок" in window.chat_agent_files.toolTip()
+    assert "agent_write" in window.banners._keys
+
+
+def test_trial_dialog_consent_spends_one_edit(qapp, tmp_path, monkeypatch):
+    import licensing
+    from desktop_browser import trial_gate
+    from licensing import trial_remaining, trial_reset
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
+    trial_reset()
+    asked = []
+
+    def allow(parent, path, kind, remaining):
+        asked.append((path, kind, remaining))
+        return True
+
+    monkeypatch.setattr(trial_gate, "ask_trial_write", allow)
+    window = _window(qapp, tmp_path)
+    gate = trial_gate.TrialWriteGate()
+    gate.attach(window)
+    gate.changed.connect(window._on_trial_changed)
+
+    assert gate.confirm("src/app.py", "edit") is True
+    assert asked == [("src/app.py", "edit", 3)]
+    assert trial_remaining() == 2
+    assert "осталось 2 пробных правок" in window.chat_agent_files.toolTip()
+
+
+def test_trial_dialog_refusal_keeps_the_edit(qapp, tmp_path, monkeypatch):
+    from desktop_browser import trial_gate
+    from licensing import trial_remaining, trial_reset
+
+    trial_reset()
+    monkeypatch.setattr(trial_gate, "ask_trial_write", lambda *args: False)
+    gate = trial_gate.TrialWriteGate()
+    assert gate.confirm("a.py", "write") is False
+    assert trial_remaining() == 3
+
+
+def test_spent_trial_is_refused_without_a_dialog(qapp, tmp_path, monkeypatch):
+    from desktop_browser import trial_gate
+
+    def unexpected(*args):
+        raise AssertionError("the dialog must not open when the trial is spent")
+
+    monkeypatch.setattr(trial_gate, "ask_trial_write", unexpected)
+    assert trial_gate.TrialWriteGate().confirm("a.py", "write") is False
+
+
+def test_trial_confirmation_from_worker_thread(qapp, tmp_path, monkeypatch):
+    import threading
+
+    from desktop_browser import trial_gate
+    from licensing import trial_remaining, trial_reset
+
+    trial_reset()
+    gui_thread = threading.current_thread()
+    seen = []
+
+    def allow(parent, path, kind, remaining):
+        seen.append(threading.current_thread() is gui_thread)
+        return True
+
+    monkeypatch.setattr(trial_gate, "ask_trial_write", allow)
+    gate = trial_gate.TrialWriteGate()
+    answers = []
+    worker = threading.Thread(target=lambda: answers.append(gate.confirm("a.py", "write")))
+    worker.start()
+    deadline = time.time() + 5
+    while worker.is_alive() and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    worker.join(timeout=1)
+
+    assert answers == [True]
+    assert seen == [True]
+    assert trial_remaining() == 2
+
+
+def test_trial_dialog_text(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from desktop_browser import trial_gate
+
+    shown = {}
+
+    def fake_exec(box):
+        shown["text"] = box.text()
+        shown["buttons"] = [button.text() for button in box.buttons()]
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    assert trial_gate.ask_trial_write(None, "src/app.py", "edit", 2) is False
+    assert shown["text"] == "Пробная запись: src/app.py. Разрешить? Осталось попыток: 2"
+    assert shown["buttons"] == ["Разрешить", "Отменить"]
+
+
+# ── sticky scroll ───────────────────────────────────────────────────────────
+
+
+def _settle(qapp, rounds=5):
+    for _ in range(rounds):
+        qapp.processEvents()
+
+
+def test_sticky_scroll_follows_stream_but_not_a_reading_user(qapp, tmp_path):
+    window = _window(qapp, tmp_path, assistant=FakeAssistant())
+    window.resize(1000, 640)
+    window.show()
+    _settle(qapp)
+    for index in range(40):
+        window._messages.append({"role": "user", "text": f"Вопрос {index}", "meta": ""})
+    window._messages.append({"role": "assistant", "text": "", "meta": ""})
+    window._render_messages()
+    _settle(qapp)
+    bar = window.messages.verticalScrollBar()
+    assert bar.maximum() > 0
+    assert bar.value() == bar.maximum()
+
+    for index in range(15):
+        window._on_token(f"строка {index}\n\n")
+        _settle(qapp)
+        assert bar.value() == bar.maximum()
+
+    bar.setValue(bar.maximum() // 3)
+    _settle(qapp)
+    reading_at = bar.value()
+    for index in range(15):
+        window._on_token(f"ещё {index}\n\n")
+        _settle(qapp)
+        assert bar.value() == reading_at
+    assert bar.maximum() > reading_at
+
+    bar.setValue(bar.maximum())
+    _settle(qapp)
+    for index in range(5):
+        window._on_token(f"снова {index}\n\n")
+        _settle(qapp)
+        assert bar.value() == bar.maximum()
+    window.close()
+
+
+def test_sticky_scroll_wired_to_training_log(qapp, tmp_path):
+    window = _window(qapp, tmp_path)
+    window.resize(1000, 640)
+    window.show()
+    window.pages.setCurrentIndex(2)
+    _settle(qapp)
+    assert window.training_view.property("sticky") is True
+    for index in range(200):
+        window._on_training_log(f"шаг {index}")
+    _settle(qapp)
+    bar = window.training_view.verticalScrollBar()
+    assert bar.maximum() > 0
+    assert bar.value() == bar.maximum()
+
+    bar.setValue(0)
+    _settle(qapp)
+    window._on_training_log("ещё строка")
+    _settle(qapp)
+    assert bar.value() == 0
+    window.close()
 
 
 # ── model selector ──────────────────────────────────────────────────────────
@@ -538,6 +936,13 @@ def _training_window(qapp, tmp_path, pipeline):
     return window
 
 
+def _mark_training_env_ready(window):
+    """The start button also needs a training environment, which a test
+    machine may not have; these tests are about the licence gate."""
+    window._env_ready = True
+    window._refresh_training_steps()
+
+
 def _fake_pipeline(result=None, error=None, delay=0.0):
     captured = []
 
@@ -584,6 +989,7 @@ def test_training_gate_opens_with_pro(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
     pipeline, _ = _fake_pipeline()
     window = _training_window(qapp, tmp_path, pipeline)
+    _mark_training_env_ready(window)
 
     assert window.training_run_button.isEnabled()
     assert "Pro-функция" not in window.training_subtitle.text()
@@ -624,6 +1030,7 @@ def test_training_failure_shows_message(qapp, tmp_path, monkeypatch):
 
     pipeline, _ = _fake_pipeline(error=TrainingError("нет окружения"))
     window = _training_window(qapp, tmp_path, pipeline)
+    _mark_training_env_ready(window)
 
     window.training_dataset.setText("ds.jsonl")
     window.run_training()
@@ -871,7 +1278,8 @@ def test_window_license_badge_free(qapp, tmp_path, monkeypatch):
 
     monkeypatch.setattr(app_module, "load_activation", lambda: None)
     window = _window(qapp, tmp_path)
-    assert window.license_button.text() == "Лицензия: FREE"
+    assert window.license_button.text() == "FREE"
+    assert window.act_license.text() == "Лицензия: FREE"
     assert window.license_button.property("plan") == "free"
 
 
@@ -881,13 +1289,15 @@ def test_window_license_badge_pro_and_refresh(qapp, tmp_path, monkeypatch):
     state = {"lic": _pro_license()}
     monkeypatch.setattr(app_module, "load_activation", lambda: state["lic"])
     window = _window(qapp, tmp_path)
-    assert window.license_button.text() == "Лицензия: PRO"
+    assert window.license_button.text() == "PRO"
+    assert window.act_license.text() == "Лицензия: PRO"
     assert window.license_button.property("plan") == "pro"
-    assert window.license_button.toolTip() == "djonros@gmail.com"
+    assert window.license_button.toolTip() == "Лицензия PRO: djonros@gmail.com"
 
     state["lic"] = None
     window._refresh_license_badge()
-    assert window.license_button.text() == "Лицензия: FREE"
+    assert window.license_button.text() == "FREE"
+    assert window.act_license.text() == "Лицензия: FREE"
 
 
 # ── project page ────────────────────────────────────────────────────────────

@@ -38,6 +38,9 @@ a = Analysis(
         ("config", "config"),
         ("finetune", "finetune"),
         ("licensing", "licensing"),
+        # plain sources for the training env's own interpreter (PYTHONPATH)
+        ("finetune", "pysource/finetune"),
+        ("licensing", "pysource/licensing"),
     ],
     hiddenimports=[
         "desktop_browser",
@@ -111,6 +114,7 @@ a = Analysis(
         "licensing.store",
         "licensing.gate",
         "licensing.fingerprint",
+        "licensing.trial",
         "cryptography.hazmat.primitives.asymmetric.ed25519",
         "yaml",
         "dotenv",

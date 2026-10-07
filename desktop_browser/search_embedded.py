@@ -12,7 +12,7 @@ import logging
 import os
 import threading
 
-from PySide6.QtCore import QEventLoop, QMetaObject, QObject, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import Q_ARG, QEventLoop, QMetaObject, QObject, QTimer, Qt, Signal, Slot
 
 from web.search_backend import (
     OptionalSearxngProvider,
@@ -121,7 +121,7 @@ class _EmbeddedSearchBridge(QObject):
         """Called from non-GUI threads: marshal to the GUI thread and wait."""
         self._raw = None
         self._evt.clear()
-        QMetaObject.invokeMethod(self, "search_sync", Qt.QueuedConnection, query)
+        QMetaObject.invokeMethod(self, "search_sync", Qt.QueuedConnection, Q_ARG(str, query))
         if not self._evt.wait(timeout):
             return None
         return self._raw

@@ -178,8 +178,10 @@ def test_chat_agent_web_search_step_autoopens(make_window, monkeypatch):
     assert searches == ["qwen3 release notes"]
 
 
-def test_agent_page_web_search_step_autoopens(make_window, monkeypatch):
+def test_chat_agent_web_search_step_with_observation_autoopens(make_window, monkeypatch):
     window = make_window()
+    window._append_message("user", "найди документацию")
+    window._append_message("assistant", "")
     searches = []
     monkeypatch.setattr(window.web_panel, "search", lambda q: searches.append(q))
     step = SimpleNamespace(
@@ -189,14 +191,18 @@ def test_agent_page_web_search_step_autoopens(make_window, monkeypatch):
         tool_args="ollama docs",
         observation="результаты",
     )
-    window._on_agent_step(step)
+    window._on_chat_agent_step(step)
     assert searches == ["ollama docs"]
 
 
-def test_agent_page_answer_links_clickable(make_window):
+def test_chat_agent_answer_links_clickable(make_window):
     window = make_window()
-    window._on_agent_done({"success": True, "final_answer": "Ответ: https://example.com/ans", "iterations_used": 2})
-    assert 'href="https://example.com/ans"' in window.agent_view.toHtml()
+    window._append_message("user", "вопрос")
+    window._append_message("assistant", "")
+    window._on_chat_agent_done(
+        {"success": True, "final_answer": "Ответ: https://example.com/ans", "iterations_used": 2}
+    )
+    assert 'href="https://example.com/ans"' in window.messages.toHtml()
 
 
 def test_window_accepts_web_search_argument(make_window):

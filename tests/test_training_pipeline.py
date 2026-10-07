@@ -622,3 +622,42 @@ def test_install_training_environment_online_installs_each_once(tmp_path, monkey
     assert torch_cmds[0][4] == training.TORCH_PIN          # pinned version, not bare "torch"
     assert "--index-url" in torch_cmds[0]
     assert len(stack_cmds) == 1, stack_cmds
+
+
+# ── sources for the training env's interpreter ───────────────────────────────
+
+
+def test_source_root_frozen_prefers_pysource(tmp_path, monkeypatch):
+    from desktop_browser import training
+
+    (tmp_path / "pysource" / "finetune").mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert training._source_root() == tmp_path / "pysource"
+
+
+def test_source_root_frozen_without_pysource_keeps_bundle_root(tmp_path, monkeypatch):
+    from desktop_browser import training
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert training._source_root() == tmp_path
+
+
+def test_source_root_from_sources_is_the_repo(monkeypatch):
+    from desktop_browser import training
+
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    root = training._source_root()
+    assert (root / "finetune" / "__init__.py").is_file()
+    assert (root / "licensing" / "__init__.py").is_file()
+
+
+def test_lite_spec_ships_plain_sources_for_training():
+    spec = (
+        Path(__file__).resolve().parents[1] / "fluxion-desktop-browser-lite.spec"
+    ).read_text(encoding="utf-8")
+    assert '("finetune", "pysource/finetune")' in spec
+    assert '("licensing", "pysource/licensing")' in spec
+

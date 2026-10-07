@@ -74,3 +74,10 @@ results/
 
 # Website build output (scripts/build_site.py)
 _site/
+
+# Update archive and patches (delivered next to fluxion-update.bat)
+/Fluxion-main-fixed.zip
+/*.patch
+
+# Internal documents (roadmap, drafts): kept locally, not published
+docs/internal/

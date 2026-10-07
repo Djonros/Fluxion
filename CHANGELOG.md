@@ -7,11 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] — 2026-10-06
+
 ### Fixed
 - Lite build failed with `WinError 32` when `dist\FluxionBrowserLite` was held: `scripts/build_lite.ps1` now closes copies of the app (and QtWebEngineProcess) running from that folder, removes the old build with retries (antivirus/search indexer), builds into `dist\_build_tmp` and moves the result in when only an empty folder is left that Explorer or a terminal holds, and names the locked file when a file itself cannot be deleted.
+- Agent `run_tests` used Fluxion's own interpreter, so a project whose pytest lives in its virtual environment got "pytest is not installed". The interpreter is now chosen in this order: `FLUXION_TEST_PYTHON` (when the file exists), the project's `.venv` / `venv` / `env`, `sys.executable` when run from sources, the bundled `data/training_env` of a frozen build, then `python` / `py` from PATH. The "pytest is not installed" error names the interpreter that was used and says how to fix it.
+- Chat and the training log jumped to the bottom on every token, so earlier text could not be read while an answer was streaming. Scrolling is now sticky: the view follows new output only while it is at the bottom (within 8 px), keeps its position once the user scrolls up, and follows again after returning to the bottom.
+- Training from the exe failed with `ModuleNotFoundError: No module named 'finetune'`: the training environment's interpreter cannot import from the exe's archive. The Lite spec (and Full, which reuses it) now ships plain sources of `finetune` and `licensing` in `pysource/`, and the trainer's `PYTHONPATH` points there.
+- Built-in web search through the embedded browser raised `TypeError` on current PySide6 when called from a worker thread (`QMetaObject.invokeMethod` got a bare string instead of `Q_ARG`), so every search silently fell back to the plain DuckDuckGo provider.
+- "Work without git" could not be switched on: the stored `agent_git_enabled = 0` was read back as enabled (`0 or 1`), so the agent kept its git tools.
+- Test runs of the desktop window could end with a crash at interpreter exit ("QThread: Destroyed while thread is still running", non-zero exit code although every test passed): tests now close the windows they open.
+- In a frozen build relative `paths.data_dir`, `paths.repos_dir` and `rag.chroma_dir` followed the working directory (a shortcut or an archiver's temp folder); they are now anchored to the exe folder right after settings are loaded.
 
 ### Added
 - `fluxion-build.bat`: rebuild the exe from the current code without updating (`--lite`, `--full`); a thin wrapper over `fluxion-update.bat --build-only`, so the pre-build checks and the post-build verification stay in one place.
+- `fluxion-public-check.bat` (`scripts/check_public.ps1`): read-only audit before the repository is made public — private keys, `.env`, `keys/`, `data/` and tokens anywhere in the history, internal documents, archives and large files, personal data in commits. Exit code 1 when there are blockers.
+- Futility breaker in the agent: after two consecutive failures of the same tool (any arguments) the observation carries a warning, and the third attempt in that run is not executed — the agent has to change approach or finish. A success resets the counter; the verification gate's own test run is not counted.
+- Warning banner when the exe is started from a temporary folder (archive opened in an archiver, recycle bin): data, the training environment and models would be lost. Detection is the pure predicate `desktop_browser.runtime.is_temp_run`.
+- Pro trial: three file edits by the agent without a licence, each confirmed in a dialog ("Пробная запись: <path>. Разрешить? Осталось попыток: N"). State is kept in `%APPDATA%/Fluxion/trial.json` (`data/trial.json` from sources) and bound to the machine on the first edit (`licensing/trial.py`: `trial_remaining`, `trial_consume`, `trial_reset`). `CodingAgent` got the `write_confirm(path, kind)` callback, asked before `write_file` / `edit_file` change anything.
+- Plan mode in the chat: the "План" chip makes the agent answer with a numbered plan without touching files; "▶ Выполнить план" under the answer runs the agent on that plan.
+- Ctrl+Enter in the chat input sends that one message through the agent without changing the chips.
+- Agent settings in the "⚙ Настройки чата" popover: "Макс. итераций" (1–50) and, with Pro, "Без лимита". `CodingAgent(max_iterations=0)` means no limit, bounded by a hard cap of 200 iterations, a stop request and the loop breakers.
+- "Git: …" button in the chat settings: shows whether the project is a git repository and offers to initialise one, work without git tools or switch them back on. The dialog existed in the code but no button opened it.
+- The chat shows the agent's iteration count and verification result in the answer's meta line.
+
+### Changed
+- Repository hygiene before going public: the update archive, patch files and `docs/internal/` are no longer tracked (they stay on disk and are listed in `.gitignore`).
+- The agent lives in the chat: the separate "Агент" page and the "Агент" menu are gone (sidebar: Чат, Проект, Обучение, Модели). Mode switches "Агент: файлы" and "План" sit in a slim row under the input; the header's "⚙ Настройки чата" popover holds the model selector (moved from the header), the iteration limit and the git button.
+- The "Агент: файлы" chip now decides write access: with it the agent may change files (Pro, or trial edits), without it — also via Ctrl+Enter — the agent is read-only. Previously any agent run from the chat wrote files whenever a Pro licence was active.
 
 ## [0.12.1] — 2026-10-02
 

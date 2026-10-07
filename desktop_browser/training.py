@@ -44,8 +44,16 @@ TRAINING_PACKAGES = [
 
 
 def _source_root() -> Path:
-    """Source tree visible to external interpreters (works frozen and raw)."""
+    """Source tree visible to external interpreters (works frozen and raw).
+
+    A frozen build ships plain ``.py`` sources in ``<bundle>/pysource``: the
+    training environment's interpreter cannot import from the exe's archive.
+    """
     meipass = getattr(sys, "_MEIPASS", None)
+    if meipass and getattr(sys, "frozen", False):
+        pysource = Path(meipass) / "pysource"
+        if pysource.is_dir():
+            return pysource
     return Path(meipass) if meipass else Path(__file__).resolve().parents[1]
 
 

@@ -191,4 +191,39 @@ def test_create_desktop_search_provider_skips_embedded_offscreen(monkeypatch):
         "desktop_browser.search_embedded.embedded_browser_available", lambda: False
     )
     provider = create_desktop_search_provider(SimpleNamespace(searxng_url="http://x", timeout=1))
-    assert isinstance(provider, DuckDuckGoLiteProvider)
+    assert isinstance(provider.fallback, DuckDuckGoLiteProvider)
+    assert not provider.enabled
+
+
+def test_embedded_search_marshals_query_from_worker_thread(qapp):
+    import threading
+    import time
+
+    from PySide6.QtCore import Slot
+
+    import desktop_browser.search_embedded as se
+
+    gui_thread = threading.current_thread()
+    seen = []
+
+    class Bridge(se._EmbeddedSearchBridge):
+        @Slot(str)
+        def search_sync(self, query: str) -> None:
+            seen.append((query, threading.current_thread() is gui_thread))
+            self.search_done.emit([{"title": "T", "url": "https://t.example"}])
+
+    bridge = Bridge()
+    results = []
+    worker = threading.Thread(
+        target=lambda: results.append(bridge.search_from_worker("qwen release", timeout=5.0))
+    )
+    worker.start()
+    deadline = time.time() + 8
+    while worker.is_alive() and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    worker.join(timeout=1)
+
+    assert seen == [("qwen release", True)]
+    assert results == [[{"title": "T", "url": "https://t.example"}]]
+

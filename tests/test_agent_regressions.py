@@ -320,3 +320,172 @@ class TestGitSafety:
         assert committed == ["other.py"]
         status = _git(repo, "status", "--short")
         assert "work.py" in status and ".env" in status and ".fluxion-backup" not in status
+
+
+# ── futility breaker ─────────────────────────────────────────────────────────
+
+class TestFutilityBreaker:
+    @staticmethod
+    def _fake_pytest(monkeypatch, codes):
+        calls: list[list[str]] = []
+        pending = list(codes)
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            code = pending.pop(0)
+            text = "1 passed" if code == 0 else "1 failed"
+            return subprocess.CompletedProcess(cmd, code, stdout=text, stderr="")
+
+        monkeypatch.setattr("orchestrator.agent.subprocess.run", fake_run)
+        return calls
+
+    def test_third_failing_attempt_is_blocked(self, tmp_path, monkeypatch):
+        calls = self._fake_pytest(monkeypatch, [1, 1, 1])
+        replies = [
+            "Thought: create\nAction: write_file mod.py\nx = 1\n",
+            "Thought: test\nAction: run_tests tests/a.py",
+            "Thought: again\nAction: run_tests tests/b.py",
+            "Thought: once more\nAction: run_tests tests/c.py",
+            "Thought: done\nAction: finish gave up",
+        ]
+        agent, _ = _agent(tmp_path, replies, allow_write=True, verify_after_write=False)
+        result = agent.run("task")
+        observations = [step.observation for step in result.steps]
+        assert len(calls) == 2
+        assert "failed twice in a row" in observations[2]
+        assert "is blocked" in observations[3]
+        assert result.steps[3].tool_name == "run_tests"
+        assert result.final_answer == "gave up"
+
+    def test_success_resets_the_counter(self, tmp_path, monkeypatch):
+        calls = self._fake_pytest(monkeypatch, [1, 0, 1, 1])
+        replies = [
+            f"Thought: t\nAction: run_tests tests/{name}.py" for name in "abcde"
+        ] + ["Thought: done\nAction: finish ok"]
+        agent, _ = _agent(tmp_path, replies, verify_after_write=False)
+        result = agent.run("task")
+        observations = [step.observation for step in result.steps]
+        assert len(calls) == 4
+        assert "futility breaker" not in observations[0]
+        assert "futility breaker" not in observations[2]
+        assert "failed twice in a row" in observations[3]
+        assert "is blocked" in observations[4]
+
+    def test_counter_is_reset_between_runs(self, tmp_path, monkeypatch):
+        calls = self._fake_pytest(monkeypatch, [1, 1, 0])
+        replies = [
+            "Thought: t\nAction: run_tests tests/a.py",
+            "Thought: t\nAction: run_tests tests/b.py",
+            "Thought: done\nAction: finish stop",
+            "Thought: t\nAction: run_tests tests/c.py",
+            "Thought: done\nAction: finish ok",
+        ]
+        agent, _ = _agent(tmp_path, replies, verify_after_write=False)
+        agent.run("first")
+        second = agent.run("second")
+        assert len(calls) == 3
+        assert "1 passed" in second.steps[0].observation
+
+    def test_verification_gate_bypasses_the_breaker(self, tmp_path, monkeypatch):
+        calls = self._fake_pytest(monkeypatch, [1, 1, 0])
+        replies = [
+            "Thought: create\nAction: write_file mod.py\nx = 1\n",
+            "Thought: t\nAction: run_tests tests/a.py",
+            "Thought: fix\nAction: write_file mod.py\nx = 2\n",
+            "Thought: t\nAction: run_tests tests/b.py",
+            "Thought: fix\nAction: write_file mod.py\nx = 3\n",
+            "Thought: done\nAction: finish ready",
+            "Thought: done\nAction: finish ready",
+        ]
+        agent, _ = _agent(tmp_path, replies, allow_write=True)
+        result = agent.run("task")
+        assert len(calls) == 3
+        assert agent._tool_fail_streak == {"run_tests": 2}
+        assert result.verification == "passed"
+        assert result.final_answer == "ready"
+
+
+# ── write confirmation (trial edits) ─────────────────────────────────────────
+
+class TestWriteConfirm:
+    def test_declined_write_leaves_no_file(self, tmp_path):
+        asked: list[tuple[str, str]] = []
+
+        def decline(path: str, kind: str) -> bool:
+            asked.append((path, kind))
+            return False
+
+        agent, _ = _agent(tmp_path, [], allow_write=True, write_confirm=decline)
+        result = agent._tool_write_file("pkg/new.py\nx = 1\n")
+        assert not result.success
+        assert result.error == "Запись отменена пользователем"
+        assert asked == [("pkg/new.py", "write")]
+        assert not (tmp_path / "pkg").exists()
+
+    def test_declined_edit_keeps_content(self, tmp_path):
+        target = tmp_path / "mod.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+        asked: list[tuple[str, str]] = []
+
+        def decline(path: str, kind: str) -> bool:
+            asked.append((path, kind))
+            return False
+
+        agent, _ = _agent(tmp_path, [], allow_write=True, write_confirm=decline)
+        result = agent._tool_edit_file("mod.py\n---OLD---\nx = 1\n---NEW---\nx = 2\n")
+        assert not result.success
+        assert result.error == "Запись отменена пользователем"
+        assert asked == [("mod.py", "edit")]
+        assert target.read_text(encoding="utf-8") == "x = 1\n"
+
+    def test_confirmed_write_goes_through(self, tmp_path):
+        agent, _ = _agent(
+            tmp_path, [], allow_write=True, write_confirm=lambda path, kind: True
+        )
+        assert agent._tool_write_file("new.py\nx = 1\n").success
+        assert (tmp_path / "new.py").read_text(encoding="utf-8") == "x = 1\n"
+
+    def test_invalid_request_is_not_asked(self, tmp_path):
+        asked: list[str] = []
+
+        def confirm(path: str, kind: str) -> bool:
+            asked.append(path)
+            return True
+
+        agent, _ = _agent(tmp_path, [], allow_write=True, write_confirm=confirm)
+        assert not agent._tool_write_file("../outside.py\nx = 1\n").success
+        assert not agent._tool_edit_file("missing.py\n---OLD---\na\n---NEW---\nb\n").success
+        assert asked == []
+
+
+# ── iteration limit ──────────────────────────────────────────────────────────
+
+class TestIterationLimit:
+    @staticmethod
+    def _reads(count: int) -> list[str]:
+        return [f"Thought: t\nAction: read_file f{index}.py" for index in range(count)]
+
+    def test_default_limit_stops_the_loop(self, tmp_path):
+        agent, backend = _agent(tmp_path, self._reads(40), verify_after_write=False)
+        result = agent.run("task")
+        assert backend.generate.call_count == 15
+        assert not result.success
+
+    def test_zero_means_no_limit_up_to_hard_cap(self, tmp_path):
+        replies = self._reads(30) + ["Thought: done\nAction: finish ok"]
+        agent, backend = _agent(
+            tmp_path, replies, max_iterations=0, verify_after_write=False
+        )
+        result = agent.run("task")
+        assert backend.generate.call_count == 31
+        assert result.success
+        assert result.final_answer == "ok"
+
+    def test_hard_cap_bounds_an_endless_run(self, tmp_path):
+        agent, backend = _agent(
+            tmp_path, self._reads(260), max_iterations=0, verify_after_write=False
+        )
+        result = agent.run("task")
+        assert backend.generate.call_count == 200
+        assert not result.success
+

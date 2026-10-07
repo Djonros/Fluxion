@@ -31,6 +31,7 @@ from .gate import (
     ensure_pro,
     feature_enabled,
 )
+from .trial import TRIAL_WRITES, trial_consume, trial_remaining, trial_reset
 
 _ISSUER_EXPORTS = frozenset(
     {"issue_license", "load_private_key", "record_issuance", "DEFAULT_PRIVATE_KEY_PATH"}
@@ -75,4 +76,8 @@ __all__ = [
     "current_license",
     "ensure_pro",
     "feature_enabled",
+    "TRIAL_WRITES",
+    "trial_consume",
+    "trial_remaining",
+    "trial_reset",
 ]

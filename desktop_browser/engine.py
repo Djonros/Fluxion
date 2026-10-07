@@ -1,8 +1,32 @@
 """Desktop engine bridge: assemble Settings + backend + Assistant for the GUI."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from core.config import Settings
 from orchestrator import Assistant
+
+
+def _absolutize_data_paths(settings: Settings) -> None:
+    """Anchor relative data folders of a frozen build to the exe folder.
+
+    The working directory of an exe is arbitrary (a shortcut, an archiver's
+    temp folder), so ``data``, the index and cloned repos must not follow it.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    base = Path(sys.executable).resolve().parent
+
+    def anchored(value: str) -> str:
+        path = Path(value)
+        if not value or path.is_absolute():
+            return value
+        return str(base / path)
+
+    settings.paths.data_dir = anchored(settings.paths.data_dir)
+    settings.paths.repos_dir = anchored(settings.paths.repos_dir)
+    settings.rag.chroma_dir = anchored(settings.rag.chroma_dir)
 
 
 def _wire_gguf_paths(settings: Settings) -> None:
@@ -46,6 +70,7 @@ def build_engine(settings: Settings | None = None):
 
     if settings is None:
         settings = Settings.load()
+    _absolutize_data_paths(settings)
 
     try:
         _wire_gguf_paths(settings)

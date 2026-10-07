@@ -241,7 +241,7 @@ def test_download_with_progress_and_resume(tmp_path, monkeypatch):
     import core.model_manager as mm_mod
     from core.model_manager import ModelInfo, ModelManager
 
-    data = b"x" * 1000
+    data = b"GGUF" + b"x" * 996
     sha = hashlib.sha256(data).hexdigest()
     mm = ModelManager(models_dir=tmp_path / "models")
     calls = []
@@ -301,7 +301,7 @@ def test_download_sha_mismatch_cleans_up(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         mm_mod.httpx, "stream",
-        lambda method, url, **kw: _FakeStream([b"corrupted-payload"]),
+        lambda method, url, **kw: _FakeStream([b"GGUF-corrupted-payload"]),
     )
     import pytest
 
@@ -378,7 +378,7 @@ def test_wire_gguf_paths_resolves_catalog(tmp_path, monkeypatch):
 
 def test_models_page_builds_with_catalog(make_window):
     window = make_window()
-    assert window.pages.count() == 5
+    assert window.pages.count() == 4
     buttons = window._model_buttons
     assert set(buttons) >= {"qwen2.5-coder-7b-q4km", "bge-m3-gguf"}
     for button in buttons.values():

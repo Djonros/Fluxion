@@ -852,3 +852,67 @@ class TestDeviceCode:
         from licensing.fingerprint import device_code
 
         assert device_code() == device_code()
+
+
+class TestTrial:
+    @pytest.fixture()
+    def trial(self, tmp_path, monkeypatch):
+        import licensing.trial as trial_module
+
+        path = tmp_path / "state" / "trial.json"
+        monkeypatch.setattr(trial_module, "trial_path", lambda: path)
+        monkeypatch.setattr(trial_module, "device_code", lambda: "AAAA-BBBB-CCCC-DDDD")
+        return trial_module
+
+    def test_fresh_trial_has_three_edits(self, trial):
+        assert trial.TRIAL_WRITES == 3
+        assert trial.trial_remaining() == 3
+        assert not trial.trial_path().exists()
+
+    def test_consume_counts_down_and_stops_at_zero(self, trial):
+        assert [trial.trial_consume() for _ in range(4)] == [True, True, True, False]
+        assert trial.trial_remaining() == 0
+
+    def test_first_consume_binds_the_device(self, trial):
+        assert trial.trial_consume()
+        state = json.loads(trial.trial_path().read_text(encoding="utf-8"))
+        assert state == {"device": "AAAA-BBBB-CCCC-DDDD", "remaining": 2}
+
+    def test_state_from_another_device_is_spent(self, trial, monkeypatch):
+        assert trial.trial_consume()
+        monkeypatch.setattr(trial, "device_code", lambda: "EEEE-FFFF-0000-1111")
+        assert trial.trial_remaining() == 0
+        assert not trial.trial_consume()
+
+    def test_reset_restores_the_trial(self, trial):
+        for _ in range(3):
+            trial.trial_consume()
+        trial.trial_reset()
+        assert trial.trial_remaining() == 3
+        trial.trial_reset()
+
+    def test_broken_or_inflated_state(self, trial):
+        path = trial.trial_path()
+        path.parent.mkdir(parents=True)
+        path.write_text("not json", encoding="utf-8")
+        assert trial.trial_remaining() == 0
+        path.write_text('{"device": "AAAA-BBBB-CCCC-DDDD", "remaining": 99}', encoding="utf-8")
+        assert trial.trial_remaining() == 3
+
+    def test_frozen_build_keeps_state_in_appdata(self, tmp_path, monkeypatch):
+        import importlib.util
+        import sys
+
+        import licensing.trial as trial_module
+
+        spec = importlib.util.spec_from_file_location(
+            "licensing.trial_unpatched", trial_module.__file__
+        )
+        fresh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fresh)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setenv("APPDATA", str(tmp_path))
+        assert fresh.trial_path() == tmp_path / "Fluxion" / "trial.json"
+        monkeypatch.setattr(sys, "frozen", False, raising=False)
+        assert fresh.trial_path().parts[-2:] == ("data", "trial.json")
+

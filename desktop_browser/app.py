@@ -35,7 +35,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QToolButton,
     QTextBrowser,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -45,12 +44,19 @@ from core.language import LANG_NAMES, matches_language, resolve_target
 from licensing.store import load_activation
 from . import APP_VERSION
 from .banner import BrandBanner
-from .browser import create_browser_panel, linkify
+from .browser import create_browser_panel
 from .memory import delete_session, load_sessions, save_session, session_title
+from .runtime import TEMP_RUN_WARNING, is_temp_run
 from .training import TrainingError, TrainingParams, run_pipeline
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
+
+
+def git_tools_enabled(qsettings: QSettings) -> bool:
+    """Read the "agent git tools" switch; a stored 0 may come back as int or text."""
+    raw = qsettings.value("agent_git_enabled", 1)
+    return str(raw).strip().lower() not in ("0", "false", "")
 
 
 def resolve_project_root(picked_value: str, settings) -> str:
@@ -65,10 +71,19 @@ WELCOME_HTML = (
     "<p>Спросите о коде, архитектуре или начните с примера сверху.</p>"
 )
 
-AGENT_READY_HTML = (
-    "<p><span style=\"color:#00E5FF; font-size:15px;\">●</span> <b>Готов к запуску.</b> "
-    "Опишите задачу выше и нажмите «Запустить» (Ctrl+Enter).</p>"
+PLAN_TASK_PREFIX = (
+    "Составь нумерованный план действий по задаче. Не изменяй файлы. "
+    "Заверши ответ списком шагов."
 )
+PLAN_RUN_PREFIX = "Реализуй план:\n"
+PLAN_RUN_URL = "fluxion://run-plan"
+AGENT_DEFAULT_ITERATIONS = 15
+STICKY_SCROLL_SLACK = 8
+VERIFICATION_LABELS = {
+    "passed": "тесты пройдены",
+    "failed": "тесты НЕ пройдены",
+    "syntax_only": "тестов нет — проверен только синтаксис",
+}
 
 
 class FlowLayout(QLayout):
@@ -888,6 +903,9 @@ class FluxionWindow(QMainWindow):
         self.training_running = False
         self.env_installing = False
         self._last_query = ""
+        self._last_plan = ""
+        self._plan_entry: dict | None = None
+        self._plan_pending = False
         self._web_opened_for_current = False
         web_cfg = getattr(settings, "web", None) if settings is not None else None
         self._search_base = str(getattr(web_cfg, "searxng_url", "") or "")
@@ -1131,7 +1149,7 @@ class FluxionWindow(QMainWindow):
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
 
-        for index, title in enumerate(("Чат", "Проект", "Агент", "Обучение", "Модели")):
+        for index, title in enumerate(("Чат", "Проект", "Обучение", "Модели")):
             button = QPushButton(title)
             button.setCheckable(True)
             button.setProperty("nav", True)
@@ -1145,17 +1163,10 @@ class FluxionWindow(QMainWindow):
 
         self.pages.addWidget(self._chat_page())
         self.pages.addWidget(self._project_page())
-        self.pages.addWidget(self._agent_page())
         self.pages.addWidget(self._training_page())
         self.pages.addWidget(self._models_page())
         for i in range(self.pages.count()):
             self.pages.widget(i).setObjectName("page")
-
-        if hasattr(self, "agent_write"):
-            self.act_write.blockSignals(True)
-            self.act_write.setChecked(self.agent_write.isChecked())
-            self.act_write.blockSignals(False)
-            self.agent_write.toggled.connect(self._sync_act_write)
 
         self.web_panel = create_browser_panel(
             web_search=self.web_search, search_base=self._search_base
@@ -1242,19 +1253,6 @@ class FluxionWindow(QMainWindow):
         self.act_theme.triggered.connect(self.toggle_theme)
         m_view.addAction(self.act_theme)
 
-        # Агент
-        m_agent = bar.addMenu("&Агент")
-        act_run = QAction("Запустить задачу", self)
-        act_run.setShortcut("Ctrl+Enter")
-        act_run.triggered.connect(self.run_agent)
-        m_agent.addAction(act_run)
-
-        self.act_write = QAction("Разрешить запись файлов", self)
-        self.act_write.setCheckable(True)
-        self.act_write.setChecked(self.agent_write.isChecked() if hasattr(self, "agent_write") else False)
-        self.act_write.toggled.connect(self._on_write_toggled)
-        m_agent.addAction(self.act_write)
-
         # Проект
         m_proj = bar.addMenu("&Проект")
         act_pick = QAction("Выбрать папку…", self)
@@ -1327,13 +1325,6 @@ class FluxionWindow(QMainWindow):
         if callable(copy):
             copy()
 
-    def _sync_act_write(self, checked: bool) -> None:
-        act = getattr(self, "act_write", None)
-        if act is not None and act.isChecked() != checked:
-            act.blockSignals(True)
-            act.setChecked(checked)
-            act.blockSignals(False)
-
     # ── web panel ────────────────────────────────────────────────────────
 
     def _toggle_web_panel(self, checked: bool) -> None:
@@ -1346,7 +1337,11 @@ class FluxionWindow(QMainWindow):
             self.browser_button.setChecked(True)
 
     def _on_anchor(self, url) -> None:
-        self._open_in_browser(url.toString() if isinstance(url, QUrl) else str(url))
+        target = url.toString() if isinstance(url, QUrl) else str(url)
+        if target == PLAN_RUN_URL:
+            self.run_plan()
+            return
+        self._open_in_browser(target)
 
     def _open_in_browser(self, url: str) -> None:
         if not url:
@@ -1373,17 +1368,12 @@ class FluxionWindow(QMainWindow):
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch()
-        header.addWidget(QLabel("Модель:"))
-        self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(220)
-        self.model_combo.setEnabled(False)
-        self.model_combo.textActivated.connect(self._on_model_selected)
-        header.addWidget(self.model_combo)
-        self.model_refresh_button = QPushButton("⟳")
-        self.model_refresh_button.setObjectName("iconButton")
-        self.model_refresh_button.setToolTip("Обновить список моделей")
-        self.model_refresh_button.clicked.connect(self._load_models)
-        header.addWidget(self.model_refresh_button)
+        self.agent_settings_button = QToolButton()
+        self.agent_settings_button.setText("⚙ Настройки чата")
+        self.agent_settings_button.setObjectName("iconButton")
+        self.agent_settings_button.setToolTip("Модель, число итераций агента, git-инструменты")
+        self.agent_settings_button.clicked.connect(self._show_agent_settings)
+        header.addWidget(self.agent_settings_button)
         self.chat_kebab = QToolButton()
         self.chat_kebab.setText("⋮")
         self.chat_kebab.setObjectName("iconButton")
@@ -1414,7 +1404,9 @@ class FluxionWindow(QMainWindow):
         self.messages = QTextBrowser()
         self.messages.setObjectName("messages")
         self.messages.setOpenExternalLinks(False)
+        self.messages.setOpenLinks(False)
         self.messages.anchorClicked.connect(self._on_anchor)
+        self._wire_sticky_scroll(self.messages)
         layout.addWidget(self.messages, 1)
 
         # ── предупреждения над вводом, не внутри скролла ─────────────
@@ -1426,15 +1418,14 @@ class FluxionWindow(QMainWindow):
         composer_layout = QHBoxLayout(composer)
         composer_layout.setContentsMargins(12, 10, 10, 10)
         composer_layout.setSpacing(10)
-        self.chat_agent_files = QCheckBox("Агент: файлы")
-        self.chat_agent_files.setToolTip(
-            "Сообщение выполнит агент с инструментами проекта; запись файлов — Pro"
-        )
-        self.chat_agent_files.toggled.connect(self._on_chat_agent_files_toggled)
-        composer_layout.addWidget(self.chat_agent_files)
         self.prompt = QLineEdit()
         self.prompt.setPlaceholderText("Напишите сообщение...")
+        self.prompt.setToolTip("Enter — отправить; Ctrl+Enter — разово выполнить агентом")
         self.prompt.returnPressed.connect(self.send_message)
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), self.prompt)
+            shortcut.setContext(Qt.WidgetShortcut)
+            shortcut.activated.connect(self.send_agent_once)
         composer_layout.addWidget(self.prompt, 1)
         self.stop_button = QPushButton("Стоп")
         self.stop_button.setObjectName("stopButton")
@@ -1447,8 +1438,156 @@ class FluxionWindow(QMainWindow):
         composer_layout.addWidget(self.send_button)
         layout.addWidget(composer)
 
+        modes = QHBoxLayout()
+        modes.setContentsMargins(2, 0, 2, 0)
+        modes.setSpacing(6)
+        self.chat_agent_files = QCheckBox("✎ Агент: файлы")
+        self.chat_agent_files.setObjectName("modeChip")
+        self.chat_agent_files.setCursor(Qt.PointingHandCursor)
+        self.chat_agent_files.toggled.connect(self._on_chat_agent_files_toggled)
+        modes.addWidget(self.chat_agent_files)
+        self.chat_plan = QCheckBox("☰ План")
+        self.chat_plan.setObjectName("modeChip")
+        self.chat_plan.setCursor(Qt.PointingHandCursor)
+        self.chat_plan.setToolTip(
+            "Агент составит нумерованный план и не изменит файлы; "
+            "под ответом появится «Выполнить план»"
+        )
+        modes.addWidget(self.chat_plan)
+        modes.addStretch()
+        hint = QLabel("Ctrl+Enter — агенту")
+        hint.setObjectName("modeHint")
+        modes.addWidget(hint)
+        layout.addLayout(modes)
+
+        self._build_agent_settings()
         self._render_messages()
         return page
+
+    def _build_agent_settings(self) -> None:
+        """Create the chat settings popover: model, iteration limit, git tools."""
+        self.agent_settings = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
+        self.agent_settings.setObjectName("chipPopover")
+        box = QVBoxLayout(self.agent_settings)
+        box.setContentsMargins(14, 12, 14, 12)
+        box.setSpacing(10)
+
+        box.addWidget(self._settings_caption("Модель"))
+        model_row = QHBoxLayout()
+        model_row.setSpacing(8)
+        self.model_combo = QComboBox()
+        self.model_combo.setMinimumWidth(240)
+        self.model_combo.setEnabled(False)
+        self.model_combo.textActivated.connect(self._on_model_selected)
+        model_row.addWidget(self.model_combo, 1)
+        self.model_refresh_button = QPushButton("⟳")
+        self.model_refresh_button.setObjectName("iconButton")
+        self.model_refresh_button.setToolTip("Обновить список моделей")
+        self.model_refresh_button.clicked.connect(self._load_models)
+        model_row.addWidget(self.model_refresh_button)
+        box.addLayout(model_row)
+
+        box.addWidget(self._settings_caption("Агент"))
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(QLabel("Макс. итераций:"))
+        self.agent_iterations = QSpinBox()
+        self.agent_iterations.setRange(1, 50)
+        self.agent_iterations.setValue(AGENT_DEFAULT_ITERATIONS)
+        row.addWidget(self.agent_iterations)
+        row.addStretch()
+        box.addLayout(row)
+        self.agent_unlimited = QCheckBox("Без лимита")
+        self.agent_unlimited.setToolTip(
+            "Pro: агент работает, пока не закончит задачу (жёсткий потолок — 200 итераций)"
+        )
+        self.agent_unlimited.toggled.connect(
+            lambda checked: self.agent_iterations.setEnabled(not checked)
+        )
+        box.addWidget(self.agent_unlimited)
+        self.agent_git_button = QPushButton()
+        self.agent_git_button.setObjectName("popAction")
+        self.agent_git_button.setToolTip(
+            "Git-инструменты агента: снимок проекта перед правками, "
+            "git_status / git_diff / git_commit"
+        )
+        self.agent_git_button.clicked.connect(self._on_git_button)
+        box.addWidget(self.agent_git_button)
+        self._refresh_git_button()
+        self._refresh_agent_settings()
+
+    @staticmethod
+    def _settings_caption(text: str) -> QLabel:
+        caption = QLabel(text)
+        caption.setObjectName("popKey")
+        return caption
+
+    def _on_git_button(self) -> None:
+        self.agent_settings.hide()
+        self._open_git_dialog()
+
+    def _pro_active(self) -> bool:
+        lic = load_activation()
+        return lic is not None and lic.is_pro
+
+    def _refresh_agent_settings(self) -> None:
+        """Show "Без лимита" only with a Pro licence; drop it when Pro is gone."""
+        pro = self._pro_active()
+        self.agent_unlimited.setVisible(pro)
+        self.agent_unlimited.setEnabled(pro)
+        if not pro and self.agent_unlimited.isChecked():
+            self.agent_unlimited.setChecked(False)
+
+    def _show_agent_settings(self) -> None:
+        self._refresh_agent_settings()
+        popover = self.agent_settings
+        self._refresh_git_button()
+        popover.adjustSize()
+        button = self.agent_settings_button
+        origin = button.mapToGlobal(QPoint(0, button.height() + 6))
+        left = origin.x() + button.width() - popover.width()
+        popover.move(max(8, left), origin.y())
+        popover.show()
+
+    def _agent_max_iterations(self) -> int:
+        """Return the iteration limit for the next agent run; 0 means no limit."""
+        if self.agent_unlimited.isChecked() and self._pro_active():
+            return 0
+        return self.agent_iterations.value()
+
+    # ── sticky scroll ────────────────────────────────────────────────────
+
+    def _wire_sticky_scroll(self, view: QTextBrowser) -> None:
+        """Make *view* follow new output until the user scrolls away from the bottom."""
+        view.setProperty("sticky", True)
+        scrollbar = view.verticalScrollBar()
+
+        def on_value(value: int) -> None:
+            if view.property("sticky_hold"):
+                return
+            view.setProperty("sticky", value >= scrollbar.maximum() - STICKY_SCROLL_SLACK)
+
+        scrollbar.valueChanged.connect(on_value)
+
+    def _follow_scroll(self, view: QTextBrowser) -> None:
+        """Scroll *view* to the bottom once the document is laid out, if it is sticky."""
+        if not view.property("sticky"):
+            return
+        scrollbar = view.verticalScrollBar()
+        QTimer.singleShot(0, view, lambda: scrollbar.setValue(scrollbar.maximum()))
+
+    def _set_html_keeping_scroll(self, view: QTextBrowser, content: str) -> None:
+        """Replace the document of *view* without moving a reader who scrolled up."""
+        scrollbar = view.verticalScrollBar()
+        sticky = bool(view.property("sticky"))
+        position = scrollbar.value()
+        view.setProperty("sticky_hold", True)
+        try:
+            view.setHtml(content)
+            scrollbar.setValue(scrollbar.maximum() if sticky else position)
+        finally:
+            view.setProperty("sticky_hold", False)
+        self._follow_scroll(view)
 
     # ── project page ─────────────────────────────────────────────────────
 
@@ -1549,6 +1688,8 @@ class FluxionWindow(QMainWindow):
         return "—"
 
     def _on_page_changed(self, index: int) -> None:
+        if index == 0:
+            self._refresh_git_button()
         if index == 1:
             self._refresh_project_stats()
 
@@ -1623,6 +1764,7 @@ class FluxionWindow(QMainWindow):
         if folder:
             self.project_path.setText(folder)
             self.qsettings.setValue("project_path", folder)
+            self._refresh_git_button()
 
     def _start_indexing(self) -> None:
         path = self.project_path.text().strip()
@@ -1671,87 +1813,6 @@ class FluxionWindow(QMainWindow):
 
     # ── agent page ───────────────────────────────────────────────────────
 
-    def _agent_page(self) -> QWidget:
-        page = QWidget()
-        page.setObjectName("page")
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(36, 24, 36, 20)
-        layout.setSpacing(12)
-
-        # ── хедер: заголовок слева, управление справа (одна primary) ──
-        header = QHBoxLayout()
-        title = QLabel("Агент")
-        title.setObjectName("pageTitle")
-        header.addWidget(title)
-        header.addStretch()
-        self.agent_advanced_button = QPushButton("⚙ Дополнительно")
-        self.agent_advanced_button.setObjectName("iconButton")
-        self.agent_advanced_button.setCheckable(True)
-        self.agent_advanced_button.clicked.connect(
-            lambda checked=False: self.agent_advanced.setVisible(
-                self.agent_advanced_button.isChecked()
-            )
-        )
-        header.addWidget(self.agent_advanced_button)
-        self.agent_stop_button = QPushButton("Стоп")
-        self.agent_stop_button.setObjectName("stopButton")
-        self.agent_stop_button.clicked.connect(self.stop_agent)
-        self.agent_stop_button.setVisible(False)
-        header.addWidget(self.agent_stop_button)
-        self.agent_run_button = QPushButton("Запустить")
-        self.agent_run_button.setObjectName("sendButton")
-        self.agent_run_button.clicked.connect(self.run_agent)
-        header.addWidget(self.agent_run_button)
-        layout.addLayout(header)
-
-        subtitle = QLabel("Опишите задачу — агент решит её пошагово с помощью инструментов.")
-        subtitle.setObjectName("subtitle")
-        layout.addWidget(subtitle)
-
-        # ── задача: многострочная, Enter = перенос, Ctrl+Enter = запуск ──
-        self.agent_task = QTextEdit()
-        self.agent_task.setObjectName("agentTask")
-        self.agent_task.setPlaceholderText(
-            "Например: прочитай main.py и объясни, что он делает\n"
-            "Можно описать задачу в несколько строк."
-        )
-        self.agent_task.setFixedHeight(88)
-        QShortcut(QKeySequence("Ctrl+Return"), self.agent_task, activated=self.run_agent)
-        layout.addWidget(self.agent_task)
-
-        # ── дополнительно: свёрнуто по умолчанию ──
-        self.agent_advanced = QFrame()
-        self.agent_advanced.setObjectName("advancedBox")
-        adv = QHBoxLayout(self.agent_advanced)
-        adv.setContentsMargins(12, 10, 12, 10)
-        adv.addWidget(QLabel("Макс. итераций:"))
-        self.agent_iterations = QSpinBox()
-        self.agent_iterations.setRange(1, 50)
-        # the agent's own default (orchestrator.agent); 8 was too few for
-        # read → edit → test → fix cycles
-        self.agent_iterations.setValue(15)
-        adv.addWidget(self.agent_iterations)
-        adv.addStretch()
-        self.agent_advanced.setVisible(False)
-        layout.addWidget(self.agent_advanced)
-
-        # ── write-доступ: чип, а не голая галка ──
-        gate = QHBoxLayout()
-        self.agent_write = QCheckBox("Разрешить запись файлов (Pro)")
-        self.agent_write.setObjectName("writeChip")
-        self.agent_write.toggled.connect(self._on_write_toggled)
-        gate.addWidget(self.agent_write)
-        gate.addStretch()
-        layout.addLayout(gate)
-
-        self.agent_view = QTextBrowser()
-        self.agent_view.setObjectName("messages")
-        self.agent_view.setOpenExternalLinks(False)
-        self.agent_view.anchorClicked.connect(self._on_anchor)
-        self.agent_view.setHtml(AGENT_READY_HTML)
-        layout.addWidget(self.agent_view, 1)
-        return page
-
     # ── git control ──────────────────────────────────────────────────────
 
     def _agent_project_root(self) -> Path:
@@ -1765,7 +1826,7 @@ class FluxionWindow(QMainWindow):
         return Path(picked) if picked else Path.cwd()
 
     def _git_enabled(self) -> bool:
-        return bool(int(self.qsettings.value("agent_git_enabled", 1) or 1))
+        return git_tools_enabled(self.qsettings)
 
     def _refresh_git_button(self) -> None:
         if not hasattr(self, "agent_git_button"):
@@ -1834,7 +1895,7 @@ class FluxionWindow(QMainWindow):
         box.exec()
         clicked = box.clickedButton()
         if clicked is init_btn:
-            self._agent_log("<p><i>Инициализируем git-репозиторий…</i></p>")
+            self.statusBar().showMessage("Инициализируем git-репозиторий…")
             if getattr(self, "agent_git_button", None) is not None:
                 self.agent_git_button.setEnabled(False)
             self._git_init_worker = GitInitWorker(str(root))
@@ -1843,140 +1904,13 @@ class FluxionWindow(QMainWindow):
         elif clicked is no_git_btn:
             self.qsettings.setValue("agent_git_enabled", 0)
             self._refresh_git_button()
-            self._agent_log("<p>Git-инструменты агента отключены.</p>")
+            self.statusBar().showMessage("Git-инструменты агента отключены.", 8000)
 
     def _on_git_init_done(self, ok: bool, message: str) -> None:
         if getattr(self, "agent_git_button", None) is not None:
             self.agent_git_button.setEnabled(True)
-        self._agent_log(
-            f"<p>{'✅' if ok else '⚠️'} {html.escape(message)}</p>"
-        )
+        self.statusBar().showMessage(f"{'✅' if ok else '⚠️'} {message}", 12000)
         self._refresh_git_button()
-
-    def _on_write_toggled(self, checked: bool) -> None:
-        if not checked:
-            return
-        from licensing import feature_enabled
-
-        if not feature_enabled("agent_write"):
-            self.agent_write.blockSignals(True)
-            self.agent_write.setChecked(False)
-            self.agent_write.blockSignals(False)
-            self.agent_view.setHtml(
-                "<p><span style=\"color:#FFB454; font-size:15px;\">⚠</span> "
-                "<b>Запись файлов — Pro-функция.</b></p>"
-                "<p style=\"color:#94A3B8; margin-left:24px;\">Активируйте лицензию: "
-                "меню Помощь → Лицензия… или в CLI <code>/license activate &lt;key&gt;</code></p>"
-            )
-
-    def run_agent(self) -> None:
-        task = self.agent_task.toPlainText().strip()
-        if not task or self.agent_running or self.generating:
-            return
-        if self.agent_factory is None:
-            self.agent_view.setHtml(
-                "<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>"
-            )
-            return
-
-        self._set_agent_running(True)
-        self._agent_log(f"<p><b>Задача:</b> {html.escape(task)}</p>")
-        self.agent_worker = AgentWorker(
-            self.agent_factory,
-            task,
-            self.agent_write.isChecked(),
-            self.agent_iterations.value(),
-        )
-        self.agent_worker.step.connect(self._on_agent_step)
-        self.agent_worker.done.connect(self._on_agent_done)
-        self.agent_worker.failed.connect(self._on_agent_failed)
-        self.agent_worker.finished.connect(self.agent_worker.deleteLater)
-        self.agent_worker.start()
-        self.agent_task.clear()
-
-    def stop_agent(self) -> None:
-        if self.agent_worker is not None and self.agent_running:
-            self.agent_worker.stop()
-
-    def _set_agent_running(self, active: bool) -> None:
-        self.agent_running = active
-        self.agent_run_button.setEnabled(not active)
-        self.agent_stop_button.setVisible(active)
-        if not active:
-            self.agent_worker = None
-
-    def _agent_log(self, fragment: str) -> None:
-        current = self.agent_view.toHtml()
-        self.agent_view.setHtml(current + fragment)
-        scrollbar = self.agent_view.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-
-    def _on_agent_step(self, step) -> None:
-        iteration = html.escape(str(getattr(step, "iteration", "?")))
-        parts = [
-            f"<p><span style=\"color:#B4FF39; font-size:15px;\">●</span> "
-            f"<b>Итерация {iteration}</b></p>"
-        ]
-        thought = getattr(step, "thought", "")
-        if thought:
-            parts.append(
-                f"<p style=\"color:#94A3B8; margin-left:24px;\"><i>{html.escape(thought[:500])}</i></p>"
-            )
-        from orchestrator.presentation import format_tool, render_chat_html
-
-        tool = getattr(step, "tool_name", "")
-        args = getattr(step, "tool_args", "") or ""
-        tool_text = format_tool(step) if tool else ""
-        if tool_text:
-            parts.append(
-                f"<div style=\"margin-left:24px; color:#00E5FF;\">{render_chat_html(tool_text)}</div>"
-            )
-        if tool == "web_search" and args:
-            self._show_web_results(getattr(step, "tool_args", "") or "")
-        observation = getattr(step, "observation", "")
-        if observation:
-            parts.append(f"<pre style=\"margin-left:24px;\">{linkify(observation[:1500])}</pre>")
-        self._agent_log("".join(parts))
-
-    def _on_agent_done(self, result: dict) -> None:
-        if result.get("cancelled"):
-            self._agent_log(
-                "<p><span style=\"color:#FFB454; font-size:15px;\">●</span> "
-                "<b>Остановлено пользователем.</b></p>"
-            )
-        ok = bool(result.get("success"))
-        dot = "#B4FF39" if ok else "#FF5C5C"
-        status = "выполнено" if ok else "не завершено"
-        self._agent_log(
-            f"<p><span style=\"color:{dot}; font-size:15px;\">●</span> <b>Агент {status}</b> "
-            f"<span style=\"color:#94A3B8;\">({result.get('iterations_used', 0)} итер.)</span></p>"
-        )
-        answer = result.get("final_answer") or ""
-        if answer:
-            from orchestrator.presentation import render_chat_html
-
-            self._agent_log(
-                f"<div style=\"margin-left:24px;\"><b>Ответ:</b><br>{render_chat_html(answer)}</div>"
-            )
-        verification = result.get("verification", "")
-        labels = {
-            "passed": ("Верификация: тесты пройдены", "#B4FF39"),
-            "failed": ("Верификация: тесты НЕ пройдены", "#FF5C5C"),
-            "syntax_only": ("Верификация: тестов нет — проверен только синтаксис", "#FFC53D"),
-        }
-        if verification in labels:
-            label, color = labels[verification]
-            self._agent_log(
-                f"<p><span style=\"color:{color}; font-size:15px;\">●</span> <b>{label}</b></p>"
-            )
-        self._set_agent_running(False)
-
-    def _on_agent_failed(self, message: str) -> None:
-        self._agent_log(
-            f"<p><span style=\"color:#FF5C5C; font-size:15px;\">●</span> "
-            f"<b>{html.escape(message)}</b></p>"
-        )
-        self._set_agent_running(False)
 
     # ── training page ────────────────────────────────────────────────────
 
@@ -2146,6 +2080,7 @@ class FluxionWindow(QMainWindow):
         self.training_view = QTextBrowser()
         self.training_view.setObjectName("messages")
         self.training_view.setMinimumHeight(220)
+        self._wire_sticky_scroll(self.training_view)
         self.training_view.setHtml(
             "<p>Этапы: обучение → объединение с базовой моделью → готовая модель (GGUF) "
             "→ список моделей программы.</p>"
@@ -2707,8 +2642,7 @@ class FluxionWindow(QMainWindow):
 
     def _on_training_log(self, message: str) -> None:
         self.training_view.append(html.escape(message).replace("\n", "<br>"))
-        scrollbar = self.training_view.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        self._follow_scroll(self.training_view)
 
     def _on_training_done(self, result: dict) -> None:
         if result.get("cancelled"):
@@ -2882,15 +2816,24 @@ class FluxionWindow(QMainWindow):
     # ── chat flow ────────────────────────────────────────────────────────
 
     def send_message(self) -> None:
+        """Send the prompt: to the agent when a chip asks for it, else to the chat."""
+        self._submit(agent_once=False)
+
+    def send_agent_once(self) -> None:
+        """Ctrl+Enter: run this one message through the agent; chips stay as they are."""
+        self._submit(agent_once=True)
+
+    def _submit(self, agent_once: bool) -> None:
         text = self.prompt.text().strip()
         if not text or self.generating or self.agent_running:
             return
-        if self.assistant is None:
+        wants_agent = agent_once or self.chat_agent_files.isChecked() or self.chat_plan.isChecked()
+        if (self.agent_factory if wants_agent else self.assistant) is None:
             self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
             return
         self.prompt.clear()
-        if self.chat_agent_files.isChecked() and self.agent_factory is not None:
-            self._send_agent_message(text)
+        if wants_agent:
+            self._send_agent_message(text, plan=self.chat_plan.isChecked())
             return
 
         history = list(self.history)
@@ -2918,6 +2861,56 @@ class FluxionWindow(QMainWindow):
         if self.agent_worker is not None and self.generating:
             self.agent_worker.stop()
 
+    def _write_access(self) -> bool:
+        """Tell whether the agent may change files: Pro licence or trial edits left."""
+        from licensing import feature_enabled, trial_remaining
+
+        return bool(feature_enabled("agent_write")) or trial_remaining() > 0
+
+    def _agent_write_allowed(self) -> bool:
+        """Write access of the next agent run: the chip is on and Pro or trial allows it."""
+        return self.chat_agent_files.isChecked() and self._write_access()
+
+    def _refresh_agent_chip(self) -> None:
+        """Update the tooltip of the agent chip and its Pro/trial banner."""
+        from licensing import feature_enabled, trial_remaining
+
+        base = "Сообщение выполнит агент с инструментами проекта. "
+        checked = self.chat_agent_files.isChecked()
+        if feature_enabled("agent_write"):
+            self.chat_agent_files.setToolTip(base + "Запись файлов разрешена (Pro).")
+            self.banners.dismiss_key("agent_write")
+            return
+        remaining = trial_remaining()
+        if remaining > 0:
+            note = (
+                f"Pro или триал: осталось {remaining} пробных правок — "
+                "каждая с подтверждением."
+            )
+            self.chat_agent_files.setToolTip(base + note)
+            if checked:
+                self.banners.show_warning(note, "Лицензия…", self._open_license_dialog, key="agent_write")
+            else:
+                self.banners.dismiss_key("agent_write")
+            return
+        self.chat_agent_files.setToolTip(
+            base + "Только чтение: запись файлов — Pro-функция, пробные правки израсходованы."
+        )
+        if checked:
+            self.banners.show_warning(
+                "Запись файлов — Pro-функция: агент работает только на чтение. "
+                "Активируйте лицензию: меню Помощь → Лицензия…",
+                "Лицензия…",
+                self._open_license_dialog,
+                key="agent_write",
+            )
+        else:
+            self.banners.dismiss_key("agent_write")
+
+    def _on_trial_changed(self) -> None:
+        """A trial edit was confirmed or declined: refresh the labels that count them."""
+        self._refresh_license_badge()
+
     def _on_chat_agent_files_toggled(self, checked: bool) -> None:
         if checked:
             if self.agent_factory is None:
@@ -2927,29 +2920,44 @@ class FluxionWindow(QMainWindow):
             self.prompt.setPlaceholderText("Задача для агента: например, прочитай main.py и исправь баг...")
         else:
             self.prompt.setPlaceholderText("Напишите сообщение...")
+        self._refresh_agent_chip()
 
-    def _send_agent_message(self, task: str) -> None:
-        from licensing import feature_enabled
+    def _send_agent_message(self, task: str, plan: bool = False, shown: str | None = None) -> None:
+        """Run *task* through the agent inside the chat.
 
-        self._last_query = task
+        *plan* asks for a numbered plan with file writes off; *shown* replaces
+        the text displayed as the user's message.
+        """
+        visible = shown if shown is not None else task
+        self._last_query = visible
         self._web_opened_for_current = False
-        self._append_message("user", task)
-        self.history.append({"role": "user", "content": task})
+        self._append_message("user", visible)
+        self.history.append({"role": "user", "content": visible})
         self._append_message("assistant", "")
+        self._plan_pending = plan
+        self._plan_entry = None
         self._start_thinking()
 
         self._set_generating(True)
         self.agent_worker = AgentWorker(
             self.agent_factory,
-            task,
-            bool(feature_enabled("agent_write")),
-            self.agent_iterations.value(),
+            f"{PLAN_TASK_PREFIX}\n\n{task}" if plan else task,
+            False if plan else self._agent_write_allowed(),
+            self._agent_max_iterations(),
         )
         self.agent_worker.step.connect(self._on_chat_agent_step)
         self.agent_worker.done.connect(self._on_chat_agent_done)
         self.agent_worker.failed.connect(self._on_chat_agent_failed)
         self.agent_worker.finished.connect(self.agent_worker.deleteLater)
         self.agent_worker.start()
+
+    def run_plan(self) -> None:
+        """Run the agent on the plan saved by the last plan-mode answer."""
+        if not self._last_plan or self.generating or self.agent_running:
+            return
+        if self.agent_factory is None:
+            return
+        self._send_agent_message(PLAN_RUN_PREFIX + self._last_plan, shown="Выполнить план")
 
     def _on_chat_agent_step(self, step) -> None:
         if not self._messages:
@@ -2984,6 +2992,15 @@ class FluxionWindow(QMainWindow):
             fragments.append(answer)
             self.history.append({"role": "assistant", "content": answer})
         entry["text"] = "\n".join(fragments) or "(пустой ответ)"
+        meta = ["агент", f"{result.get('iterations_used', 0)} итер."]
+        verification = VERIFICATION_LABELS.get(result.get("verification", ""))
+        if verification:
+            meta.append(verification)
+        entry["meta"] = "[" + " | ".join(meta) + "]"
+        if self._plan_pending and answer and not result.get("cancelled"):
+            self._last_plan = answer
+            self._plan_entry = entry
+        self._plan_pending = False
         self._set_generating(False)
         self.agent_worker = None
         self._render_messages()
@@ -2992,6 +3009,7 @@ class FluxionWindow(QMainWindow):
     def _on_chat_agent_failed(self, message: str) -> None:
         entry = self._messages[-1]
         entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + message
+        self._plan_pending = False
         self._set_generating(False)
         self.agent_worker = None
         self._render_messages()
@@ -3097,7 +3115,7 @@ class FluxionWindow(QMainWindow):
 
     def _render_messages(self) -> None:
         if not self._messages:
-            self.messages.setHtml(WELCOME_HTML)
+            content = WELCOME_HTML
         else:
             parts = []
             for entry in self._messages:
@@ -3116,9 +3134,10 @@ class FluxionWindow(QMainWindow):
 
                 body = render_chat_html(entry["text"]) or "…"
                 parts.append(f"<div>{body}</div>")
-            self.messages.setHtml("".join(parts))
-        scrollbar = self.messages.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+                if entry is self._plan_entry and not self.generating:
+                    parts.append(f'<p><a href="{PLAN_RUN_URL}">▶ Выполнить план</a></p>')
+            content = "".join(parts)
+        self._set_html_keeping_scroll(self.messages, content)
 
     # ── license ──────────────────────────────────────────────────────────
 
@@ -3138,6 +3157,8 @@ class FluxionWindow(QMainWindow):
             self.style().polish(btn)
         self._refresh_training_gate()
         self._refresh_training_env()
+        self._refresh_agent_settings()
+        self._refresh_agent_chip()
         if getattr(self, "_model_buttons", None):
             self._refresh_models()  # Pro models become downloadable after activation
 
@@ -3284,9 +3305,12 @@ class FluxionWindow(QMainWindow):
             QPushButton#bannerClose {{ background: transparent; color: {text2}; padding: 2px 6px; font-size: 14px; }}
 
             /* Страница агента */
-            QTextEdit#agentTask {{ background: {bg1}; color: {text1}; border: 1px solid {border}; border-radius: 6px; padding: 10px; }}
-            QTextEdit#agentTask:focus {{ border-color: {accent}; }}
             QFrame#advancedBox {{ background: {bg2}; border: 1px solid {border}; border-radius: 6px; }}
+            QCheckBox#modeChip {{ background: transparent; color: {text2}; border: 1px solid transparent; border-radius: 11px; padding: 2px 10px; font-size: 12px; spacing: 0px; }}
+            QCheckBox#modeChip::indicator {{ width: 0px; height: 0px; }}
+            QCheckBox#modeChip:hover {{ border-color: {border}; color: {text1}; }}
+            QCheckBox#modeChip:checked {{ background: {bg2}; border-color: {accent}; color: {accent}; }}
+            QLabel#modeHint {{ color: {text2}; font-size: 11px; }}
             QCheckBox#writeChip {{ background: {bg2}; border: 1px solid {border}; border-radius: 6px; padding: 6px 12px; }}
             QCheckBox#writeChip:checked {{ border-color: {accent}; color: {accent}; }}
 
@@ -3412,9 +3436,16 @@ def main() -> int:
                     name="searxng-autostart",
                 ).start()
 
+            from licensing import feature_enabled
+
+            from .trial_gate import TrialWriteGate
+
+            trial_gate = TrialWriteGate()
+
             def agent_factory(task: str, allow_write: bool, max_iter: int):
                 qs = QSettings("Fluxion", "Fluxion")
                 picked = str(qs.value("project_path", "") or "")
+                paid = bool(feature_enabled("agent_write"))
                 return CodingAgent(
                     backend=backend,
                     project_root=resolve_project_root(picked, settings),
@@ -3422,8 +3453,9 @@ def main() -> int:
                     web_search=web_search,
                     max_iterations=max_iter,
                     allow_write=allow_write,
-                    git_enabled=bool(int(qs.value("agent_git_enabled", 1) or 1)),
+                    git_enabled=git_tools_enabled(qs),
                     lang=getattr(settings, "language", "auto"),
+                    write_confirm=None if paid else trial_gate.confirm,
                 )
 
             window = FluxionWindow(
@@ -3434,11 +3466,20 @@ def main() -> int:
                 rag_service=rag_service,
                 web_search=web_search,
             )
+            trial_gate.attach(window)
+            trial_gate.changed.connect(window._on_trial_changed)
         except Exception as exc:
             rag_service = None
             window = FluxionWindow()
             window.status_label.setText(f"Ошибка движка: {exc}")
         window.show()
+
+        if (
+            os.environ.get("FLUXION_DESKTOP_SMOKE") != "1"
+            and getattr(sys, "frozen", False)
+            and is_temp_run(sys.executable)
+        ):
+            window.banners.show_warning(TEMP_RUN_WARNING, key="temp_run")
 
         if (
             os.environ.get("FLUXION_DESKTOP_SMOKE") != "1"

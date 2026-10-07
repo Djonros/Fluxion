@@ -37,6 +37,11 @@ from .git_helper import is_secret_path
 logger = logging.getLogger(__name__)
 
 _MAX_ITERATIONS = 15
+_PROJECT_VENV_DIRS = (".venv", "venv", "env")
+_VENV_PYTHON_PATHS = ("Scripts/python.exe", "bin/python")
+_FUTILITY_LIMIT = 2
+_UNLIMITED_ITERATIONS_CAP = 200
+_WRITE_CANCELLED = "Запись отменена пользователем"
 _TOOL_OUTPUT_LIMIT = 6000          # generic cap for tool observations (chars)
 _READ_CHAR_LIMIT = 8000            # one read_file page (chars)
 _MAX_WRITE_FILE_SIZE = 1_048_576   # 1 MB
@@ -446,13 +451,22 @@ class CodingAgent:
         test_timeout: int = _TEST_TIMEOUT,
         context_char_budget: int = _CONTEXT_CHAR_BUDGET,
         action_format: str = "auto",
+        write_confirm: Callable[[str, str], bool] | None = None,
     ):
+        """Create an agent bound to *project_root*.
+
+        ``max_iterations=0`` means "no limit": the loop is then bounded only by
+        the hard cap, a stop request and the loop breakers. *write_confirm*
+        receives ``(path, kind)`` with kind ``"write"`` or ``"edit"`` before a
+        file is changed; returning False cancels that change.
+        """
         self.backend = backend
         self.project_root = Path(project_root).resolve()
         self.rag_service = rag_service
         self.web_search = web_search
         self.max_iterations = max_iterations
         self.allow_write = allow_write
+        self.write_confirm = write_confirm
         # allow_exec=False (e.g. multi-tenant server) disables run_tests: pytest
         # executes project code (conftest.py) with the server's privileges.
         self.allow_exec = allow_exec
@@ -476,6 +490,7 @@ class CodingAgent:
         self._tests_ok = False
         self._syntax_only = False
         self._pytest_missing = False
+        self._tool_fail_streak: dict[str, int] = {}
         self._verify_used = 0
         self._checkpointed = False
         self._action_format = self._resolve_action_format(action_format)
@@ -615,6 +630,7 @@ class CodingAgent:
         seen_actions: set[tuple[str, str]] = set()
         no_action_streak = 0
         generated_ok = False
+        self._tool_fail_streak = {}
         self._lang_target = resolve_target(self.lang, task)
         self._lang_fixes = 0
         messages: list[dict[str, str]] = [
@@ -626,7 +642,7 @@ class CodingAgent:
             messages.append({"role": "user", "content": task})
 
         extra = self.verify_budget if self.verify_after_write else 0
-        for iteration in range(1, self.max_iterations + extra + 1):
+        for iteration in range(1, self._iteration_limit() + extra + 1):
             step = AgentStep(iteration=iteration)
             self._compact_history(messages)
 
@@ -741,6 +757,17 @@ class CodingAgent:
                 yield step
                 break
 
+            if self._tool_fail_streak.get(tool_name, 0) >= _FUTILITY_LIMIT:
+                step.observation = (
+                    f"[futility breaker] {tool_name} is blocked in this run: two "
+                    "consecutive failures already. Change approach or finish with "
+                    "your best answer."
+                )
+                messages.append({"role": "user", "content": f"Observation:\n{step.observation}"})
+                result.steps.append(step)
+                yield step
+                continue
+
             action_key = (tool_name, tool_args)
             if action_key in seen_actions:
                 step.observation = _REPEAT_OBSERVATION
@@ -748,11 +775,12 @@ class CodingAgent:
                 seen_actions.add(action_key)
                 tool_result = self._run_tool(tool_name, tool_args, runner)
                 self._note_effect(tool_name, tool_args, tool_result)
+                futility_note = self._track_futility(tool_name, tool_result.success)
                 if tool_result.success and tool_name in ("write_file", "edit_file", "git_commit"):
                     # The project changed: re-reading files or re-running tests
                     # is now legitimate, not a loop.
                     seen_actions.clear()
-                step.observation = self._format_observation(tool_result)
+                step.observation = self._format_observation(tool_result) + futility_note
 
             messages.append({
                 "role": "user",
@@ -921,6 +949,36 @@ class CodingAgent:
             self._tests_ok = True
             self._syntax_only = False
             self._dirty_files.clear()
+
+    def _iteration_limit(self) -> int:
+        """Return the iteration budget; ``max_iterations <= 0`` selects the hard cap."""
+        if self.max_iterations > 0:
+            return self.max_iterations
+        return _UNLIMITED_ITERATIONS_CAP
+
+    def _write_allowed(self, fpath: Path, kind: str) -> bool:
+        """Ask the optional confirmation callback whether *fpath* may be changed."""
+        if self.write_confirm is None:
+            return True
+        return bool(self.write_confirm(self._rel(fpath), kind))
+
+    def _track_futility(self, tool_name: str, success: bool) -> str:
+        """Update the consecutive-failure counter of *tool_name*.
+
+        Returns the warning to append to the observation when the tool has just
+        failed for the second time in a row, otherwise an empty string.
+        """
+        if success:
+            self._tool_fail_streak.pop(tool_name, None)
+            return ""
+        streak = self._tool_fail_streak.get(tool_name, 0) + 1
+        self._tool_fail_streak[tool_name] = streak
+        if streak != _FUTILITY_LIMIT:
+            return ""
+        return (
+            f"\n[futility breaker] {tool_name} failed twice in a row; the next attempt "
+            "will be blocked. Change approach or finish with your best answer."
+        )
 
     def _try_verify_gate(self) -> str | None:
         """Финал с непроверенными правками невозможен: авто-прогон тестов."""
@@ -1363,9 +1421,23 @@ class CodingAgent:
                 return resolved
         return None
 
-    @staticmethod
-    def _python_executable() -> str | None:
-        """Interpreter for subprocesses; frozen sys.executable would relaunch the app."""
+    def _python_executable(self) -> str | None:
+        """Return the interpreter used to run the project's tests.
+
+        Order: ``FLUXION_TEST_PYTHON`` (when the file exists), the project's own
+        virtual environment, ``sys.executable`` when running from sources, the
+        bundled training environment of a frozen build, then ``python``/``py``
+        from PATH. A frozen ``sys.executable`` is never returned: it would
+        relaunch the application.
+        """
+        override = os.environ.get("FLUXION_TEST_PYTHON", "").strip()
+        if override and Path(override).is_file():
+            return override
+        for env_name in _PROJECT_VENV_DIRS:
+            for relative in _VENV_PYTHON_PATHS:
+                candidate = self.project_root / env_name / relative
+                if candidate.is_file():
+                    return str(candidate)
         if not getattr(sys, "frozen", False):
             return sys.executable
         exe_dir = Path(sys.executable).resolve().parent
@@ -1431,8 +1503,9 @@ class CodingAgent:
             self._pytest_missing = True
             return ToolResult(
                 "run_tests", args, output, False,
-                "pytest is not installed in the Python environment used by Fluxion; "
-                "tests cannot be run", exit_code=result.returncode,
+                "pytest is not installed in the Python environment used by Fluxion "
+                f"({exe}); tests cannot be run. Установите pytest в venv проекта "
+                "или укажите FLUXION_TEST_PYTHON.", exit_code=result.returncode,
             )
         if result.returncode == 5:
             return ToolResult(
@@ -1576,6 +1649,9 @@ class CodingAgent:
         if len(content.encode("utf-8")) > _MAX_WRITE_FILE_SIZE:
             return ToolResult("write_file", args, "", False, f"Content exceeds {_MAX_WRITE_FILE_SIZE} bytes")
 
+        if not self._write_allowed(fpath, "write"):
+            return ToolResult("write_file", args, "", False, _WRITE_CANCELLED)
+
         try:
             self._ensure_checkpoint()
             self._backup_file(fpath)
@@ -1683,6 +1759,9 @@ class CodingAgent:
 
         if len(updated.encode("utf-8")) > _MAX_WRITE_FILE_SIZE:
             return ToolResult("edit_file", args, "", False, f"Resulting file would exceed {_MAX_WRITE_FILE_SIZE} bytes")
+
+        if not self._write_allowed(fpath, "edit"):
+            return ToolResult("edit_file", args, "", False, _WRITE_CANCELLED)
 
         try:
             self._ensure_checkpoint()

@@ -165,3 +165,94 @@ def test_wizard_model_check_sees_downloaded_model_despite_foreign_path(clean_mac
     assert check_gguf_model(settings).available is False
     _download_default_model(clean_machine)
     assert check_gguf_model(settings).available is True
+
+
+# ── exe started from a temporary folder ──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "exe_path",
+    [
+        r"C:\Users\PC\AppData\Local\Temp\Rar$EXa1234.5678\FluxionBrowserLite\FluxionBrowserLite.exe",
+        r"C:\Users\PC\AppData\Local\Temp\7zO4C1A\FluxionBrowserLite.exe",
+        r"D:\TEMP\Fluxion\FluxionBrowserLite.exe",
+        r"C:\$Recycle.Bin\S-1-5-21\$R1AB2C\FluxionBrowserLite.exe",
+        r"C:\$RECYBLE\FluxionBrowserLite.exe",
+        "C:/Users/PC/AppData/Local/Temp/Rar$DIa1.2/FluxionBrowserLite.exe",
+    ],
+)
+def test_temp_run_detected(exe_path):
+    from desktop_browser.runtime import is_temp_run
+
+    assert is_temp_run(exe_path)
+
+
+@pytest.mark.parametrize(
+    "exe_path",
+    [
+        r"C:\Fluxion\FluxionBrowserLite.exe",
+        r"D:\Programs\FluxionBrowserLite\FluxionBrowserLite.exe",
+        r"C:\Users\PC\Desktop\Templates\FluxionBrowserLite.exe",
+    ],
+)
+def test_normal_folder_is_not_a_temp_run(exe_path, monkeypatch):
+    import desktop_browser.runtime as runtime
+
+    monkeypatch.setattr(runtime.tempfile, "gettempdir", lambda: r"E:\Scratch")
+    assert not runtime.is_temp_run(exe_path)
+
+
+def test_system_temp_dir_counts_as_temp_run(monkeypatch):
+    import desktop_browser.runtime as runtime
+
+    monkeypatch.setattr(runtime.tempfile, "gettempdir", lambda: r"E:\Scratch")
+    assert runtime.is_temp_run(r"E:\scratch\Fluxion\FluxionBrowserLite.exe")
+    assert not runtime.is_temp_run(r"E:\scratch-other\FluxionBrowserLite.exe")
+
+
+# ── data folders of a frozen build ───────────────────────────────────────────
+
+
+def test_frozen_build_anchors_relative_data_paths(tmp_path, monkeypatch):
+    import sys
+
+    from desktop_browser.engine import _absolutize_data_paths
+
+    exe = tmp_path / "app" / "FluxionBrowserLite.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    settings = Settings()
+    _absolutize_data_paths(settings)
+    base = exe.resolve().parent
+    assert Path(settings.paths.data_dir) == base / "data"
+    assert Path(settings.paths.repos_dir) == base / "data" / "repos"
+    assert Path(settings.rag.chroma_dir) == base / "data" / "chroma"
+    assert Path(settings.paths.data_dir).is_absolute()
+
+
+def test_frozen_build_keeps_absolute_data_paths(tmp_path, monkeypatch):
+    import sys
+
+    from desktop_browser.engine import _absolutize_data_paths
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "FluxionBrowserLite.exe"))
+    settings = Settings()
+    settings.paths.data_dir = str(tmp_path / "elsewhere")
+    _absolutize_data_paths(settings)
+    assert settings.paths.data_dir == str(tmp_path / "elsewhere")
+
+
+def test_source_run_leaves_data_paths_relative(monkeypatch):
+    import sys
+
+    from desktop_browser.engine import _absolutize_data_paths
+
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    settings = Settings()
+    _absolutize_data_paths(settings)
+    assert settings.paths.data_dir == "data"
+    assert settings.rag.chroma_dir == "data/chroma"
+

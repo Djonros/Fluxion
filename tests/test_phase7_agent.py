@@ -176,10 +176,14 @@ class TestAgentTools:
         assert not result.success
         assert "Unknown tool" in result.error
 
-    def test_python_executable_uses_sys_executable_unfrozen(self):
-        assert CodingAgent._python_executable() == sys.executable
+    def test_python_executable_uses_sys_executable_unfrozen(self, agent, monkeypatch):
+        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
+        assert agent._python_executable() == sys.executable
 
-    def test_python_executable_prefers_bundled_venv_when_frozen(self, tmp_path, monkeypatch):
+    def test_python_executable_prefers_bundled_venv_when_frozen(
+        self, agent, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
         exe = tmp_path / "FluxionBrowser.exe"
         exe.write_bytes(b"")
         bundled = tmp_path / "data" / "training_env" / "Scripts" / "python.exe"
@@ -187,9 +191,12 @@ class TestAgentTools:
         bundled.write_bytes(b"")
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setattr(sys, "executable", str(exe))
-        assert CodingAgent._python_executable() == str(bundled)
+        assert agent._python_executable() == str(bundled)
 
-    def test_python_executable_falls_back_to_path_when_frozen(self, tmp_path, monkeypatch):
+    def test_python_executable_falls_back_to_path_when_frozen(
+        self, agent, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
         exe = tmp_path / "FluxionBrowser.exe"
         exe.write_bytes(b"")
         monkeypatch.setattr(sys, "frozen", True, raising=False)
@@ -197,11 +204,68 @@ class TestAgentTools:
         monkeypatch.setattr(
             "orchestrator.agent.shutil.which", lambda name: "C:/Python314/python.exe"
         )
-        assert CodingAgent._python_executable() == "C:/Python314/python.exe"
+        assert agent._python_executable() == "C:/Python314/python.exe"
+
+    @pytest.mark.parametrize("relative", ["Scripts/python.exe", "bin/python"])
+    def test_python_executable_prefers_project_venv(
+        self, agent, tmp_path, monkeypatch, relative
+    ):
+        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
+        venv_python = tmp_path / ".venv" / relative
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_bytes(b"")
+        monkeypatch.setattr(
+            "orchestrator.agent.shutil.which", lambda name: "C:/Python314/python.exe"
+        )
+        assert agent._python_executable() == str(venv_python)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        assert agent._python_executable() == str(venv_python)
+
+    def test_python_executable_venv_dirs_are_tried_in_order(self, agent, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
+        for name in ("env", "venv"):
+            target = tmp_path / name / "Scripts" / "python.exe"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b"")
+        assert agent._python_executable() == str(tmp_path / "venv" / "Scripts" / "python.exe")
+
+    def test_python_executable_env_override_wins(self, agent, tmp_path, monkeypatch):
+        venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_bytes(b"")
+        override = tmp_path / "custom" / "python.exe"
+        override.parent.mkdir()
+        override.write_bytes(b"")
+        monkeypatch.setenv("FLUXION_TEST_PYTHON", str(override))
+        assert agent._python_executable() == str(override)
+
+    def test_python_executable_ignores_missing_env_override(self, agent, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLUXION_TEST_PYTHON", str(tmp_path / "nope" / "python.exe"))
+        assert agent._python_executable() == sys.executable
+
+    def test_pytest_missing_error_names_interpreter(self, agent, tmp_path, monkeypatch):
+        venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_bytes(b"")
+        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr=f"{cmd[0]}: No module named pytest"
+            )
+
+        monkeypatch.setattr("orchestrator.agent.subprocess.run", fake_run)
+        result = agent._tool_run_tests("")
+        assert not result.success
+        assert "pytest is not installed in the Python environment used by Fluxion" in result.error
+        assert str(venv_python) in result.error
+        assert "FLUXION_TEST_PYTHON" in result.error
+        assert "venv проекта" in result.error
 
     def test_run_tests_never_relaunches_frozen_app(self, tmp_path, monkeypatch):
         exe = tmp_path / "FluxionBrowser.exe"
         exe.write_bytes(b"")
+        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setattr(sys, "executable", str(exe))
         monkeypatch.setattr(
