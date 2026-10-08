@@ -559,3 +559,59 @@ def test_embedder_registers_in_runtime():
     assert rt.get("embedding") is emb._llm
     emb.unload()
     assert rt.keys() == []
+
+
+# ── desktop app: own embedding model instead of Ollama ───────────────────────
+
+
+def test_desktop_rag_finds_model_downloaded_after_start(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from rag.service import RAGConfig, RAGService
+
+    models = tmp_path / "models"
+    models.mkdir()
+    monkeypatch.setenv("FLUXION_MODELS_DIR", str(models))
+    monkeypatch.setitem(sys.modules, "llama_cpp", types.ModuleType("llama_cpp"))
+    svc = RAGService(RAGConfig(prefer_local_models=True))
+    assert svc._resolve_backend() == "llama_cpp"
+    assert svc._local_embedding_gguf() == ""
+
+    (models / "bge-m3-Q8_0.gguf").write_bytes(b"GGUF")
+    assert svc._local_embedding_gguf().endswith("bge-m3-Q8_0.gguf")
+    assert svc.config.embedding_gguf.endswith("bge-m3-Q8_0.gguf")
+
+
+def test_desktop_rag_without_model_says_what_to_download(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from rag.service import MISSING_EMBEDDING_MODEL, RAGConfig, RAGService
+
+    monkeypatch.setenv("FLUXION_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setitem(sys.modules, "llama_cpp", types.ModuleType("llama_cpp"))
+    svc = RAGService(RAGConfig(prefer_local_models=True, chroma_dir=str(tmp_path / "chroma")))
+    with pytest.raises(RuntimeError) as error:
+        svc.index(tmp_path)
+    assert str(error.value) == MISSING_EMBEDDING_MODEL
+    assert "Ollama" in MISSING_EMBEDDING_MODEL and "BGE-M3" in MISSING_EMBEDDING_MODEL
+
+
+def test_desktop_rag_falls_back_to_ollama_without_engine(tmp_path, monkeypatch):
+    import sys
+
+    from rag.service import RAGConfig, RAGService
+
+    monkeypatch.setenv("FLUXION_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setitem(sys.modules, "llama_cpp", None)
+    svc = RAGService(RAGConfig(prefer_local_models=True))
+    assert svc._resolve_backend() == "ollama"
+
+
+def test_build_engine_marks_rag_as_desktop():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "desktop_browser" / "engine.py").read_text(encoding="utf-8")
+    assert "prefer_local_models = True" in source
+

@@ -18,6 +18,7 @@ from . import APP_VERSION
 REPORT_EMAIL = "djonros@gmail.com"
 
 _last_crash_log: Path | None = None
+_native_log = None  # kept open: faulthandler writes to it when the process dies
 
 
 def _base_dir() -> Path:
@@ -73,6 +74,26 @@ def install_excepthook() -> None:
         previous(exc_type, exc_value, exc_tb)
 
     sys.excepthook = hook
+
+
+def enable_native_crash_log() -> Path | None:
+    """Record native crashes (access violation in Qt, a driver…) to a file.
+
+    Such a crash closes the window without a Python traceback, so neither
+    the excepthook nor the training log on screen keeps anything.
+    """
+    global _native_log
+    import faulthandler
+
+    path = crash_dir() / "native-crash.log"
+    try:
+        _native_log = path.open("a", encoding="utf-8")
+        _native_log.write(f"\n=== {app_context()['version']} started {app_context()['time']} ===\n")
+        _native_log.flush()
+        faulthandler.enable(file=_native_log, all_threads=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return path
 
 
 def show_crash_dialog(log_path: Path, parent=None) -> None:

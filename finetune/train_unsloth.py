@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from .dataset_loader import pack_sequences, prepare_dataset, train_val_split
-from .qlora_config import QLoRASettings, VRAMPreset
+from .qlora_config import PACK_CHARS_PER_TOKEN, QLoRASettings, VRAMPreset
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,8 @@ def train(
 ) -> str:
     """Run QLoRA training with unsloth. Returns path to adapter."""
     from unsloth import FastLanguageModel
-    from trl import SFTTrainer
-    from transformers import TrainingArguments
+
+    from .sft_compat import build_sft_trainer
 
     ds_path = dataset_path or settings.dataset_path
     if not Path(ds_path).exists():
@@ -57,7 +57,7 @@ def train(
     # ── Prepare dataset ──
     texts = prepare_dataset(ds_path, max_samples=max_samples)
     if settings.packing:
-        texts = pack_sequences(texts, max_length=settings.max_seq_length * 4)
+        texts = pack_sequences(texts, max_length=settings.max_seq_length * PACK_CHARS_PER_TOKEN)
     train_texts, val_texts = train_val_split(texts)
 
     from datasets import Dataset
@@ -76,21 +76,20 @@ def train(
     # ── Trainer ──
     Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
 
-    training_args = TrainingArguments(
-        **settings.to_training_args(),
-        eval_strategy="steps" if val_texts else "no",
-        eval_steps=settings.save_steps if val_texts else None,
-    )
-
-    trainer = SFTTrainer(
+    trainer = build_sft_trainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=train_ds,
         eval_dataset=val_ds if val_texts else None,
-        args=training_args,
+        training_args={
+            **settings.to_training_args(),
+            "eval_strategy": "steps" if val_texts else "no",
+            "eval_steps": settings.save_steps if val_texts else None,
+        },
         max_seq_length=settings.max_seq_length,
-        dataset_text_field="text",
-        packing=settings.packing,
+        # Texts are already packed by pack_sequences(); trl 1.x packing would
+        # flatten batches (padding-free), which needs FlashAttention.
+        packing=False,
     )
 
     logger.info("Starting training (unsloth)...")
@@ -111,6 +110,9 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
+    from .train_hf import quiet_noisy_loggers
+
+    quiet_noisy_loggers()
     from licensing import ProRequiredError, ensure_pro
 
     try:

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import httpx
 
+from core.proc import no_window
+
 OLLAMA_INSTALL_URL = "https://ollama.com/download"
 DOCKER_INSTALL_URL = "https://www.docker.com/products/docker-desktop/"
 
@@ -33,7 +35,7 @@ def linkify(text: str) -> str:
 def _docker_daemon_ok(cli: str) -> bool:
     try:
         result = subprocess.run(
-            [cli, "info"], capture_output=True, text=True, timeout=10
+            [cli, "info"], capture_output=True, text=True, timeout=10, **no_window()
         )
     except (OSError, subprocess.SubprocessError):
         return False

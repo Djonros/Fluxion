@@ -8,20 +8,70 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from core.proc import no_window
 from finetune.marketplace import AdapterInfo, AdapterRegistry
 from finetune.qlora_config import QLoRASettings, VRAMPreset
 
 
 class TrainingError(Exception):
     """Pipeline failure with a user-facing message."""
+
+
+BROKEN_ENV_MESSAGE = (
+    "Окружение обучения повреждено (нет pyvenv.cfg или интерпретатора): обычно так "
+    "бывает, если папку окружения скопировали или распаковали из архива. "
+    "Переустановите его кнопкой «Установить окружение обучения»."
+)
+CPU_TORCH_MESSAGE = (
+    "В окружении обучения стоит PyTorch без поддержки CUDA — видеокарта не "
+    "используется. Нажмите «Переустановить окружение» на странице «Обучение»: "
+    "Fluxion поставит сборку PyTorch с CUDA."
+)
+NO_CUDA_MESSAGE = (
+    "PyTorch не видит видеокарту NVIDIA ({detail}). Обновите драйвер NVIDIA "
+    "и перезапустите компьютер; если не поможет — переустановите окружение обучения."
+)
+NO_GPU_MESSAGE = (
+    "Для обучения нужна видеокарта NVIDIA с поддержкой CUDA, а PyTorch её не "
+    "нашёл ({detail})."
+)
+VRAM_MESSAGE = (
+    "Не хватило видеопамяти для обучения. Закройте программы, которые занимают "
+    "видеокарту (игры, видео, другие нейросети), и запустите снова. Если не поможет — "
+    "в «Дополнительных настройках» укажите базовую модель поменьше: "
+    "Qwen/Qwen2.5-Coder-3B-Instruct (8 ГБ) или Qwen/Qwen2.5-Coder-1.5B-Instruct (6 ГБ)."
+)
+_VRAM_MARKERS = (
+    "No or negligible GPU memory",
+    "CUDA out of memory",
+    "OutOfMemoryError",
+    "CUBLAS_STATUS_ALLOC_FAILED",
+)
+CONSTRAINTS_NAME = "constraints.txt"
+# Child Pythons print UTF-8 (unsloth's banner has emoji); without this the
+# console code page (cp1251) was used and reading the output crashed.
+UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+_PROGRESS = re.compile(r"^(?P<label>.*?)\s*(?P<pct>\d{1,3})%\|")
+_CPU_TORCH_MARKERS = ("torch.cuda.is_available() is False", "+cpu)")
+_ERROR_LINE = re.compile(r"^[A-Za-z_][\w.]*(Error|Exception)\b.*")
+QUIET_TRAINER_ENV = {
+    "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+    "HF_HUB_VERBOSITY": "error",
+    "TRANSFORMERS_NO_ADVISORY_WARNINGS": "1",
+    # Library deprecation notices (e.g. unsloth's HF_HUB_ENABLE_HF_TRANSFER)
+    # are not actionable for the user and look like errors in the log.
+    "PYTHONWARNINGS": "ignore::FutureWarning,ignore::DeprecationWarning",
+}
 
 
 ENV_DIR_NAME = "training_env"
@@ -82,6 +132,31 @@ def env_python_path(env_dir: str | Path) -> Path:
     return env_dir / "bin" / "python"
 
 
+def training_env_dir(data_dir: str | Path) -> Path:
+    """Return the folder of the training environment.
+
+    From sources it is ``<data_dir>/training_env``. A frozen build keeps it in
+    ``%LOCALAPPDATA%/Fluxion/training_env``: the environment (several GB) then
+    survives a new version in another folder, a moved program and a start from
+    an archiver's temp folder. A ready environment in the old place is still used.
+    """
+    legacy = Path(data_dir) / ENV_DIR_NAME
+    if not getattr(sys, "frozen", False) or detect_training_env(legacy):
+        return legacy
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return Path(base) / "Fluxion" / ENV_DIR_NAME
+
+
+def env_problem(env_dir: str | Path) -> str:
+    """Describe why a once-installed environment cannot run, or return an empty string."""
+    env_dir = Path(env_dir)
+    if not (env_dir / ENV_MARKER).is_file():
+        return ""
+    if not env_python_path(env_dir).is_file() or not (env_dir / "pyvenv.cfg").is_file():
+        return BROKEN_ENV_MESSAGE
+    return ""
+
+
 def detect_training_env(env_dir: str | Path) -> str | None:
     """Return the env interpreter path when a ready marker exists."""
     env_dir = Path(env_dir)
@@ -119,6 +194,7 @@ def _locate_windows_python() -> str | None:
                 [launcher, f"-{ver}", "-c", "import sys; print(sys.executable)"],
                 capture_output=True,
                 text=True,
+                **no_window(),
             )
             if probe.returncode == 0:
                 path = probe.stdout.strip().splitlines()[0]
@@ -169,8 +245,8 @@ def autoinstall_python(
             "winget не найден. Установите Python 3.12 вручную с python.org "
             "и повторите установку окружения."
         )
-    log("Python 3.12 не найден. Установка через winget — подтвердите запрос")
-    log("прав администратора (UAC), потребуется подключение к интернету.")
+    log("Python 3.12 не найден. Устанавливаю через winget для текущего пользователя:")
+    log("без окон установщика и без запроса прав администратора, нужен интернет.")
     _run_cmd(
         [
             winget,
@@ -178,7 +254,10 @@ def autoinstall_python(
             "-e",
             "--id",
             "Python.Python.3.12",
+            "--scope",
+            "user",
             "--silent",
+            "--disable-interactivity",
             "--accept-package-agreements",
             "--accept-source-agreements",
         ],
@@ -201,8 +280,13 @@ def _run_cmd(
     stop_requested: Callable[[], bool],
     extra_env: dict[str, str] | None = None,
 ) -> None:
-    """Run a subprocess, streaming merged output to *log*; stop-aware."""
+    """Run a subprocess, streaming merged output to *log*; stop-aware.
+
+    Output is decoded as UTF-8 (undecodable bytes replaced). Progress bars
+    (tqdm: ``Loading weights: 37%|...``) are logged at most once per 10 %.
+    """
     env = dict(os.environ)
+    env.update(UTF8_ENV)
     if extra_env:
         env.update(extra_env)
     proc = subprocess.Popen(
@@ -210,26 +294,55 @@ def _run_cmd(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         bufsize=1,
+        **no_window(),
     )
+    reason = ""
+    progress: dict[str, tuple[int, int]] = {}  # label -> (last percent, logged bucket)
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
-            log(line.rstrip("\n"))
+            text = line.rstrip("\n")
+            bar = _PROGRESS.match(text.strip())
+            if bar:
+                label, pct = bar["label"].strip(), int(bar["pct"])
+                bucket = 10 if pct >= 100 else pct // 10
+                last_pct, logged = progress.get(label, (-1, -1))
+                if pct < last_pct:  # the same bar started over (next epoch, file)
+                    logged = -1
+                progress[label] = (pct, max(logged, bucket))
+                if logged >= bucket:
+                    if stop_requested():
+                        raise TrainingError("Остановлено пользователем")
+                    continue
+            elif not text.strip():
+                continue
+            if _ERROR_LINE.match(text.strip()):
+                reason = text.strip()
+            elif "No pyvenv.cfg file" in text:
+                reason = BROKEN_ENV_MESSAGE
+            if any(marker in text for marker in _CPU_TORCH_MARKERS):
+                reason = CPU_TORCH_MESSAGE
+            elif any(marker in text for marker in _VRAM_MARKERS):
+                reason = VRAM_MESSAGE
+            log(text)
             if stop_requested():
                 raise TrainingError("Остановлено пользователем")
     except TrainingError:
         proc.terminate()
         try:
-            proc.wait(5000)
+            proc.wait(5)
         except subprocess.TimeoutExpired:
             proc.kill()
         raise
     returncode = proc.wait()
     if returncode != 0:
         head = " ".join(str(part) for part in cmd[:4])
-        raise TrainingError(f"Команда завершилась с кодом {returncode}: {head}")
+        detail = f"\nПричина: {reason}" if reason else ""
+        raise TrainingError(f"Команда завершилась с кодом {returncode}: {head}{detail}")
 
 
 @dataclass
@@ -309,17 +422,63 @@ def install_training_environment(
         torch_index = os.environ.get("FLUXION_TORCH_INDEX", TORCH_INDEX_URL)
         torch_cmd += ["--index-url", torch_index]
     _run_cmd(torch_cmd, log, stop_requested)
+    # Pin the CUDA torch for the stack: without it pip "upgrades" torch for
+    # unsloth to the newest PyPI build, which on Windows is CPU-only.
+    constraints = env_dir / CONSTRAINTS_NAME
+    constraints.write_text(TORCH_PIN + "\n", encoding="ascii")
+    log(f"Ограничение версии: {TORCH_PIN}")
+    stack_cmd = [
+        str(py), "-m", "pip", "install", *TRAINING_PACKAGES,
+        "-c", str(constraints), *offline_args,
+    ]
+    if not offline_args:
+        stack_cmd += ["--extra-index-url", torch_index]
     log("Установка ML-стека (unsloth, peft, trl, ...)...")
-    _run_cmd(
-        [str(py), "-m", "pip", "install", *TRAINING_PACKAGES, *offline_args],
-        log,
-        stop_requested,
-    )
+    _run_cmd(stack_cmd, log, stop_requested)
+    log("Проверка PyTorch и видеокарты...")
+    problem = torch_cuda_problem(str(py))
+    if problem:
+        raise TrainingError(problem)
     (env_dir / ENV_MARKER).write_text(
         json.dumps({"python": str(py)}), encoding="utf-8"
     )
     log("Окружение обучения готово.")
     return str(py)
+
+
+def nvidia_gpu_present() -> bool:
+    """True when the NVIDIA driver tool is installed (a GPU is likely present)."""
+    return shutil.which("nvidia-smi") is not None
+
+
+def torch_cuda_problem(python: str, timeout: float = 180) -> str:
+    """Check that *python*'s torch sees CUDA; return a message or an empty string."""
+    code = "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+    try:
+        result = subprocess.run(
+            [python, "-c", code],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            **no_window(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""  # the trainer itself reports a broken interpreter
+    lines = (result.stdout or "").split()
+    if result.returncode != 0 or len(lines) < 2:
+        return ""
+    version, available = lines[0], lines[1] == "True"
+    if available:
+        return ""
+    # PyPI torch for Windows has no local label and is a CPU build as well.
+    cpu_build = version.endswith("+cpu") or (os.name == "nt" and "+" not in version)
+    if cpu_build:
+        return CPU_TORCH_MESSAGE
+    if nvidia_gpu_present():
+        return NO_CUDA_MESSAGE.format(detail=f"torch {version}")
+    return NO_GPU_MESSAGE.format(detail=f"torch {version}")
 
 
 def _detect_trainer(log: Callable[[str], None], env_python: str | None = None):
@@ -400,6 +559,14 @@ def run_pipeline(
         preset_file = str(Path(params.preset_file).resolve())
         log(f"Пресет из файла: {file_preset.name} ({params.preset_file})")
 
+    from finetune.dataset_loader import check_dataset
+
+    # Before the base model is downloaded and loaded (minutes): a dataset in
+    # an unknown format used to be found out only after that.
+    problem = check_dataset(params.dataset)
+    if problem:
+        raise TrainingError(problem)
+
     settings = QLoRASettings.from_preset(VRAMPreset(params.preset))
     if params.preset_file:
         settings = file_preset.apply(settings)
@@ -407,9 +574,15 @@ def run_pipeline(
     settings.num_train_epochs = params.epochs
     settings.ollama_model_name = params.ollama_model_name
 
-    trainer, backend_name, env_py = _detect_trainer(
-        log, detect_training_env(Path(data_dir) / ENV_DIR_NAME)
-    )
+    env_dir = training_env_dir(data_dir)
+    problem = env_problem(env_dir)
+    if problem:
+        raise TrainingError(problem)
+    trainer, backend_name, env_py = _detect_trainer(log, detect_training_env(env_dir))
+    if env_py:
+        problem = torch_cuda_problem(env_py)
+        if problem:
+            raise TrainingError(problem)
     if trainer is None:
         raise TrainingError(
             "Окружение обучения не найдено: нужен unsloth (6 ГБ VRAM) или "
@@ -423,6 +596,7 @@ def run_pipeline(
         subprocess_env = {
             "PYTHONPATH": str(_source_root()),
             "FLUXION_LICENSE_FILE": str(DEFAULT_LICENSE_PATH),
+            **QUIET_TRAINER_ENV,
         }
 
         def trainer(settings, dataset, max_samples):  # type: ignore[misc]

@@ -61,7 +61,9 @@ def _local_port(base_url: str) -> int | None:
 
 
 def _docker(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    from core.proc import no_window
+
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=180, **no_window())
 
 
 def ensure_searxng(base_url: str, wait_secs: float = 45.0) -> bool:

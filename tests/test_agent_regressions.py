@@ -462,17 +462,20 @@ class TestWriteConfirm:
 
 class TestIterationLimit:
     @staticmethod
-    def _reads(count: int) -> list[str]:
+    def _reads(root: Path, count: int) -> list[str]:
+        """Return *count* distinct actions that succeed: each reads its own file."""
+        for index in range(count):
+            (root / f"f{index}.py").write_text("x = 1\n", encoding="utf-8")
         return [f"Thought: t\nAction: read_file f{index}.py" for index in range(count)]
 
     def test_default_limit_stops_the_loop(self, tmp_path):
-        agent, backend = _agent(tmp_path, self._reads(40), verify_after_write=False)
+        agent, backend = _agent(tmp_path, self._reads(tmp_path, 40), verify_after_write=False)
         result = agent.run("task")
         assert backend.generate.call_count == 15
         assert not result.success
 
     def test_zero_means_no_limit_up_to_hard_cap(self, tmp_path):
-        replies = self._reads(30) + ["Thought: done\nAction: finish ok"]
+        replies = self._reads(tmp_path, 30) + ["Thought: done\nAction: finish ok"]
         agent, backend = _agent(
             tmp_path, replies, max_iterations=0, verify_after_write=False
         )
@@ -483,9 +486,54 @@ class TestIterationLimit:
 
     def test_hard_cap_bounds_an_endless_run(self, tmp_path):
         agent, backend = _agent(
-            tmp_path, self._reads(260), max_iterations=0, verify_after_write=False
+            tmp_path, self._reads(tmp_path, 260), max_iterations=0, verify_after_write=False
         )
         result = agent.run("task")
         assert backend.generate.call_count == 200
+        assert not result.success
+
+
+# ── stalled run: the same action over and over ───────────────────────────────
+
+class TestStalledRun:
+    def test_run_stops_after_four_idle_steps(self, tmp_path):
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        replies = ["Thought: t\nAction: read_file a.py"] * 12
+        agent, backend = _agent(tmp_path, replies, verify_after_write=False)
+        result = agent.run("task")
+        observations = [step.observation for step in result.steps]
+        assert backend.generate.call_count == 5
+        assert "x = 1" in observations[0]
+        assert "already executed" in observations[1]
+        assert "futility breaker" not in observations[1]
+        assert "2 steps in a row did nothing" in observations[2]
+        assert "3 steps in a row did nothing" in observations[3]
+        assert observations[4].startswith("Агент остановлен")
+        assert not result.success
+        assert result.final_answer.startswith("Агент остановлен")
+
+    def test_a_real_action_resets_the_stall_counter(self, tmp_path):
+        for name in ("a.py", "b.py"):
+            (tmp_path / name).write_text("x = 1\n", encoding="utf-8")
+        read_a = "Thought: t\nAction: read_file a.py"
+        read_b = "Thought: t\nAction: read_file b.py"
+        replies = [read_a, read_a, read_a, read_b, read_a, read_a, read_a, "Thought: d\nAction: finish ok"]
+        agent, backend = _agent(tmp_path, replies, verify_after_write=False)
+        result = agent.run("task")
+        assert backend.generate.call_count == 8
+        assert result.success
+        assert result.final_answer == "ok"
+
+    def test_blocked_tool_attempts_also_count_as_idle(self, tmp_path, monkeypatch):
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 1, stdout="1 failed", stderr="")
+
+        monkeypatch.setattr("orchestrator.agent.subprocess.run", fake_run)
+        replies = [f"Thought: t\nAction: run_tests tests/t{index}.py" for index in range(12)]
+        agent, backend = _agent(tmp_path, replies, verify_after_write=False)
+        result = agent.run("task")
+        assert backend.generate.call_count == 6
+        assert "is blocked" in result.steps[2].observation
+        assert result.steps[-1].observation.startswith("Агент остановлен")
         assert not result.success
 

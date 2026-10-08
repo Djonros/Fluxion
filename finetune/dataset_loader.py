@@ -1,4 +1,4 @@
-"""Dataset loader: reads ChatML JSONL, applies ChatML template, packs sequences."""
+"""Dataset loader: reads chat JSONL (ChatML, ShareGPT, Alpaca, Q/A), applies ChatML, packs sequences."""
 from __future__ import annotations
 
 import json
@@ -35,14 +35,117 @@ def format_chatml(messages: list[dict[str, str]]) -> str:
     return "\n".join(parts)
 
 
-def load_jsonl(path: str | Path) -> list[dict]:
-    """Load a JSONL file. Returns list of dicts with 'messages' key."""
+class DatasetFormatError(ValueError):
+    """The dataset has no line in a supported format."""
+
+
+SUPPORTED_FORMATS = (
+    '{"messages": [{"role": "user", "content": …}, {"role": "assistant", …}]} (ChatML)',
+    '{"conversations": [{"from": "human", "value": …}, {"from": "gpt", …}]} (ShareGPT)',
+    '{"instruction": …, "input": …, "output": …} (Alpaca)',
+    '{"prompt": …, "completion"/"response": …}',
+    '{"question": …, "answer": …}',
+    '{"input": …, "output": …}',
+    '{"problem": …, "solution": …}',
+    '{"вопрос": …, "ответ": …}',
+)
+_ROLE_ALIASES = {
+    "human": "user", "user": "user", "prompter": "user",
+    "gpt": "assistant", "assistant": "assistant", "bot": "assistant",
+    "model": "assistant", "chatgpt": "assistant",
+    "system": "system",
+}
+_PAIR_KEYS = (
+    ("prompt", "completion"),
+    ("prompt", "response"),
+    ("question", "answer"),
+    ("query", "response"),
+    ("input", "output"),
+    ("user", "assistant"),
+    ("problem", "solution"),
+    ("вопрос", "ответ"),
+)
+_DETAILED_SKIPS = 3
+
+
+def _turns(items) -> list[dict[str, str]] | None:
+    """Normalize a list of chat turns (ChatML or ShareGPT keys) to role/content."""
+    if not isinstance(items, list):
+        return None
+    messages = []
+    for item in items:
+        if not isinstance(item, dict):
+            return None
+        role = str(item.get("role", item.get("from", "user"))).strip().lower()
+        content = item.get("content", item.get("value", ""))
+        if not isinstance(content, str):
+            return None
+        messages.append({"role": _ROLE_ALIASES.get(role, role), "content": content})
+    return messages
+
+
+def _text(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def to_messages(data) -> tuple[list[dict[str, str]] | None, str]:
+    """Convert one dataset record to chat messages; returns (messages, format name)."""
+    if not isinstance(data, dict):
+        return None, ""
+    for key, name in (("messages", "ChatML"), ("conversations", "ShareGPT")):
+        if key in data:
+            messages = _turns(data[key])
+            if messages:
+                return messages, name
+            return None, ""
+    system = _text(data.get("system"))
+    prefix = [{"role": "system", "content": system}] if system else []
+    if _text(data.get("instruction")) and _text(data.get("output")):
+        prompt = _text(data["instruction"])
+        extra = _text(data.get("input"))
+        if extra:
+            prompt += "\n\n" + extra
+        return prefix + [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": _text(data["output"])},
+        ], "Alpaca"
+    for user_key, answer_key in _PAIR_KEYS:
+        if _text(data.get(user_key)) and _text(data.get(answer_key)):
+            return prefix + [
+                {"role": "user", "content": _text(data[user_key])},
+                {"role": "assistant", "content": _text(data[answer_key])},
+            ], f"{user_key}/{answer_key}"
+    return None, ""
+
+
+def _format_help(keys: list[str]) -> str:
+    found = ", ".join(keys) if keys else "нет полей"
+    lines = "\n".join(f"  • {item}" for item in SUPPORTED_FORMATS)
+    return (
+        f"Формат датасета не распознан: в строках есть поля {found}. "
+        f"Поддерживаются строки JSONL вида:\n{lines}"
+    )
+
+
+def load_jsonl(path: str | Path, limit: int | None = None) -> list[dict]:
+    """Load a JSONL dataset; every sample is returned as ``{"messages": [...]}``.
+
+    Besides ChatML, ShareGPT, Alpaca and simple question/answer records are
+    converted. Skipped lines are reported once with a summary (a dataset of
+    another format used to print one warning per line). Raises
+    :class:`DatasetFormatError` when no line can be used. With *limit*
+    reading stops after that many samples (a 250 MB file is not parsed whole
+    for a short run).
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
 
     samples: list[dict] = []
-    with path.open("r", encoding="utf-8") as f:
+    skipped = 0
+    formats: dict[str, int] = {}
+    first_keys: list[str] = []
+    with path.open("r", encoding="utf-8-sig") as f:
         for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -50,14 +153,86 @@ def load_jsonl(path: str | Path) -> list[dict]:
             try:
                 data = json.loads(line)
             except json.JSONDecodeError as exc:
-                logger.warning("Skipping invalid JSON at line %d: %s", lineno, exc)
+                skipped += 1
+                if skipped <= _DETAILED_SKIPS:
+                    logger.warning("Skipping invalid JSON at line %d: %s", lineno, exc)
                 continue
-            if "messages" not in data:
-                logger.warning("Skipping line %d: no 'messages' key", lineno)
+            messages, name = to_messages(data)
+            if messages is None:
+                skipped += 1
+                keys = sorted(data) if isinstance(data, dict) else []
+                if not first_keys:
+                    first_keys = keys
+                if skipped <= _DETAILED_SKIPS:
+                    logger.warning(
+                        "Skipping line %d: unsupported record (fields: %s)",
+                        lineno, ", ".join(keys) or type(data).__name__,
+                    )
                 continue
-            samples.append(data)
-    logger.info("Loaded %d samples from %s", len(samples), path)
+            formats[name] = formats.get(name, 0) + 1
+            samples.append({**data, "messages": messages} if isinstance(data, dict) else {"messages": messages})
+            if limit and len(samples) >= limit:
+                break
+    if skipped > _DETAILED_SKIPS:
+        logger.warning("Skipped %d lines in total", skipped)
+    if not samples and skipped:
+        raise DatasetFormatError(_format_help(first_keys))
+    described = ", ".join(f"{name}: {count}" for name, count in formats.items())
+    logger.info("Loaded %d samples from %s (%s)", len(samples), path, described or "empty")
     return samples
+
+
+def estimate_samples(path: str | Path, probe: int = 200) -> int:
+    """Rough number of records: file size / average length of the first lines."""
+    path = Path(path)
+    lengths: list[int] = []
+    try:
+        with path.open("rb") as f:
+            for raw in f:
+                if raw.strip():
+                    lengths.append(len(raw))
+                if len(lengths) >= probe:
+                    break
+        size = path.stat().st_size
+    except OSError:
+        return 0
+    if not lengths:
+        return 0
+    if len(lengths) < probe:
+        return len(lengths)
+    return int(size / (sum(lengths) / len(lengths)))
+
+
+def check_dataset(path: str | Path, limit: int = 200) -> str:
+    """Quick format check of the first *limit* records; returns a problem or ''."""
+    usable = 0
+    keys: list[str] = []
+    try:
+        with Path(path).open("r", encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                limit -= 1
+                if limit < 0:
+                    break
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if to_messages(data)[0] is not None:
+                    usable += 1
+                elif not keys and isinstance(data, dict):
+                    keys = sorted(data)
+    except UnicodeDecodeError:
+        return "Датасет должен быть в кодировке UTF-8."
+    except OSError as exc:
+        return f"Датасет не читается: {exc}"
+    if usable:
+        return ""
+    if limit >= 0 and not keys:
+        return "Датасет пуст или не содержит строк JSON."
+    return _format_help(keys)
 
 
 def prepare_dataset(
@@ -75,8 +250,8 @@ def prepare_dataset(
     Returns:
         List of formatted ChatML strings.
     """
-    samples = load_jsonl(path)
-    if max_samples is not None:
+    samples = load_jsonl(path, limit=max_samples or None)
+    if max_samples:
         samples = samples[:max_samples]
 
     texts: list[str] = []

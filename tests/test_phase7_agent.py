@@ -180,31 +180,69 @@ class TestAgentTools:
         monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
         assert agent._python_executable() == sys.executable
 
-    def test_python_executable_prefers_bundled_venv_when_frozen(
-        self, agent, tmp_path, monkeypatch
-    ):
+    @pytest.fixture()
+    def frozen(self, tmp_path, monkeypatch):
+        """A frozen build in tmp_path with a Fluxion training env; returns its python."""
         monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
-        exe = tmp_path / "FluxionBrowser.exe"
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+        monkeypatch.setattr("orchestrator.agent._PYTEST_PROBES", {})
+        exe = tmp_path / "app" / "FluxionBrowser.exe"
+        exe.parent.mkdir()
         exe.write_bytes(b"")
-        bundled = tmp_path / "data" / "training_env" / "Scripts" / "python.exe"
+        bundled = tmp_path / "local" / "Fluxion" / "training_env" / "Scripts" / "python.exe"
         bundled.parent.mkdir(parents=True)
         bundled.write_bytes(b"")
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setattr(sys, "executable", str(exe))
-        assert agent._python_executable() == str(bundled)
-
-    def test_python_executable_falls_back_to_path_when_frozen(
-        self, agent, tmp_path, monkeypatch
-    ):
-        monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
-        exe = tmp_path / "FluxionBrowser.exe"
-        exe.write_bytes(b"")
-        monkeypatch.setattr(sys, "frozen", True, raising=False)
-        monkeypatch.setattr(sys, "executable", str(exe))
         monkeypatch.setattr(
-            "orchestrator.agent.shutil.which", lambda name: "C:/Python314/python.exe"
+            "orchestrator.agent.shutil.which",
+            lambda name: "C:/Python314/python.exe" if name == "python" else None,
         )
+        return str(bundled)
+
+    def test_frozen_prefers_system_python_with_pytest(self, agent, frozen, monkeypatch):
+        monkeypatch.setattr("orchestrator.agent._has_pytest", lambda py: True)
         assert agent._python_executable() == "C:/Python314/python.exe"
+
+    def test_frozen_skips_python_without_pytest(self, agent, frozen, monkeypatch):
+        monkeypatch.setattr("orchestrator.agent._has_pytest", lambda py: py == frozen)
+        assert agent._python_executable() == frozen
+
+    def test_frozen_installs_pytest_into_own_env(self, agent, frozen, monkeypatch):
+        monkeypatch.setattr("orchestrator.agent._has_pytest", lambda py: False)
+        installed = []
+        monkeypatch.setattr(
+            "orchestrator.agent._install_pytest", lambda py: installed.append(py) or True
+        )
+        assert agent._python_executable() == frozen
+        assert installed == [frozen]  # never pip-installs into the user's system Python
+
+    def test_frozen_falls_back_to_system_python_when_install_fails(
+        self, agent, frozen, monkeypatch
+    ):
+        monkeypatch.setattr("orchestrator.agent._has_pytest", lambda py: False)
+        monkeypatch.setattr("orchestrator.agent._install_pytest", lambda py: False)
+        assert agent._python_executable() == "C:/Python314/python.exe"
+
+    def test_frozen_skips_microsoft_store_stub(self, agent, frozen, monkeypatch):
+        stub = "C:/Users/u/AppData/Local/Microsoft/WindowsApps/python.exe"
+        monkeypatch.setattr("orchestrator.agent.shutil.which", lambda name: stub)
+        monkeypatch.setattr("orchestrator.agent._has_pytest", lambda py: True)
+        assert agent._python_executable() == frozen
+
+    def test_has_pytest_probe_is_cached(self, monkeypatch):
+        from orchestrator import agent as agent_module
+
+        monkeypatch.setattr(agent_module, "_PYTEST_PROBES", {})
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr("orchestrator.agent.subprocess.run", fake_run)
+        assert agent_module._has_pytest("py.exe") and agent_module._has_pytest("py.exe")
+        assert len(calls) == 1
 
     @pytest.mark.parametrize("relative", ["Scripts/python.exe", "bin/python"])
     def test_python_executable_prefers_project_venv(
@@ -268,6 +306,8 @@ class TestAgentTools:
         monkeypatch.delenv("FLUXION_TEST_PYTHON", raising=False)
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setattr(sys, "executable", str(exe))
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+        monkeypatch.setattr("orchestrator.agent._PYTEST_PROBES", {})
         monkeypatch.setattr(
             "orchestrator.agent.shutil.which", lambda name: "C:/Python314/python.exe"
         )

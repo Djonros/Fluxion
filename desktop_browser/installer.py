@@ -13,6 +13,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from core.proc import no_window
+
 logger = logging.getLogger(__name__)
 
 WINGET_PACKAGES = {
@@ -57,6 +59,7 @@ def winget_install(package_id: str, on_line=None) -> tuple[bool, str]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            **no_window(),
         )
     except OSError as exc:
         return False, f"не удалось запустить winget: {exc}"
@@ -90,7 +93,7 @@ def docker_daemon_ok(timeout: float = 12.0) -> bool:
         return False
     try:
         result = subprocess.run(
-            [cli, "info"], capture_output=True, text=True, timeout=timeout
+            [cli, "info"], capture_output=True, text=True, timeout=timeout, **no_window()
         )
     except (OSError, subprocess.SubprocessError):
         return False

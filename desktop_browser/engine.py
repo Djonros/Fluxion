@@ -84,9 +84,9 @@ def build_engine(settings: Settings | None = None):
     try:
         from rag.service import RAGConfig, RAGService
 
-        rag_service = RAGService(
-            RAGConfig.from_settings(settings.rag, ollama_host=settings.ollama_host)
-        )
+        rag_config = RAGConfig.from_settings(settings.rag, ollama_host=settings.ollama_host)
+        rag_config.prefer_local_models = True
+        rag_service = RAGService(rag_config)
     except Exception:
         rag_service = None
     try:

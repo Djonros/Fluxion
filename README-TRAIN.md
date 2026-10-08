@@ -84,7 +84,7 @@ automatically when `LLAMA_CPP_DIR` is set.
 | `finetune/qlora_config.py` | QLoRASettings, LOW/STANDARD VRAM presets |
 | `finetune/train_unsloth.py` | 6 GB training path (unsloth) |
 | `finetune/train_hf.py` | 8–12 GB training path (peft + trl) |
-| `finetune/dataset_loader.py` | ChatML formatting, sequence packing |
+| `finetune/dataset_loader.py` | Dataset formats (ChatML, ShareGPT, Alpaca, Q/A) → ChatML, sequence packing |
 | `finetune/merge.py` | Adapter → full weights merge |
 | `finetune/export_gguf.py` | GGUF export via llama.cpp |
 | `data_pipeline/` | fetch → filter → dedup → JSONL |

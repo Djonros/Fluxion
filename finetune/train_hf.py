@@ -8,14 +8,35 @@ Requires: torch (cu121), transformers, peft, trl, bitsandbytes, accelerate
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import logging
 import sys
 from pathlib import Path
 
 from .dataset_loader import pack_sequences, prepare_dataset, train_val_split
-from .qlora_config import QLoRASettings, VRAMPreset
+from .qlora_config import PACK_CHARS_PER_TOKEN, QLoRASettings, VRAMPreset
 
 logger = logging.getLogger(__name__)
+NOISY_LOGGERS = ("httpx", "httpcore", "huggingface_hub", "urllib3")
+
+
+def attention_implementation(want_flash: bool) -> str:
+    """Return ``flash_attention_2`` only when the package is installed, else PyTorch SDPA.
+
+    FlashAttention is rarely available on Windows; asking for it there failed
+    the run after the base model had already been downloaded.
+    """
+    if want_flash and importlib.util.find_spec("flash_attn") is not None:
+        return "flash_attention_2"
+    if want_flash:
+        logger.info("FlashAttention2 is not installed; using PyTorch SDPA attention")
+    return "sdpa"
+
+
+def quiet_noisy_loggers() -> None:
+    """Keep per-request HTTP lines of the model download out of the training log."""
+    for name in NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def train(
@@ -31,9 +52,9 @@ def train(
         AutoModelForCausalLM,
         AutoTokenizer,
         BitsAndBytesConfig,
-        TrainingArguments,
     )
-    from trl import SFTTrainer
+
+    from .sft_compat import build_sft_trainer
 
     ds_path = dataset_path or settings.dataset_path
     if not Path(ds_path).exists():
@@ -55,7 +76,7 @@ def train(
         settings.base_model,
         quantization_config=bnb_config,
         device_map="auto",
-        attn_implementation="flash_attention_2" if settings.use_flash_attention_2 else "sdpa",
+        attn_implementation=attention_implementation(settings.use_flash_attention_2),
     )
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model)
@@ -73,7 +94,7 @@ def train(
     # ── Prepare dataset ──
     texts = prepare_dataset(ds_path, max_samples=max_samples)
     if settings.packing:
-        texts = pack_sequences(texts, max_length=settings.max_seq_length * 4)
+        texts = pack_sequences(texts, max_length=settings.max_seq_length * PACK_CHARS_PER_TOKEN)
     train_texts, val_texts = train_val_split(texts)
 
     train_ds = Dataset.from_dict({"text": train_texts})
@@ -82,22 +103,21 @@ def train(
     # ── Trainer ──
     Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
 
-    training_args = TrainingArguments(
-        **settings.to_training_args(),
-        eval_strategy="steps" if val_texts else "no",
-        eval_steps=settings.save_steps if val_texts else None,
-        dataloader_pin_memory=True,
-    )
-
-    trainer = SFTTrainer(
+    trainer = build_sft_trainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=train_ds,
-        eval_dataset=val_ds,
-        args=training_args,
+        eval_dataset=val_ds if val_texts else None,
+        training_args={
+            **settings.to_training_args(),
+            "eval_strategy": "steps" if val_texts else "no",
+            "eval_steps": settings.save_steps if val_texts else None,
+            "dataloader_pin_memory": True,
+        },
         max_seq_length=settings.max_seq_length,
-        dataset_text_field="text",
-        packing=settings.packing,
+        # Texts are already packed by pack_sequences(); trl 1.x packing would
+        # flatten batches (padding-free), which needs FlashAttention.
+        packing=False,
     )
 
     logger.info("Starting training (HF peft + trl)...")
@@ -118,6 +138,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
+    quiet_noisy_loggers()
     from licensing import ProRequiredError, ensure_pro
 
     try:

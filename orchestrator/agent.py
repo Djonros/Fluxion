@@ -31,6 +31,7 @@ from pathlib import Path
 from core.config import GenerationSettings
 from core.inference import ModelBackend
 from core.language import LANG_NAMES, matches_language, resolve_target
+from core.proc import no_window
 
 from .git_helper import is_secret_path
 
@@ -40,6 +41,12 @@ _MAX_ITERATIONS = 15
 _PROJECT_VENV_DIRS = (".venv", "venv", "env")
 _VENV_PYTHON_PATHS = ("Scripts/python.exe", "bin/python")
 _FUTILITY_LIMIT = 2
+_STALL_LIMIT = 4
+_STALLED_ANSWER = (
+    "Агент остановлен: модель несколько раз подряд повторила действие, которое "
+    "уже выполнено или заблокировано, и не продвигается. Переформулируйте задачу "
+    "конкретнее (назовите файл или функцию) или выберите модель побольше."
+)
 _UNLIMITED_ITERATIONS_CAP = 200
 _WRITE_CANCELLED = "Запись отменена пользователем"
 _TOOL_OUTPUT_LIMIT = 6000          # generic cap for tool observations (chars)
@@ -110,6 +117,61 @@ _NO_TESTS_MARKERS = (
     "not found: tests",
 )
 _PYTEST_MISSING_MARKERS = ("no module named pytest",)
+_PYTEST_PROBES: dict[str, bool] = {}
+
+
+def _has_pytest(python: str) -> bool:
+    """True when *python* can import pytest (cached per interpreter)."""
+    if python not in _PYTEST_PROBES:
+        try:
+            result = subprocess.run(
+                [python, "-c", "import pytest"],
+                capture_output=True,
+                timeout=60,
+                **no_window(),
+            )
+            _PYTEST_PROBES[python] = result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            _PYTEST_PROBES[python] = False
+    return _PYTEST_PROBES[python]
+
+
+def _install_pytest(python: str) -> bool:
+    """pip-install pytest into a Fluxion-owned environment; True on success."""
+    try:
+        result = subprocess.run(
+            [python, "-m", "pip", "install", "--disable-pip-version-check", "pytest"],
+            capture_output=True,
+            timeout=300,
+            **no_window(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    _PYTEST_PROBES.pop(python, None)
+    return result.returncode == 0 and _has_pytest(python)
+
+
+def _system_pythons() -> list[str]:
+    """Interpreters on PATH, without the Microsoft Store stub (it opens the Store)."""
+    found: list[str] = []
+    for name in ("python", "py"):
+        path = shutil.which(name)
+        if path and "windowsapps" not in path.lower() and path not in found:
+            found.append(path)
+    return found
+
+
+def _fluxion_envs() -> list[str]:
+    """Python of Fluxion's own training environments (frozen build)."""
+    exe_dir = Path(sys.executable).resolve().parent
+    local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    found = []
+    for env_dir in (exe_dir / "data" / "training_env", local / "Fluxion" / "training_env"):
+        for relative in _VENV_PYTHON_PATHS:
+            candidate = env_dir / relative
+            if candidate.is_file():
+                found.append(str(candidate))
+    return found
 
 _TOOLS_READ = """\
   list_files [<dir or glob>]  - List project files, e.g. `list_files`, `list_files src`,
@@ -629,6 +691,7 @@ class CodingAgent:
         result = AgentResult()
         seen_actions: set[tuple[str, str]] = set()
         no_action_streak = 0
+        stalled = 0
         generated_ok = False
         self._tool_fail_streak = {}
         self._lang_target = resolve_target(self.lang, task)
@@ -763,6 +826,12 @@ class CodingAgent:
                     "consecutive failures already. Change approach or finish with "
                     "your best answer."
                 )
+                stalled += 1
+                if stalled >= _STALL_LIMIT:
+                    step.observation = _STALLED_ANSWER
+                    result.steps.append(step)
+                    yield step
+                    break
                 messages.append({"role": "user", "content": f"Observation:\n{step.observation}"})
                 result.steps.append(step)
                 yield step
@@ -770,8 +839,15 @@ class CodingAgent:
 
             action_key = (tool_name, tool_args)
             if action_key in seen_actions:
-                step.observation = _REPEAT_OBSERVATION
+                stalled += 1
+                if stalled >= _STALL_LIMIT:
+                    step.observation = _STALLED_ANSWER
+                    result.steps.append(step)
+                    yield step
+                    break
+                step.observation = _REPEAT_OBSERVATION + self._stall_warning(stalled)
             else:
+                stalled = 0
                 seen_actions.add(action_key)
                 tool_result = self._run_tool(tool_name, tool_args, runner)
                 self._note_effect(tool_name, tool_args, tool_result)
@@ -961,6 +1037,17 @@ class CodingAgent:
         if self.write_confirm is None:
             return True
         return bool(self.write_confirm(self._rel(fpath), kind))
+
+    @staticmethod
+    def _stall_warning(stalled: int) -> str:
+        """Return the escalating note for consecutive steps that executed nothing."""
+        if stalled < 2:
+            return ""
+        return (
+            f"\n[futility breaker] {stalled} steps in a row did nothing; the run stops "
+            f"after {_STALL_LIMIT}. Use a different tool or different arguments now, "
+            "or finish with your best answer."
+        )
 
     def _track_futility(self, tool_name: str, success: bool) -> str:
         """Update the consecutive-failure counter of *tool_name*.
@@ -1428,7 +1515,10 @@ class CodingAgent:
         virtual environment, ``sys.executable`` when running from sources, the
         bundled training environment of a frozen build, then ``python``/``py``
         from PATH. A frozen ``sys.executable`` is never returned: it would
-        relaunch the application.
+        relaunch the application. In a frozen build the first interpreter
+        that has pytest wins (system Python first: it is where the user keeps
+        the project's dependencies); when none has it, pytest is installed
+        into Fluxion's own training environment.
         """
         override = os.environ.get("FLUXION_TEST_PYTHON", "").strip()
         if override and Path(override).is_file():
@@ -1440,11 +1530,16 @@ class CodingAgent:
                     return str(candidate)
         if not getattr(sys, "frozen", False):
             return sys.executable
-        exe_dir = Path(sys.executable).resolve().parent
-        bundled = exe_dir / "data" / "training_env" / "Scripts" / "python.exe"
-        if bundled.is_file():
-            return str(bundled)
-        return shutil.which("python") or shutil.which("py")
+        system, own = _system_pythons(), _fluxion_envs()
+        for candidate in (*system, *own):
+            if _has_pytest(candidate):
+                return candidate
+        for candidate in own:
+            if _install_pytest(candidate):
+                logger.info("pytest installed into %s", candidate)
+                return candidate
+        candidates = (*system, *own)
+        return candidates[0] if candidates else None
 
     def _validate_test_args(self, test_args: str) -> tuple[list[str] | None, str]:
         try:
@@ -1487,6 +1582,7 @@ class CodingAgent:
                 errors="replace",
                 timeout=self.test_timeout,
                 cwd=str(self.project_root),
+                **no_window(),
             )
         except subprocess.TimeoutExpired:
             return ToolResult("run_tests", args, "", False, f"Tests timed out ({self.test_timeout}s)")
@@ -1505,7 +1601,8 @@ class CodingAgent:
                 "run_tests", args, output, False,
                 "pytest is not installed in the Python environment used by Fluxion "
                 f"({exe}); tests cannot be run. Установите pytest в venv проекта "
-                "или укажите FLUXION_TEST_PYTHON.", exit_code=result.returncode,
+                f"(или выполните: \"{exe}\" -m pip install pytest) либо укажите "
+                "FLUXION_TEST_PYTHON.", exit_code=result.returncode,
             )
         if result.returncode == 5:
             return ToolResult(

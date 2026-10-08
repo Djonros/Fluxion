@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 import os
 import sys
 import time
@@ -73,12 +74,21 @@ WELCOME_HTML = (
 
 PLAN_TASK_PREFIX = (
     "Составь нумерованный план действий по задаче. Не изменяй файлы. "
-    "Заверши ответ списком шагов."
+    "Прочитай нужные файлы по одному разу, затем вызови finish: "
+    "в ответе — нумерованный список шагов."
 )
 PLAN_RUN_PREFIX = "Реализуй план:\n"
 PLAN_RUN_URL = "fluxion://run-plan"
 AGENT_DEFAULT_ITERATIONS = 15
 STICKY_SCROLL_SLACK = 8
+ACTIVITY_QUIET_WARNING = 300
+LARGE_DATASET = 20_000  # records; above it training asks to take a part
+SUGGESTED_SAMPLES = 5_000
+TEMP_RUN_TRAINING = (
+    "Обучение недоступно: программа запущена прямо из архива (временная папка). "
+    "Распакуйте Fluxion в обычную папку и запустите оттуда — иначе окружение "
+    "обучения и результаты пропадут при закрытии архиватора."
+)
 VERIFICATION_LABELS = {
     "passed": "тесты пройдены",
     "failed": "тесты НЕ пройдены",
@@ -532,12 +542,15 @@ class GitInitWorker(QThread):
     def _git(self, *args: str):
         import subprocess
 
+        from core.proc import no_window
+
         return subprocess.run(
             ["git", *args],
             cwd=self.root,
             capture_output=True,
             text=True,
             timeout=90,
+            **no_window(),
         )
 
     def run(self) -> None:
@@ -1950,6 +1963,14 @@ class FluxionWindow(QMainWindow):
         self.training_install_button.clicked.connect(self.install_training_env)
         self.training_install_button.setVisible(False)
         c1.addWidget(self.training_install_button)
+        self.training_reinstall_button = QPushButton("Переустановить окружение")
+        self.training_reinstall_button.setToolTip(
+            "Удалить окружение обучения и поставить его заново: если обучение "
+            "пишет, что PyTorch без CUDA или окружение повреждено"
+        )
+        self.training_reinstall_button.clicked.connect(self.reinstall_training_env)
+        self.training_reinstall_button.setVisible(False)
+        c1.addWidget(self.training_reinstall_button, 0, Qt.AlignLeft)
         layout.addWidget(card1)
 
         # ── шаг 2: данные и параметры ────────────────────────────────
@@ -1975,7 +1996,7 @@ class FluxionWindow(QMainWindow):
         form = QFormLayout()
         form.setSpacing(10)
         self.training_preset = QComboBox()
-        self.training_preset.addItem("low — 6 ГБ VRAM (unsloth)", "low")
+        self.training_preset.addItem("low — 6–8 ГБ VRAM (unsloth)", "low")
         self.training_preset.addItem("standard — 8–12 ГБ (HF peft+trl)", "standard")
         form.addRow("Пресет:", self.training_preset)
         # A preset file (e.g. downloaded from the Fluxion website) overrides the
@@ -2077,6 +2098,23 @@ class FluxionWindow(QMainWindow):
         buttons.addWidget(self.training_stop_button)
         buttons.addStretch()
         c3.addLayout(buttons)
+        self.training_busy = QProgressBar()
+        self.training_busy.setRange(0, 0)
+        self.training_busy.setTextVisible(False)
+        self.training_busy.setFixedHeight(6)
+        self.training_busy.setVisible(False)
+        c3.addWidget(self.training_busy)
+        self.training_activity = QLabel()
+        self.training_activity.setObjectName("subtitle")
+        self.training_activity.setWordWrap(True)
+        self.training_activity.setVisible(False)
+        c3.addWidget(self.training_activity)
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setInterval(1000)
+        self._activity_timer.timeout.connect(self._tick_activity)
+        self._activity_title = ""
+        self._activity_started = 0.0
+        self._activity_last = 0.0
         self.training_view = QTextBrowser()
         self.training_view.setObjectName("messages")
         self.training_view.setMinimumHeight(220)
@@ -2412,8 +2450,22 @@ class FluxionWindow(QMainWindow):
         else:
             file = Path(path)
             if file.is_file():
-                chip.setText(f"датасет: {file.stat().st_size / 1_048_576:.1f} МБ ✓")
-                state = "ok"
+                from finetune.dataset_loader import check_dataset
+
+                problem = check_dataset(file)
+                if problem:
+                    chip.setText("датасет: формат не распознан ⚠")
+                    chip.setToolTip(problem)
+                    state = "warn"
+                else:
+                    from finetune.dataset_loader import estimate_samples
+
+                    count = f"{estimate_samples(file):,}".replace(",", " ")
+                    chip.setText(
+                        f"датасет: {file.stat().st_size / 1_048_576:.1f} МБ · ~{count} примеров ✓"
+                    )
+                    chip.setToolTip("")
+                    state = "ok"
             else:
                 chip.setText("датасет: файл не найден ⚠")
                 state = "warn"
@@ -2468,21 +2520,40 @@ class FluxionWindow(QMainWindow):
         self._refresh_training_steps()
 
     def _env_dir(self):
+        from .training import training_env_dir
+
         paths = getattr(self.settings, "paths", None) if self.settings is not None else None
-        data_dir = getattr(paths, "data_dir", None)
-        if data_dir:
-            return Path(data_dir) / "training_env"
-        return Path("data") / "training_env"
+        data_dir = getattr(paths, "data_dir", None) or "data"
+        return training_env_dir(data_dir)
+
+    def _temp_run(self) -> bool:
+        """Tell whether this exe runs from an archiver's temp folder."""
+        return bool(getattr(sys, "frozen", False)) and is_temp_run(sys.executable)
 
     def _refresh_training_env(self) -> None:
-        from .training import _detect_trainer, detect_training_env
+        from .training import _detect_trainer, detect_training_env, env_problem
 
+        self.training_reinstall_button.setVisible(False)
+        if self._temp_run():
+            self.training_env_label.setText(TEMP_RUN_TRAINING)
+            self.training_install_button.setVisible(False)
+            self._env_ready = False
+            self._refresh_training_steps()
+            return
+        problem = env_problem(self._env_dir())
+        if problem:
+            self.training_env_label.setText(problem)
+            self.training_install_button.setVisible(True)
+            self._env_ready = False
+            self._refresh_training_steps()
+            return
         env_py = detect_training_env(self._env_dir())
         if env_py:
             self.training_env_label.setText(
                 f"Окружение обучения: готово (venv: {Path(env_py).parent.parent.name})"
             )
             self.training_install_button.setVisible(False)
+            self.training_reinstall_button.setVisible(True)
             self._env_ready = True
             self._refresh_training_steps()
             return
@@ -2504,8 +2575,26 @@ class FluxionWindow(QMainWindow):
         self._env_ready = False
         self._refresh_training_steps()
 
+    def reinstall_training_env(self) -> None:
+        if self.env_installing or self.training_running:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Переустановить окружение обучения?",
+            "Окружение обучения будет удалено и установлено заново: PyTorch с CUDA, "
+            "unsloth, peft, trl. Это несколько ГБ и может занять больше часа "
+            "(часть пакетов возьмётся из кэша pip).\n\nПродолжить?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self.install_training_env()
+
     def install_training_env(self) -> None:
         if self.env_installing:
+            return
+        if self._temp_run():
+            self.training_view.setHtml(f"<p><b>{html.escape(TEMP_RUN_TRAINING)}</b></p>")
             return
         from .training import (
             find_host_python,
@@ -2521,12 +2610,13 @@ class FluxionWindow(QMainWindow):
                 "Python не найден",
                 "Для обучения нужен Python 3.12, он не найден на компьютере.\n\n"
                 "Установить его автоматически через winget?\n"
-                "Появится запрос прав администратора (UAC), потребуется интернет.",
+                "Python ставится для текущего пользователя, без окон установщика и без "
+                "запроса прав администратора; потребуется интернет.",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
-                self._on_training_log(
+                self._training_log_html(
                     "<b>Установка отменена: установите Python 3.11/3.12 вручную "
                     "и повторите.</b>"
                 )
@@ -2535,12 +2625,15 @@ class FluxionWindow(QMainWindow):
         env_dir = self._env_dir()
         offline_wheels = find_offline_wheels()
         if offline_wheels is not None:
-            self._on_training_log(
-                f"<b>Обнаружен офлайн-пак обучения: {offline_wheels}</b>"
+            self._training_log_html(
+                f"<b>Обнаружен офлайн-пак обучения: {html.escape(str(offline_wheels))}</b>"
             )
         self.env_installing = True
+        self._start_activity("Установка окружения обучения")
         self.training_install_button.setEnabled(False)
+        self.training_reinstall_button.setEnabled(False)
         self.training_view.setHtml("<p><b>Установка окружения обучения…</b></p>")
+        self._note_training_log_path()
         self.env_worker = EnvWorker(
             lambda log, stop_requested: install_training_environment(
                 env_dir,
@@ -2559,14 +2652,19 @@ class FluxionWindow(QMainWindow):
 
     def _on_env_installed(self) -> None:
         self.env_installing = False
+        self._stop_activity()
         self.training_install_button.setEnabled(True)
+        self.training_reinstall_button.setEnabled(True)
         self._on_training_log("Окружение обучения установлено.")
         self._refresh_training_env()
 
     def _on_env_install_failed(self, message: str) -> None:
         self.env_installing = False
+        self._stop_activity()
         self.training_install_button.setEnabled(True)
-        self._on_training_log(f"<b>{html.escape(message)}</b>")
+        self.training_reinstall_button.setEnabled(True)
+        self._training_log_html(f"<b>{html.escape(message)}</b>")
+        self._refresh_training_env()  # a reinstall clears the old environment first
 
     def _default_training_pipeline(self):
         def pipeline(params: TrainingParams, *, log, stop_requested):
@@ -2582,6 +2680,9 @@ class FluxionWindow(QMainWindow):
 
     def run_training(self) -> None:
         if self.training_running or self.generating or self.agent_running:
+            return
+        if self._temp_run():
+            self.training_view.setHtml(f"<p><b>{html.escape(TEMP_RUN_TRAINING)}</b></p>")
             return
         from licensing import feature_enabled
 
@@ -2600,11 +2701,14 @@ class FluxionWindow(QMainWindow):
         if not dataset:
             self.training_view.setHtml("<p><b>Укажите файл датасета (.jsonl).</b></p>")
             return
+        max_samples = self._confirm_dataset_size(dataset)
+        if max_samples is None:
+            return
         params = TrainingParams(
             dataset=dataset,
             preset=self.training_preset.currentData() or "low",
             epochs=self.training_epochs.value(),
-            max_samples=self.training_max_samples.value(),
+            max_samples=max_samples,
             base_model=self.training_base_model.text().strip() or TrainingParams().base_model,
             adapter_name=self.training_adapter_name.text().strip() or TrainingParams().adapter_name,
             description=self.training_description.text().strip(),
@@ -2615,10 +2719,13 @@ class FluxionWindow(QMainWindow):
             preset_file=self._training_preset_path,
         )
 
-        self.training_running = True
-        self.training_run_button.setEnabled(False)
-        self.training_stop_button.setVisible(True)
+        # One switch for the flag, the buttons and the activity bar: setting
+        # the flag directly left the progress bar and the clock hidden.
+        self._set_training_running(True)
         self.training_view.setHtml(f"<p><b>Обучение запущено:</b> {html.escape(params.adapter_name)}</p>")
+        self._write_training_log_file(f"Обучение запущено: {params.adapter_name}")
+        self._note_training_log_path()
+        self._release_chat_model()
         pipeline = self.training_pipeline or self._default_training_pipeline()
         self.training_worker = TrainingWorker(pipeline, params)
         self.training_worker.log.connect(self._on_training_log)
@@ -2626,6 +2733,51 @@ class FluxionWindow(QMainWindow):
         self.training_worker.failed.connect(self._on_training_failed)
         self.training_worker.finished.connect(self.training_worker.deleteLater)
         self.training_worker.start()
+
+    def _release_chat_model(self) -> None:
+        """Free the embedded chat model's memory for the trainer (reloads on the next message)."""
+        unload = getattr(self.backend, "unload", None)
+        if not callable(unload):
+            return
+        try:
+            unload()
+        except Exception:  # noqa: BLE001 — training must not fail because of the chat model
+            return
+        self._training_log_html("Модель чата выгружена из памяти на время обучения.")
+
+    def _confirm_dataset_size(self, dataset: str) -> int | None:
+        """Offer to cap a huge dataset; returns max samples or None to cancel."""
+        chosen = self.training_max_samples.value()
+        if chosen:
+            return chosen
+        from finetune.dataset_loader import estimate_samples
+
+        estimate = estimate_samples(dataset)
+        if estimate <= LARGE_DATASET:
+            return 0
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Большой датасет")
+        box.setText(
+            f"В датасете около {estimate:,} примеров.".replace(",", " ")
+            + f"\n\nНа одной видеокарте {self.training_epochs.value()} эпох(и) по всему "
+            "файлу займут очень долго (на 8 ГБ — сутки и больше), а подготовка данных "
+            "потребует много оперативной памяти.\n\n"
+            f"Взять первые {SUGGESTED_SAMPLES:,} примеров? ".replace(",", " ")
+            + "Число можно поменять в поле «Макс. примеров»."
+        )
+        limit = box.addButton(f"Взять {SUGGESTED_SAMPLES:,}".replace(",", " "), QMessageBox.AcceptRole)
+        everything = box.addButton("Весь файл", QMessageBox.DestructiveRole)
+        box.addButton("Отмена", QMessageBox.RejectRole)
+        box.setDefaultButton(limit)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is limit:
+            self.training_max_samples.setValue(SUGGESTED_SAMPLES)
+            return SUGGESTED_SAMPLES
+        if clicked is everything:
+            return 0
+        return None
 
     def stop_training(self) -> None:
         if self.training_worker is not None and self.training_running:
@@ -2636,12 +2788,111 @@ class FluxionWindow(QMainWindow):
         self.training_running = active
         self.training_run_button.setEnabled(not active)
         self.training_stop_button.setVisible(active)
-        if not active:
+        if active:
+            self._start_activity("Обучение идёт")
+        else:
             self.training_worker = None
+            self._stop_activity()
         self._refresh_training_steps()
 
+    def _start_activity(self, title: str) -> None:
+        """Show the moving bar and a live clock for a long training-page operation."""
+        now = time.monotonic()
+        self._activity_title = title
+        self._activity_started = now
+        self._activity_last = now
+        self._open_training_log_file(title)
+        self.training_busy.setVisible(True)
+        self.training_activity.setVisible(True)
+        self._activity_timer.start()
+        self._tick_activity()
+
+    def _open_training_log_file(self, title: str) -> None:
+        """Mirror the training log to data/logs: it survives a crash of the app."""
+        self._close_training_log_file()
+        from .crash import crash_dir
+
+        kind = "env-install" if "окружени" in title else "training"
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        try:
+            path = crash_dir() / f"{kind}-{stamp}.log"
+            self._training_log_file = path.open("a", encoding="utf-8")
+        except OSError:
+            self._training_log_file = None
+            return
+        self.training_log_path = path
+
+    def _note_training_log_path(self) -> None:
+        if getattr(self, "_training_log_file", None) is not None:
+            self._training_log_html(
+                "Журнал также пишется в файл: " + html.escape(str(self.training_log_path))
+            )
+
+    def _close_training_log_file(self) -> None:
+        handle = getattr(self, "_training_log_file", None)
+        self._training_log_file = None
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError:
+                pass
+
+    def _write_training_log_file(self, fragment: str) -> None:
+        handle = getattr(self, "_training_log_file", None)
+        if handle is None:
+            return
+        text = re.sub(r"<br\s*/?>", "\n", fragment)
+        text = html.unescape(re.sub(r"<[^>]+>", "", text))  # tags first: &lt; is text
+        try:
+            handle.write(f"{time.strftime('%H:%M:%S')} {text}\n")
+            handle.flush()
+        except OSError:
+            pass
+
+    def _stop_activity(self) -> None:
+        self._close_training_log_file()
+        self._activity_timer.stop()
+        self.training_busy.setVisible(False)
+        self.training_activity.setVisible(False)
+
+    @staticmethod
+    def _format_span(seconds: float) -> str:
+        seconds = int(seconds)
+        if seconds < 60:
+            return f"{seconds} с"
+        if seconds < 3600:
+            return f"{seconds // 60} мин {seconds % 60:02d} с"
+        return f"{seconds // 3600} ч {seconds % 3600 // 60:02d} мин"
+
+    def _tick_activity(self) -> None:
+        """Refresh the clock: total time and how long the log has been silent."""
+        now = time.monotonic()
+        quiet = now - self._activity_last
+        text = (
+            f"{self._activity_title} · {self._format_span(now - self._activity_started)} · "
+            f"последняя строка журнала — {self._format_span(quiet)} назад"
+        )
+        if quiet >= ACTIVITY_QUIET_WARNING:
+            text += (
+                ". Долгий шаг без вывода (загрузка модели, сборка) — это нормально. "
+                "Если журнал молчит больше 30 минут, нажмите «Стоп»."
+            )
+        self.training_activity.setText(text)
+
     def _on_training_log(self, message: str) -> None:
-        self.training_view.append(html.escape(message).replace("\n", "<br>"))
+        """Append a plain-text line of the training or install log."""
+        self._training_log_html(html.escape(message).replace("\n", "<br>"))
+
+    def _training_log_html(self, fragment: str) -> None:
+        """Append already formatted HTML to the training log.
+
+        The fragment is wrapped in a tag: ``append`` guesses the format, and a
+        line without tags was shown as plain text with ``&quot;`` and ``<b>``
+        visible.
+        """
+        self._activity_last = time.monotonic()
+        self._write_training_log_file(fragment)
+        self.training_view.append(f"<span>{fragment}</span>")
         self._follow_scroll(self.training_view)
 
     def _on_training_done(self, result: dict) -> None:
@@ -2654,7 +2905,7 @@ class FluxionWindow(QMainWindow):
             f"Ollama: {'создана' if result.get('created') else 'не создавалась'}",
             f"Реестр: {'зарегистрирован' if result.get('registered') else 'нет'}",
         ]
-        self._on_training_log("<b>Готово.</b> " + " | ".join(html.escape(p) for p in parts))
+        self._training_log_html("<b>Готово.</b> " + " | ".join(html.escape(p) for p in parts))
         if result.get("registered") and result.get("ollama_model"):
             try:
                 self._on_model_selected(result["ollama_model"])
@@ -2664,7 +2915,7 @@ class FluxionWindow(QMainWindow):
         self._set_training_running(False)
 
     def _on_training_failed(self, message: str) -> None:
-        self._on_training_log(f"<b>{html.escape(message)}</b>")
+        self._training_log_html(f"<b>{html.escape(message)}</b>")
         self._set_training_running(False)
 
     # ── model selection ─────────────────────────────────────────────────
@@ -2997,7 +3248,7 @@ class FluxionWindow(QMainWindow):
         if verification:
             meta.append(verification)
         entry["meta"] = "[" + " | ".join(meta) + "]"
-        if self._plan_pending and answer and not result.get("cancelled"):
+        if self._plan_pending and answer and result.get("success") and not result.get("cancelled"):
             self._last_plan = answer
             self._plan_entry = entry
         self._plan_pending = False
@@ -3408,9 +3659,10 @@ def main() -> int:
     app.setOrganizationName("Fluxion")
     app.setStyle("Fusion")
 
-    from .crash import install_excepthook
+    from .crash import enable_native_crash_log, install_excepthook
 
     install_excepthook()
+    enable_native_crash_log()
 
     try:
         try:

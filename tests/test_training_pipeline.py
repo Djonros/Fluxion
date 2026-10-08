@@ -8,6 +8,7 @@ import pytest
 
 from core.ollama_client import OllamaClient
 from desktop_browser.training import TrainingError, TrainingParams, _absolutize_from, run_pipeline
+from desktop_browser.training import torch_cuda_problem as real_torch_cuda_problem
 
 import os
 
@@ -23,6 +24,14 @@ def _pro_license(monkeypatch):
     import licensing
 
     monkeypatch.setattr(licensing, "ensure_pro", lambda feature: None)
+
+
+@pytest.fixture(autouse=True)
+def _cuda_ok(monkeypatch):
+    """Fake interpreters cannot import torch: treat CUDA as available by default."""
+    import desktop_browser.training as training
+
+    monkeypatch.setattr(training, "torch_cuda_problem", lambda python: "")
 
 
 def _params(tmp_path, **kwargs):
@@ -434,7 +443,10 @@ def test_autoinstall_python_runs_winget(tmp_path, monkeypatch):
         "-e",
         "--id",
         "Python.Python.3.12",
+        "--scope",
+        "user",
         "--silent",
+        "--disable-interactivity",
         "--accept-package-agreements",
         "--accept-source-agreements",
     ]
@@ -661,3 +673,252 @@ def test_lite_spec_ships_plain_sources_for_training():
     assert '("finetune", "pysource/finetune")' in spec
     assert '("licensing", "pysource/licensing")' in spec
 
+
+def test_failed_command_names_the_python_error():
+    from desktop_browser import training
+
+    lines = []
+    script = (
+        "import sys; print('loading model'); "
+        "print('ImportError: FlashAttention2 is not installed', flush=True); sys.exit(1)"
+    )
+    with pytest.raises(TrainingError) as error:
+        training._run_cmd([sys.executable, "-c", script], lines.append, lambda: False)
+    assert "Причина: ImportError: FlashAttention2 is not installed" in str(error.value)
+    assert lines == ["loading model", "ImportError: FlashAttention2 is not installed"]
+
+
+def test_trainer_runs_with_quiet_hub_settings():
+    from desktop_browser import training
+
+    assert training.QUIET_TRAINER_ENV["HF_HUB_DISABLE_SYMLINKS_WARNING"] == "1"
+    assert training.QUIET_TRAINER_ENV["HF_HUB_VERBOSITY"] == "error"
+    assert "ignore::FutureWarning" in training.QUIET_TRAINER_ENV["PYTHONWARNINGS"]
+
+
+# ── where the training environment lives ─────────────────────────────────────
+
+
+def test_frozen_build_keeps_env_in_local_appdata(tmp_path, monkeypatch):
+    from desktop_browser import training
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert training.training_env_dir(tmp_path / "data") == tmp_path / "local" / "Fluxion" / "training_env"
+
+
+def test_ready_env_in_old_place_is_still_used(tmp_path, monkeypatch):
+    from desktop_browser import training
+
+    legacy = tmp_path / "data" / "training_env"
+    py = training.env_python_path(legacy)
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    (legacy / training.ENV_MARKER).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert training.training_env_dir(tmp_path / "data") == legacy
+
+
+def test_source_run_keeps_env_in_data(tmp_path, monkeypatch):
+    from desktop_browser import training
+
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    assert training.training_env_dir(tmp_path / "data") == tmp_path / "data" / "training_env"
+
+
+def test_copied_env_without_pyvenv_cfg_is_reported(tmp_path):
+    from desktop_browser import training
+
+    env_dir = tmp_path / "training_env"
+    py = training.env_python_path(env_dir)
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    assert training.env_problem(env_dir) == ""
+    (env_dir / training.ENV_MARKER).write_text("{}", encoding="utf-8")
+    assert training.env_problem(env_dir) == training.BROKEN_ENV_MESSAGE
+    (env_dir / "pyvenv.cfg").write_text("home = C:\\Python312\n", encoding="utf-8")
+    assert training.env_problem(env_dir) == ""
+
+
+def test_no_pyvenv_cfg_output_becomes_a_clear_reason():
+    from desktop_browser import training
+
+    script = "import sys; print('No pyvenv.cfg file', flush=True); sys.exit(106)"
+    with pytest.raises(TrainingError) as error:
+        training._run_cmd([sys.executable, "-c", script], lambda line: None, lambda: False)
+    assert training.BROKEN_ENV_MESSAGE in str(error.value)
+
+
+
+# ── PyTorch with CUDA in the training environment ────────────────────────────
+
+
+def _fake_install(tmp_path, monkeypatch, **kwargs):
+    import desktop_browser.training as training
+
+    commands = []
+
+    def fake_run_cmd(cmd, log, stop_requested, extra_env=None):
+        commands.append([str(part) for part in cmd])
+        if "-m" in cmd and "venv" in cmd:
+            py = training.env_python_path(cmd[-1])
+            py.parent.mkdir(parents=True, exist_ok=True)
+            py.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(training, "_run_cmd", fake_run_cmd)
+    monkeypatch.setattr(training, "find_host_python", lambda: ("py312", "ok"))
+    training.install_training_environment(
+        tmp_path / "training_env", log=lambda m: None, stop_requested=lambda: False, **kwargs
+    )
+    return commands
+
+
+def test_ml_stack_cannot_replace_cuda_torch(tmp_path, monkeypatch):
+    """Regression: `pip install unsloth` upgraded torch+cu126 to a CPU build from PyPI."""
+    import desktop_browser.training as training
+
+    commands = _fake_install(tmp_path, monkeypatch)
+    stack = next(c for c in commands if "unsloth" in c)
+    constraints = Path(stack[stack.index("-c") + 1])
+    assert constraints.read_text(encoding="ascii").strip() == training.TORCH_PIN
+    assert stack[stack.index("--extra-index-url") + 1] == training.TORCH_INDEX_URL
+
+
+def test_offline_stack_is_constrained_without_network(tmp_path, monkeypatch):
+    wheels = tmp_path / "pack"
+    wheels.mkdir()
+    commands = _fake_install(tmp_path, monkeypatch, offline_wheels=wheels)
+    stack = next(c for c in commands if "unsloth" in c)
+    assert "-c" in stack and "--no-index" in stack
+    assert "--extra-index-url" not in stack
+
+
+def test_install_fails_when_torch_has_no_cuda(tmp_path, monkeypatch):
+    import desktop_browser.training as training
+
+    monkeypatch.setattr(training, "torch_cuda_problem", lambda python: training.CPU_TORCH_MESSAGE)
+    with pytest.raises(TrainingError) as error:
+        _fake_install(tmp_path, monkeypatch)
+    assert "без поддержки CUDA" in str(error.value)
+    assert training.detect_training_env(tmp_path / "training_env") is None
+
+
+@pytest.mark.parametrize(
+    "stdout, gpu, expected",
+    [
+        ("2.12.1+cu126\nTrue\n", True, ""),
+        ("2.14.1+cpu\nFalse\n", True, "без поддержки CUDA"),
+        ("2.12.1+cu126\nFalse\n", True, "Обновите драйвер NVIDIA"),
+        ("2.12.1+cu126\nFalse\n", False, "нужна видеокарта NVIDIA"),
+    ],
+)
+def test_torch_cuda_problem(monkeypatch, stdout, gpu, expected):
+    import subprocess
+
+    import desktop_browser.training as training
+
+    monkeypatch.setattr(
+        training.subprocess,
+        "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr=""),
+    )
+    monkeypatch.setattr(training, "nvidia_gpu_present", lambda: gpu)
+    problem = real_torch_cuda_problem("python")
+    assert (expected in problem) if expected else problem == ""
+
+
+def test_torch_cuda_problem_ignores_missing_interpreter(tmp_path):
+    assert real_torch_cuda_problem(str(tmp_path / "missing" / "python.exe")) == ""
+
+
+def test_unsloth_cpu_torch_error_gets_a_clear_reason():
+    from desktop_browser import training
+
+    script = (
+        "import sys; print('NotImplementedError: Unsloth: nvidia-smi sees NVIDIA GeForce "
+        "RTX 3050 but torch.cuda.is_available() is False (torch 2.14.1+cpu).'); sys.exit(1)"
+    )
+    with pytest.raises(TrainingError) as error:
+        training._run_cmd([sys.executable, "-c", script], lambda line: None, lambda: False)
+    assert "Причина: " + training.CPU_TORCH_MESSAGE in str(error.value)
+
+
+def test_pipeline_refuses_env_with_cpu_torch(tmp_path, monkeypatch):
+    import desktop_browser.training as training
+
+    env_py = tmp_path / "env" / "python.exe"
+    monkeypatch.setattr(
+        training, "_detect_trainer", lambda log, env=None: (None, "venv", str(env_py))
+    )
+    monkeypatch.setattr(training, "torch_cuda_problem", lambda python: training.CPU_TORCH_MESSAGE)
+    with pytest.raises(TrainingError, match="без поддержки CUDA"):
+        run_pipeline(
+            _params(tmp_path), log=lambda m: None, stop_requested=lambda: False,
+            data_dir=str(tmp_path / "data"),
+        )
+
+
+# ── child output: encoding, progress bars, dataset check ─────────────────────
+
+
+def test_child_output_is_read_as_utf8():
+    """Regression: 'charmap' codec can't decode byte 0x98 (unsloth's 🦥 banner)."""
+    from desktop_browser import training
+
+    lines = []
+    script = "import sys; sys.stdout.buffer.write('🦥 Unsloth ✓ готово\\n'.encode('utf-8'))"
+    training._run_cmd([sys.executable, "-c", script], lines.append, lambda: False)
+    assert lines == ["🦥 Unsloth ✓ готово"]
+
+
+def test_progress_bars_are_logged_sparingly():
+    from desktop_browser import training
+
+    lines = []
+    script = (
+        "for i in range(0, 340):\n"
+        "    print(f'Loading weights: {i * 100 // 339}%| | {i}/339 [00:01<00:00]')\n"
+        "print('Loading weights: 100%| | 339/339 [00:02<00:00]')\n"
+        "print('Map: 50%| | 1/2')\n"
+        "print('Map: 100%| | 2/2')\n"
+        "print('Map: 0%| | 0/2')\n"
+        "print('done')\n"
+    )
+    training._run_cmd([sys.executable, "-c", script], lines.append, lambda: False)
+    weights = [line for line in lines if line.startswith("Loading weights")]
+    assert len(weights) == 11  # 0 %, 10 %, …, 100 %
+    assert weights[-1].startswith("Loading weights: 100%")
+    assert [line for line in lines if line.startswith("Map")] == [
+        "Map: 50%| | 1/2", "Map: 100%| | 2/2", "Map: 0%| | 0/2",
+    ]
+    assert lines[-1] == "done"
+
+
+def test_pipeline_rejects_unknown_dataset_before_loading_the_model(tmp_path, monkeypatch):
+    import desktop_browser.training as training
+
+    dataset = tmp_path / "ds.jsonl"
+    dataset.write_text(json.dumps({"text": "t"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        training, "_detect_trainer",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("trainer must not start")),
+    )
+    with pytest.raises(TrainingError, match="Формат датасета не распознан"):
+        run_pipeline(
+            TrainingParams(dataset=str(dataset)), log=lambda m: None,
+            stop_requested=lambda: False, data_dir=str(tmp_path / "data"),
+        )
+
+
+def test_out_of_gpu_memory_gets_a_clear_reason():
+    from desktop_browser import training
+
+    script = (
+        "import sys; print('RuntimeError: Unsloth: No or negligible GPU memory available "
+        "for fused cross entropy.'); print('Unsloth: Will smartly offload gradients'); sys.exit(1)"
+    )
+    with pytest.raises(TrainingError) as error:
+        training._run_cmd([sys.executable, "-c", script], lambda line: None, lambda: False)
+    assert "Не хватило видеопамяти" in str(error.value)
+    assert "Qwen2.5-Coder-3B-Instruct" in str(error.value)

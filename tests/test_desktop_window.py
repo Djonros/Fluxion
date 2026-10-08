@@ -11,6 +11,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("FLUXION_DISABLE_WEBENGINE", "1")
 
+import sys
 import time
 from types import SimpleNamespace
 
@@ -52,6 +53,14 @@ class FakeAssistant:
 def qapp():
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _logs_in_tmp(tmp_path, monkeypatch):
+    """Training runs mirror their log to data/logs; keep the repo clean."""
+    import desktop_browser.crash as crash
+
+    monkeypatch.setattr(crash, "crash_dir", lambda: tmp_path)
 
 
 def _window(qapp, tmp_path, assistant=None, backend=None, settings=None):
@@ -443,6 +452,27 @@ def test_run_plan_passes_saved_plan_with_chip_write_access(qapp, tmp_path, monke
     assert created[2].allow_write is False
 
 
+def test_failed_plan_run_is_not_offered_for_execution(qapp, tmp_path, monkeypatch):
+    import licensing
+    from desktop_browser.app import PLAN_RUN_URL
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    stuck = _agent_result(success=False, answer="Агент остановлен: модель повторяет действие.")
+    window, created = _chat_agent_window(qapp, tmp_path, [], stuck, assistant=FakeAssistant())
+    window.chat_plan.setChecked(True)
+    window.prompt.setText("Задача")
+    window.send_message()
+    _drain(qapp, window)
+
+    assert len(created) == 1
+    assert window._last_plan == ""
+    assert "Агент остановлен" in window.messages.toPlainText()
+    assert "Выполнить план" not in window.messages.toPlainText()
+    assert PLAN_RUN_URL not in window.messages.toHtml()
+    window.run_plan()
+    assert len(created) == 1
+
+
 def test_run_plan_without_a_plan_does_nothing(qapp, tmp_path):
     window, created = _chat_agent_window(qapp, tmp_path, [], _agent_result())
     window.run_plan()
@@ -553,6 +583,77 @@ def test_chat_settings_hold_model_and_modes_sit_under_the_input(qapp, tmp_path):
         window.agent_settings_button.rect().topLeft()
     ).y()
     settings.hide()
+
+
+def test_training_shows_live_activity(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(app_module.time, "monotonic", lambda: clock["now"])
+    window = _window(qapp, tmp_path)
+    assert window.training_busy.isHidden()
+
+    window._set_training_running(True)
+    assert not window.training_busy.isHidden()
+    assert window.training_busy.maximum() == 0
+    assert window._activity_timer.isActive()
+
+    clock["now"] += 75
+    window._on_training_log("step 10/200")
+    clock["now"] += 12
+    window._tick_activity()
+    text = window.training_activity.text()
+    assert text.startswith("Обучение идёт · 1 мин 27 с")
+    assert "12 с назад" in text
+    assert "Стоп" not in text
+
+    clock["now"] += 400
+    window._tick_activity()
+    assert "Если журнал молчит больше 30 минут" in window.training_activity.text()
+
+    window._set_training_running(False)
+    assert window.training_busy.isHidden()
+    assert not window._activity_timer.isActive()
+
+
+def test_training_log_shows_text_as_is_and_formats_status(qapp, tmp_path):
+    window = _window(qapp, tmp_path)
+    window.training_view.clear()
+    window._on_training_log('HTTP Request: HEAD "HTTP/1.1 200 OK" & <tag>')
+    window._on_training_failed("Команда завершилась с кодом 1")
+    text = window.training_view.toPlainText()
+    assert 'HTTP Request: HEAD "HTTP/1.1 200 OK" & <tag>' in text
+    assert "&quot;" not in text
+    assert "<b>" not in text
+    assert "Команда завершилась с кодом 1" in text
+    assert "font-weight:700" in window.training_view.toHtml().replace(" ", "")
+
+
+def test_training_refused_when_run_from_archive(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+    from desktop_browser import training
+
+    calls = []
+    monkeypatch.setattr(training, "install_training_environment", lambda *a, **k: calls.append(a))
+    window = _window(qapp, tmp_path)
+    monkeypatch.setattr(window, "_temp_run", lambda: True)
+    window._refresh_training_env()
+    assert window.training_env_label.text() == app_module.TEMP_RUN_TRAINING
+    assert window.training_install_button.isHidden()
+    assert window.training_reinstall_button.isHidden()
+    window.install_training_env()
+    window.run_training()
+    assert calls == []
+    assert "запущена прямо из архива" in window.training_view.toPlainText()
+    assert not window.env_installing and not window.training_running
+
+
+def test_env_install_shows_live_activity(qapp, tmp_path):
+    window = _window(qapp, tmp_path)
+    window._start_activity("Установка окружения обучения")
+    assert window.training_activity.text().startswith("Установка окружения обучения · 0 с")
+    window._on_env_install_failed("нет сети")
+    assert window.training_busy.isHidden()
 
 
 # ── trial edits ─────────────────────────────────────────────────────────────
@@ -1051,10 +1152,16 @@ def test_training_stop_cancels(qapp, tmp_path, monkeypatch):
 
     window.training_dataset.setText("ds.jsonl")
     window.run_training()
+    # Regression: the start button left the activity bar hidden.
+    assert not window.training_busy.isHidden()
+    assert window._activity_timer.isActive()
+    assert window.training_activity.text().startswith("Обучение идёт")
+    assert not window.training_stop_button.isHidden()
     window.stop_training()
     _drain(qapp, window)
 
     assert not window.training_running
+    assert window.training_busy.isHidden()
     assert "Остановлено пользователем" in window.training_view.toPlainText()
 
 
@@ -1175,7 +1282,41 @@ def test_env_label_ready_when_marker_exists(qapp, tmp_path, monkeypatch):
 
     window = _training_window(qapp, tmp_path, _fake_pipeline()[0])
     assert window.training_install_button.isHidden()
+    assert not window.training_reinstall_button.isHidden()
     assert "готово" in window.training_env_label.text()
+
+
+def test_reinstall_env_asks_first(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+    import desktop_browser.training as training
+
+    env_py = tmp_path / "training_env" / "Scripts" / "python.exe"
+    monkeypatch.setattr(training, "detect_training_env", lambda env_dir: str(env_py))
+    window = _training_window(qapp, tmp_path, _fake_pipeline()[0])
+    installs = []
+    monkeypatch.setattr(window, "install_training_env", lambda: installs.append(1))
+    monkeypatch.setattr(
+        app_module.QMessageBox, "question", lambda *a, **k: app_module.QMessageBox.No
+    )
+    window.training_reinstall_button.click()
+    assert installs == []
+    monkeypatch.setattr(
+        app_module.QMessageBox, "question", lambda *a, **k: app_module.QMessageBox.Yes
+    )
+    window.training_reinstall_button.click()
+    assert installs == [1]
+
+
+def test_failed_reinstall_offers_install_again(qapp, tmp_path, monkeypatch):
+    import desktop_browser.training as training
+
+    window = _training_window(qapp, tmp_path, _fake_pipeline()[0])
+    monkeypatch.setattr(training, "detect_training_env", lambda env_dir: None)
+    monkeypatch.setattr(training, "_detect_trainer", lambda log, env=None: (None, "", None))
+    window.env_installing = True
+    window._on_env_install_failed("Команда завершилась с кодом 1")
+    assert not window.training_install_button.isHidden()
+    assert window.training_reinstall_button.isHidden()
 
 
 # ── license dialog & badge ──────────────────────────────────────────────────
@@ -1537,3 +1678,129 @@ def test_training_advanced_settings_open_readably(qapp, tmp_path, monkeypatch):
 
     window.training_advanced_button.setChecked(False)
     assert window.training_advanced.isHidden()
+
+
+def test_dataset_chip_warns_about_unknown_format(qapp, tmp_path):
+    window = _window(qapp, tmp_path)
+    good = tmp_path / "good.jsonl"
+    good.write_text('{"instruction": "q", "output": "a"}\n', encoding="utf-8")
+    window.training_dataset.setText(str(good))
+    assert "✓" in window.dataset_chip.text()
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text('{"text": "t"}\n', encoding="utf-8")
+    window.training_dataset.setText(str(bad))
+    assert "формат не распознан" in window.dataset_chip.text()
+    assert "Alpaca" in window.dataset_chip.toolTip()
+
+
+def test_training_log_is_mirrored_to_a_file(qapp, tmp_path, monkeypatch):
+    """The window may die with the process; the log on disk must survive."""
+    import desktop_browser.crash as crash
+
+    monkeypatch.setattr(crash, "crash_dir", lambda: tmp_path)
+    window = _window(qapp, tmp_path)
+    window._start_activity("Обучение идёт")
+    window._note_training_log_path()
+    window._on_training_log("Loading weights: 100% <ok> & done")
+    window._training_log_html("<b>Готово.</b> Адаптер: a")
+    path = window.training_log_path
+    assert path.parent == tmp_path and path.name.startswith("training-")
+    text = path.read_text(encoding="utf-8")  # flushed while still open
+    assert "Loading weights: 100% <ok> & done" in text
+    assert "Готово. Адаптер: a" in text
+    window._stop_activity()
+    assert window._training_log_file is None
+
+
+def test_native_crashes_are_recorded(tmp_path, monkeypatch):
+    import faulthandler
+
+    import desktop_browser.crash as crash
+
+    monkeypatch.setattr(crash, "crash_dir", lambda: tmp_path)
+    try:
+        path = crash.enable_native_crash_log()
+        assert path == tmp_path / "native-crash.log"
+        assert faulthandler.is_enabled()
+        assert "started" in path.read_text(encoding="utf-8")
+    finally:
+        faulthandler.enable(file=sys.__stderr__)  # what pytest had before
+        if crash._native_log is not None:
+            crash._native_log.close()
+            crash._native_log = None
+
+
+class _FakeBox:
+    """Stand-in for QMessageBox: clicks the button whose label starts with `answer`."""
+
+    answer = ""
+    Question = AcceptRole = DestructiveRole = RejectRole = 0
+
+    def __init__(self, parent=None):
+        self.buttons = []
+        self.text = ""
+
+    def setIcon(self, icon): pass
+    def setWindowTitle(self, title): pass
+    def setDefaultButton(self, button): pass
+
+    def setText(self, text):
+        self.text = text
+        type(self).last_text = text
+
+    def addButton(self, label, role):
+        self.buttons.append(label)
+        return label
+
+    def exec(self):
+        return 0
+
+    def clickedButton(self):
+        return next(b for b in self.buttons if b.startswith(type(self).answer))
+
+
+@pytest.mark.parametrize("answer, expected", [("Взять", 5000), ("Весь", 0), ("Отмена", None)])
+def test_huge_dataset_asks_to_take_a_part(qapp, tmp_path, monkeypatch, answer, expected):
+    import desktop_browser.app as app_module
+
+    dataset = tmp_path / "big.jsonl"
+    line = '{"question": "q", "answer": "a"}\n'
+    dataset.write_text(line * 25_000, encoding="utf-8")
+    window = _window(qapp, tmp_path)
+    monkeypatch.setattr(_FakeBox, "answer", answer)
+    monkeypatch.setattr(app_module, "QMessageBox", _FakeBox)
+    assert window._confirm_dataset_size(str(dataset)) == expected
+    assert "25 000" in _FakeBox.last_text
+    if expected:
+        assert window.training_max_samples.value() == 5000
+
+
+def test_small_dataset_or_explicit_limit_is_not_questioned(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+
+    dataset = tmp_path / "big.jsonl"
+    dataset.write_text('{"question": "q", "answer": "a"}\n' * 25_000, encoding="utf-8")
+    small = tmp_path / "small.jsonl"
+    small.write_text('{"question": "q", "answer": "a"}\n' * 10, encoding="utf-8")
+    monkeypatch.setattr(app_module, "QMessageBox", None)  # any dialog would fail
+    window = _window(qapp, tmp_path)
+    assert window._confirm_dataset_size(str(small)) == 0
+    window.training_max_samples.setValue(300)
+    assert window._confirm_dataset_size(str(dataset)) == 300
+
+
+def test_training_frees_the_chat_model(qapp, tmp_path, monkeypatch):
+    import licensing
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    pipeline, _ = _fake_pipeline()
+    window = _training_window(qapp, tmp_path, pipeline)
+    unloaded = []
+    window.backend.unload = lambda: unloaded.append(True)
+    dataset = tmp_path / "ds.jsonl"
+    dataset.write_text('{"question": "q", "answer": "a"}\n', encoding="utf-8")
+    window.training_dataset.setText(str(dataset))
+    window.run_training()
+    _drain(qapp, window)
+    assert unloaded == [True]
+    assert "Модель чата выгружена" in window.training_view.toPlainText()

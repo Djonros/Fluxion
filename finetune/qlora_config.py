@@ -1,7 +1,7 @@
 """QLoRA configuration: hyperparameters, target modules, paths.
 
 Two presets:
-  - LOW_VRAM (6 GB, unsloth): r=32, alpha=64, 4 target modules, seq 2048
+  - LOW_VRAM (6-8 GB, unsloth): r=32, alpha=64, 4 target modules, seq 1024, no dropout
   - STANDARD (8-12 GB, HF):  r=64, alpha=128, 7 target modules, seq 2048-4096
 """
 from __future__ import annotations
@@ -24,6 +24,9 @@ USER_TOKEN = "<|im_start|>user"
 ASSISTANT_TOKEN = "<|im_start|>assistant"
 
 STOP_TOKENS = [IM_END]
+# Packing works on characters: ~3 characters per token for code and Russian
+# text keeps a packed sample within max_seq_length (4 overflowed and was cut).
+PACK_CHARS_PER_TOKEN = 3
 
 DEFAULT_TARGET_MODULES_LOW = ["q_proj", "k_proj", "v_proj", "o_proj"]
 DEFAULT_TARGET_MODULES_STD = [
@@ -89,11 +92,15 @@ class QLoRASettings:
         preset = VRAMPreset(preset) if isinstance(preset, str) else preset
 
         if preset == VRAMPreset.LOW:
+            # 1024 tokens and no dropout: a 7B model at 2048 ran out of memory
+            # on an 8 GB laptop card ("No or negligible GPU memory available"),
+            # and dropout 0 keeps unsloth's fused, leaner LoRA kernels.
             return cls(
                 lora_r=32,
                 lora_alpha=64,
+                lora_dropout=0.0,
                 target_modules=list(DEFAULT_TARGET_MODULES_LOW),
-                max_seq_length=2048,
+                max_seq_length=1024,
                 per_device_train_batch_size=1,
                 gradient_accumulation_steps=16,
                 learning_rate=2e-4,

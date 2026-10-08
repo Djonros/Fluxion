@@ -13,6 +13,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from core.proc import no_window
+
 logger = logging.getLogger(__name__)
 
 _GIT_TIMEOUT = 60
@@ -37,6 +39,7 @@ def _run_git(
             env=full_env,
             encoding="utf-8",
             errors="replace",
+            **no_window(),
         )
         output = result.stdout
         if result.stderr:

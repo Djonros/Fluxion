@@ -19,6 +19,13 @@ from .store import ChromaStore
 logger = logging.getLogger(__name__)
 
 
+EMBEDDING_MODEL_ID = "bge-m3-gguf"
+MISSING_EMBEDDING_MODEL = (
+    "Не скачана модель поиска по коду (BGE-M3, около 0,6 ГБ). Откройте страницу "
+    "«Модели», скачайте «BGE-M3» и повторите индексацию. Ollama для этого не нужна."
+)
+
+
 @dataclass
 class RAGConfig:
     embedding_model: str = "bge-m3"
@@ -31,6 +38,7 @@ class RAGConfig:
     chunk_overlap: int = 200
     top_k: int = 8
     use_rerank: bool = True
+    prefer_local_models: bool = False  # desktop app: own GGUF models, no Ollama
 
     @classmethod
     def from_settings(
@@ -100,12 +108,18 @@ class RAGService:
     # -- embedding backend selection (roadmap 18.3) ------------------------
 
     def _resolve_backend(self) -> str:
-        """ollama | llama_cpp. Explicit config wins; auto probes GGUF + import."""
+        """ollama | llama_cpp. Explicit config wins; auto probes GGUF + import.
+
+        With ``prefer_local_models`` (the desktop app) the embedding model is
+        looked up in the app's models folder at the moment of use, so a model
+        downloaded after start is picked up, and Ollama is used only when the
+        embedded engine is not installed at all.
+        """
         configured = (self.config.embedding_backend or "").strip().lower()
         if configured in ("ollama", "llama_cpp", "llamacpp"):
             return "llama_cpp" if configured in ("llama_cpp", "llamacpp") else configured
-        gguf = str(self.config.embedding_gguf or "").strip()
-        if gguf and Path(gguf).is_file():
+        gguf = self._local_embedding_gguf()
+        if gguf or self.config.prefer_local_models:
             try:
                 import llama_cpp  # noqa: F401
 
@@ -113,6 +127,24 @@ class RAGService:
             except Exception:
                 return "ollama"
         return "ollama"
+
+    def _local_embedding_gguf(self) -> str:
+        """Return an existing embedding GGUF: the configured one or, for the app, the downloaded one."""
+        gguf = str(self.config.embedding_gguf or "").strip()
+        if gguf and Path(gguf).is_file():
+            return gguf
+        if not self.config.prefer_local_models:
+            return ""
+        try:
+            from core.model_manager import ModelManager
+
+            found = ModelManager().path_for(EMBEDDING_MODEL_ID)
+        except Exception:
+            return ""
+        if found and Path(found).is_file():
+            self.config.embedding_gguf = found
+            return found
+        return ""
 
     @property
     def embedding_backend_id(self) -> str:
@@ -134,6 +166,8 @@ class RAGService:
         if self._resolve_backend() == "llama_cpp":
             from .embedder import LlamaCppEmbedder
 
+            if self.config.prefer_local_models and not self._local_embedding_gguf():
+                raise RuntimeError(MISSING_EMBEDDING_MODEL)
             self._embedder = LlamaCppEmbedder.from_config(self.config)
         else:
             self._embedder = Embedder(
