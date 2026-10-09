@@ -811,6 +811,34 @@ class ModelListWorker(QThread):
         self.done.emit(models)
 
 
+class CloudApiWorker(QThread):
+    """Checks the cloud API or lists its models without blocking the UI thread."""
+
+    done = Signal(bool, str, list)
+
+    def __init__(self, cfg, action: str, parent=None):
+        super().__init__(parent)
+        self.cfg = cfg
+        self.action = action
+
+    def run(self) -> None:
+        from core.cloud_api import check_connection, list_models
+
+        if self.action == "models":
+            try:
+                models = list_models(self.cfg)
+            except Exception as exc:
+                self.done.emit(False, str(exc), [])
+                return
+            self.done.emit(True, f"Моделей у провайдера: {len(models)}.", models)
+            return
+        try:
+            ok, message = check_connection(self.cfg)
+        except Exception as exc:
+            ok, message = False, str(exc)
+        self.done.emit(ok, message, [])
+
+
 class TrainingWorker(QThread):
     """Runs the finetune pipeline in a background thread."""
 
@@ -1101,6 +1129,8 @@ class FluxionWindow(QMainWindow):
 
     def _build_engine_popover(self, pop: ChipPopover) -> None:
         backend_name = type(self.backend).__name__ if self.backend is not None else "не подключён"
+        if self._is_cloud_backend():
+            backend_name = "Облачная модель (API)"
         model = getattr(self.settings, "model", "") or "—"
         state = str(self.status_label.property("state") or "todo")
         pop.add_row("Движок", backend_name)
@@ -2227,10 +2257,246 @@ class FluxionWindow(QMainWindow):
         self.models_installed.setObjectName("subtitle")
         self.models_installed.setWordWrap(True)
         layout.addWidget(self.models_installed)
+        layout.addWidget(self._cloud_api_card())
         layout.addStretch()
 
         self._refresh_models()
-        return page
+        # Scrollable: the catalog plus the cloud section do not fit a small window.
+        scroll = QScrollArea()
+        scroll.setObjectName("pageScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(page)
+        return scroll
+
+    # ── cloud model by API (Pro) ──────────────────────────────────────────
+
+    def _is_cloud_backend(self) -> bool:
+        return self.backend is not None and type(self.backend).__name__ == "APIBackend"
+
+    def _cloud_api_card(self) -> QFrame:
+        from core.cloud_api import PROVIDERS, load_cloud_config, provider_by_key
+
+        cfg = load_cloud_config()
+        card = QFrame()
+        card.setObjectName("stepCard")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 12, 16, 12)
+        box.setSpacing(8)
+        title = QLabel(
+            '<b>Облачная модель по API</b> <span style="color:#8B4BFF; font-weight:600;">PRO</span>'
+            '<br><span style="color:#94A3B8;">Чат и агент работают через модель провайдера: '
+            "OpenRouter, Groq, Together, OpenAI или любой OpenAI-совместимый адрес (vLLM, LM Studio). "
+            "Вопросы и фрагменты кода из них уходят провайдеру, токены оплачиваются у него.</span>"
+        )
+        title.setTextFormat(Qt.RichText)
+        title.setWordWrap(True)
+        box.addWidget(title)
+
+        form = QFormLayout()
+        self.cloud_provider = QComboBox()
+        for provider in PROVIDERS:
+            self.cloud_provider.addItem(provider.name, provider.key)
+        index = self.cloud_provider.findData(cfg.provider)
+        self.cloud_provider.setCurrentIndex(index if index >= 0 else 0)
+        self.cloud_provider.currentIndexChanged.connect(self._on_cloud_provider_changed)
+        form.addRow("Провайдер", self.cloud_provider)
+
+        self.cloud_base_url = QLineEdit(cfg.base_url)
+        self.cloud_base_url.setPlaceholderText("https://…/v1")
+        form.addRow("Адрес API", self.cloud_base_url)
+
+        key_row = QHBoxLayout()
+        self.cloud_key = QLineEdit(cfg.api_key)
+        self.cloud_key.setEchoMode(QLineEdit.Password)
+        self.cloud_key.setPlaceholderText("ключ из личного кабинета провайдера")
+        key_row.addWidget(self.cloud_key, 1)
+        show_key = QToolButton()
+        show_key.setText("Показать")
+        show_key.setCheckable(True)
+        show_key.toggled.connect(
+            lambda on: self.cloud_key.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password)
+        )
+        key_row.addWidget(show_key)
+        form.addRow("Ключ", key_row)
+
+        model_row = QHBoxLayout()
+        self.cloud_model = QComboBox()
+        self.cloud_model.setEditable(True)
+        if cfg.model:
+            self.cloud_model.addItem(cfg.model)
+        example = provider_by_key(cfg.provider).example_model
+        self.cloud_model.lineEdit().setPlaceholderText(example or "имя модели у провайдера")
+        model_row.addWidget(self.cloud_model, 1)
+        self.cloud_models_button = QPushButton("Список моделей")
+        self.cloud_models_button.setProperty("suggestion", True)
+        self.cloud_models_button.clicked.connect(lambda: self._start_cloud_worker("models"))
+        model_row.addWidget(self.cloud_models_button)
+        form.addRow("Модель", model_row)
+        box.addLayout(form)
+
+        self.cloud_enabled = QCheckBox("Использовать облачную модель вместо локальной")
+        self.cloud_enabled.setChecked(cfg.enabled)
+        box.addWidget(self.cloud_enabled)
+
+        actions = QHBoxLayout()
+        self.cloud_check_button = QPushButton("Проверить связь")
+        self.cloud_check_button.setProperty("suggestion", True)
+        self.cloud_check_button.clicked.connect(lambda: self._start_cloud_worker("check"))
+        actions.addWidget(self.cloud_check_button)
+        self.cloud_save_button = QPushButton("Сохранить")
+        self.cloud_save_button.setProperty("suggestion", True)
+        self.cloud_save_button.clicked.connect(self._cloud_save)
+        actions.addWidget(self.cloud_save_button)
+        actions.addStretch()
+        box.addLayout(actions)
+
+        self.cloud_status = QLabel()
+        self.cloud_status.setObjectName("subtitle")
+        self.cloud_status.setWordWrap(True)
+        box.addWidget(self.cloud_status)
+
+        self._cloud_worker: CloudApiWorker | None = None
+        self._refresh_cloud_card()
+        return card
+
+    def _on_cloud_provider_changed(self, _index: int) -> None:
+        from core.cloud_api import provider_by_key
+
+        provider = provider_by_key(str(self.cloud_provider.currentData() or ""))
+        if provider.base_url:
+            self.cloud_base_url.setText(provider.base_url)
+        # A model id of one provider rarely exists at another: suggest one.
+        self.cloud_model.clear()
+        if provider.example_model:
+            self.cloud_model.setEditText(provider.example_model)
+        self.cloud_model.lineEdit().setPlaceholderText(
+            provider.example_model or "имя модели у провайдера"
+        )
+
+    def _cloud_form_config(self):
+        from core.cloud_api import CloudConfig
+
+        return CloudConfig(
+            enabled=self.cloud_enabled.isChecked(),
+            provider=str(self.cloud_provider.currentData() or "custom"),
+            base_url=self.cloud_base_url.text().strip(),
+            api_key=self.cloud_key.text().strip(),
+            model=self.cloud_model.currentText().strip(),
+        )
+
+    def _refresh_cloud_card(self, prefix: str = "") -> None:
+        if not hasattr(self, "cloud_status"):
+            return
+        from core.cloud_api import env_overrides
+        from licensing import feature_enabled
+
+        allowed = bool(feature_enabled("multi_model"))
+        self.cloud_save_button.setText("Сохранить" if allowed else "Доступно в Pro")
+        lines = [prefix] if prefix else []
+        if self._is_cloud_backend():
+            lines.append(f"Сейчас чат и агент работают через облачную модель {self.backend.model}.")
+        elif self.cloud_enabled.isChecked() and not allowed:
+            lines.append("Облачная модель включена, но лицензия Pro не активна: работает локальная модель.")
+        overrides = env_overrides()
+        if overrides:
+            lines.append(
+                "Переменные " + ", ".join(overrides)
+                + " заданы в системе или в файле .env и действуют вместо настроек здесь."
+            )
+        if not allowed:
+            lines.append("Облачные модели доступны в Fluxion Pro: меню Помощь → Лицензия…")
+        self.cloud_status.setText("\n".join(lines))
+
+    def _start_cloud_worker(self, action: str) -> None:
+        if self._cloud_worker is not None:
+            return
+        self.cloud_status.setText(
+            "Получаем список моделей…" if action == "models" else "Проверяем связь с провайдером…"
+        )
+        self.cloud_check_button.setEnabled(False)
+        self.cloud_models_button.setEnabled(False)
+        worker = CloudApiWorker(self._cloud_form_config(), action, self)
+        worker.done.connect(
+            lambda ok, message, models, act=action: self._on_cloud_worker_done(act, ok, message, models)
+        )
+        worker.finished.connect(self._on_cloud_worker_finished)
+        self._cloud_worker = worker
+        worker.start()
+
+    def _on_cloud_worker_finished(self) -> None:
+        worker, self._cloud_worker = self._cloud_worker, None
+        self.cloud_check_button.setEnabled(True)
+        self.cloud_models_button.setEnabled(True)
+        if worker is not None:
+            worker.deleteLater()
+
+    def _on_cloud_worker_done(self, action: str, ok: bool, message: str, models: list) -> None:
+        if action == "models" and ok:
+            current = self.cloud_model.currentText().strip()
+            self.cloud_model.clear()
+            self.cloud_model.addItems([str(m) for m in models])
+            self.cloud_model.setEditText(current or (str(models[0]) if models else ""))
+            if models and not current:
+                message += " Выберите модель в списке."
+        self.cloud_status.setText(("✓ " if ok else "✗ ") + message)
+
+    def _cloud_save(self) -> None:
+        from core.cloud_api import apply_cloud_config, save_cloud_config
+        from licensing import feature_enabled
+
+        if not feature_enabled("multi_model"):
+            self.cloud_status.setText(
+                "Облачные модели доступны в Fluxion Pro. Активируйте лицензию: меню Помощь → Лицензия…"
+            )
+            return
+        cfg = self._cloud_form_config()
+        if cfg.enabled and not cfg.complete:
+            self.cloud_status.setText("Чтобы включить облачную модель, заполните адрес, ключ и модель.")
+            return
+        if self.generating or self.agent_running:
+            self.cloud_status.setText("Дождитесь конца ответа или работы агента и сохраните ещё раз.")
+            return
+        try:
+            save_cloud_config(cfg)
+        except OSError as exc:
+            self.cloud_status.setText(f"Не удалось сохранить настройки: {exc}")
+            return
+        apply_cloud_config(cfg)
+        self._switch_backend()
+        self._refresh_cloud_card("Сохранено." if self._is_cloud_backend() or not cfg.enabled
+                                 else "Сохранено, но облачная модель не подключилась.")
+
+    def _switch_backend(self) -> None:
+        """Rebuild the chat engine after the cloud settings changed (no restart)."""
+        if self.settings is None:
+            return
+        from cli.app import _startup_backend
+
+        from .engine import _wire_gguf_paths
+
+        try:
+            _wire_gguf_paths(self.settings)
+        except Exception:
+            pass
+        try:
+            backend, _gated = _startup_backend(self.settings)
+        except Exception as exc:  # noqa: BLE001 — keep the old engine
+            self._append_banner(f"Не удалось сменить движок: {exc}")
+            return
+        old = self.backend
+        if old is not None and type(old) is not type(backend):
+            unload = getattr(old, "unload", None)
+            if callable(unload):
+                try:
+                    unload()  # frees the embedded model's memory when going to the cloud
+                except Exception:
+                    pass
+        self.backend = backend
+        if self.assistant is not None and hasattr(self.assistant, "backend"):
+            self.assistant.backend = backend
+        self._load_models()
+        self._start_status_check()
 
     def _refresh_models(self) -> None:
         from core.model_manager import model_allowed
@@ -2924,6 +3190,9 @@ class FluxionWindow(QMainWindow):
         if self.backend is None:
             self._show_models_unavailable("Движок не подключён")
             return
+        if self._is_cloud_backend():
+            self._show_models_unavailable("Облачная модель: сменить её можно на странице «Модели»")
+            return
         if self._model_worker is not None:
             return
         self.model_combo.setEnabled(False)
@@ -2941,6 +3210,8 @@ class FluxionWindow(QMainWindow):
 
     def _show_models_unavailable(self, message: str) -> None:
         model = getattr(self.settings, "model", "")
+        if self._is_cloud_backend():
+            model = str(getattr(self.backend, "model", "") or model)
         self._applying_model = True
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -3039,6 +3310,8 @@ class FluxionWindow(QMainWindow):
     def _status_model_name(self) -> str:
         """The model the engine actually uses: the GGUF file for llama.cpp
         (the "model" setting is an Ollama name and misled on llama.cpp)."""
+        if self._is_cloud_backend():
+            return f"{getattr(self.backend, 'model', '')} (облако)"
         path = getattr(self.backend, "model_path", None)
         if isinstance(path, str):
             if path and Path(path).is_file():
@@ -3412,6 +3685,7 @@ class FluxionWindow(QMainWindow):
         self._refresh_agent_chip()
         if getattr(self, "_model_buttons", None):
             self._refresh_models()  # Pro models become downloadable after activation
+        self._refresh_cloud_card()
 
     def _open_license_dialog(self) -> None:
         from .license_dialog import LicenseDialog
@@ -3629,6 +3903,8 @@ class FluxionWindow(QMainWindow):
             self._health_worker.wait(10000)
         if self._model_worker is not None:
             self._model_worker.wait(5000)
+        if getattr(self, "_cloud_worker", None) is not None:
+            self._cloud_worker.wait(16000)  # the request times out at 15 s
         if self.training_worker is not None and self.training_running:
             self.training_worker.stop()
             if not self.training_worker.wait(15000):
@@ -3699,7 +3975,7 @@ def main() -> int:
                 picked = str(qs.value("project_path", "") or "")
                 paid = bool(feature_enabled("agent_write"))
                 return CodingAgent(
-                    backend=backend,
+                    backend=window.backend,  # the cloud section can swap the engine
                     project_root=resolve_project_root(picked, settings),
                     rag_service=rag_service,
                     web_search=web_search,

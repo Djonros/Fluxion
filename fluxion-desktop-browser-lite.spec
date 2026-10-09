@@ -74,6 +74,8 @@ a = Analysis(
         "core.language",
         "core.ollama_client",
         "core.backend_factory",
+        "core.api_backend",
+        "core.cloud_api",
         "core.llama_cpp_backend",
         "core.model_manager",
         "core.model_runtime",

@@ -49,6 +49,24 @@ def _isolated_models_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_cloud_settings(tmp_path, monkeypatch):
+    """The cloud model settings of the app live in ``data/cloud_api.json``
+    (%APPDATA%\\Fluxion in a build) and go into the environment: keep both
+    away from the developer's real key."""
+    monkeypatch.setenv("FLUXION_CLOUD_API_FILE", str(tmp_path / "cloud_api.json"))
+    for name in ("FLUXION_BACKEND", "FLUXION_API_KEY", "FLUXION_API_BASE_URL", "FLUXION_API_MODEL"):
+        # set, then delete: monkeypatch then restores the original state
+        # even when the app put the variable into os.environ itself
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    try:
+        import core.cloud_api as cloud_api
+    except Exception:
+        return
+    monkeypatch.setattr(cloud_api, "_applied", {})
+
+
+@pytest.fixture(autouse=True)
 def _spent_trial_by_default(tmp_path_factory, monkeypatch):
     """The Pro trial lives in ``data/trial.json`` of the project, i.e. the
     developer's real trial.  Point it at a temp file and start every test with

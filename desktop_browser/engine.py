@@ -73,6 +73,15 @@ def build_engine(settings: Settings | None = None):
     _absolutize_data_paths(settings)
 
     try:
+        # Cloud model saved on the "Модели" page (Pro): into the environment
+        # before the backend is picked.  System/.env variables still win.
+        from core.cloud_api import apply_cloud_config
+
+        apply_cloud_config()
+    except Exception:
+        pass
+
+    try:
         _wire_gguf_paths(settings)
     except Exception:
         pass

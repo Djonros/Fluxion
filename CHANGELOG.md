@@ -5,6 +5,14 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] — 2026-10-09
+
+### Added
+- "Облачная модель по API" section on the "Модели" page (Pro): provider (OpenRouter, Groq, Together AI, OpenAI or any OpenAI-compatible address), key, model with a "Список моделей" button, a "Проверить связь" one-token test request that explains a rejected key, missing model, empty balance or rate limit, and a switch to use the cloud model instead of the local one. Saving switches the chat and agent engine at once, without a restart. Until now the API backend could be turned on only with `FLUXION_API_*` environment variables, which a buyer of the build could not find. Settings are kept per user in `%APPDATA%\Fluxion\cloud_api.json` (`core/cloud_api.py`); variables set in the system or `.env` still win and the section says so.
+
+### Fixed
+- The engine chip and the chat's model box showed the Ollama model name while the API backend was running; they now show the cloud model.
+
 ## [0.12.3] — 2026-10-08
 
 ### Fixed

@@ -1,3 +1,3 @@
 """Fluxion Browser desktop application (Fluxion + embedded web browser)."""
 
-APP_VERSION = "0.12.3"
+APP_VERSION = "0.13.0"
