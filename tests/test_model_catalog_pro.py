@@ -23,7 +23,10 @@ class TestCatalog:
 
     def test_free_catalog_unchanged(self):
         free = {m.model_id for m in MODEL_CATALOG if not m.pro}
-        assert free == {"qwen2.5-coder-7b-q4km", "qwen2.5-coder-3b-q4km", "bge-m3-gguf"}
+        assert free == {
+            "qwen2.5-coder-7b-q4km", "qwen2.5-coder-3b-q4km", "bge-m3-gguf",
+            "qwen2.5-7b-q4km", "qwen2.5-1.5b-q4km",
+        }
         assert [m.model_id for m in MODEL_CATALOG if m.default] == ["qwen2.5-coder-7b-q4km"]
         assert all(not m.default for m in MODEL_CATALOG if m.pro)
 
@@ -31,6 +34,7 @@ class TestCatalog:
         pro = [m for m in MODEL_CATALOG if m.pro]
         assert {m.model_id for m in pro} == {
             "qwen2.5-coder-7b-q8", "qwen2.5-coder-14b-q4km", "qwen2.5-coder-32b-q4km",
+            "qwen2.5-14b-q4km",
         }
         for m in pro:
             assert m.task == "chat" and m.summary and m.vram_gb > 0

@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLayout,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMenuBar,
@@ -52,6 +54,12 @@ from .training import TrainingError, TrainingParams, run_pipeline
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
+
+
+def message_sound_enabled(qsettings: QSettings) -> bool:
+    """The "sound when Fluxion answered" switch; on by default."""
+    raw = qsettings.value("message_sound", 1)
+    return str(raw).strip().lower() not in ("0", "false", "")
 
 
 def git_tools_enabled(qsettings: QSettings) -> bool:
@@ -348,22 +356,185 @@ class ModelDownloadWorker(QThread):
     failed = Signal(str)
     done = Signal(str)
 
-    def __init__(self, model_id: str, parent=None):
+    def __init__(self, model_id: str, parent=None, hf_file=None):
         super().__init__(parent)
         self.model_id = model_id
+        self.hf_file = hf_file  # core.model_manager.HfFile: a file by link, not from the catalog
 
     def run(self) -> None:
         from core.model_manager import ModelManager
 
         try:
             mm = ModelManager()
-            path = mm.download(
-                self.model_id, on_progress=lambda d, t: self.progress.emit(d, t)
-            )
+            report = lambda d, t: self.progress.emit(d, t)  # noqa: E731
+            if self.hf_file is not None:
+                path = mm.download_hf_file(self.hf_file, on_progress=report)
+            else:
+                path = mm.download(self.model_id, on_progress=report)
         except Exception as exc:
             self.failed.emit(f"Ошибка загрузки модели: {exc}")
             return
         self.done.emit(str(path))
+
+
+class HfFilesWorker(QThread):
+    """Lists the GGUF files of a Hugging Face model for "Скачать по ссылке…"."""
+
+    done = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, repo_id: str, parent=None):
+        super().__init__(parent)
+        self.repo_id = repo_id
+
+    def run(self) -> None:
+        from core.model_manager import list_hf_gguf_files
+
+        try:
+            files = list_hf_gguf_files(self.repo_id)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.done.emit(files)
+
+
+class HfDownloadDialog(QDialog):
+    """Pick any GGUF file of a Hugging Face model by its link."""
+
+    def __init__(self, parent=None, installed: set[str] | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Скачать модель по ссылке")
+        self.setMinimumWidth(560)
+        self.installed = {name.lower() for name in installed or ()}
+        self.selected_file = None
+        self._worker: HfFilesWorker | None = None
+        self._wanted = ("", "")  # (file path, quant) named in the link
+
+        layout = QVBoxLayout(self)
+        hint = QLabel(
+            "Вставьте ссылку на модель в формате GGUF с Hugging Face: страницу модели "
+            "(например, huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF) или ссылку на файл."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        row = QHBoxLayout()
+        self.link = QLineEdit()
+        self.link.setPlaceholderText("https://huggingface.co/автор/модель-GGUF")
+        self.link.returnPressed.connect(self.find_files)
+        row.addWidget(self.link, 1)
+        self.find_button = QPushButton("Найти файлы")
+        self.find_button.clicked.connect(self.find_files)
+        row.addWidget(self.find_button)
+        layout.addLayout(row)
+
+        self.files = QListWidget()
+        self.files.setMinimumHeight(220)
+        self.files.currentItemChanged.connect(self._on_current)
+        self.files.itemDoubleClicked.connect(lambda _item: self._accept_selected())
+        layout.addWidget(self.files, 1)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        note = QLabel(
+            "Модели не из каталога Fluxion не проверены: чат обычно работает, а агент "
+            "и вызовы инструментов могут работать хуже. Чем меньше файл, тем быстрее "
+            "модель и ниже качество; Q4_K_M — хороший баланс."
+        )
+        note.setObjectName("subtitle")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton("Отмена")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        self.download_button = QPushButton("Скачать")
+        self.download_button.setEnabled(False)
+        self.download_button.clicked.connect(self._accept_selected)
+        buttons.addWidget(self.download_button)
+        layout.addLayout(buttons)
+
+    def find_files(self) -> None:
+        from core.model_manager import parse_hf_link
+
+        if self._worker is not None:
+            return
+        try:
+            repo_id, path, quant = parse_hf_link(self.link.text())
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            return
+        self._wanted = (path, quant)
+        self.files.clear()
+        self.download_button.setEnabled(False)
+        self.find_button.setEnabled(False)
+        self.status.setText(f"Ищем файлы модели {repo_id}…")
+        self._worker = HfFilesWorker(repo_id, self)
+        self._worker.done.connect(self.show_files)
+        self._worker.failed.connect(self._on_failed)
+        self._worker.finished.connect(self._on_finished)
+        self._worker.start()
+
+    def _on_finished(self) -> None:
+        worker, self._worker = self._worker, None
+        self.find_button.setEnabled(True)
+        if worker is not None:
+            worker.deleteLater()
+
+    def _on_failed(self, message: str) -> None:
+        self.status.setText(message)
+
+    def show_files(self, files: list) -> None:
+        from core.model_manager import hf_file_problem
+
+        self.files.clear()
+        path, quant = self._wanted
+        pick = None
+        for file in files:
+            problem = hf_file_problem(file.path)
+            size = f"{file.size_bytes / 1e9:.1f} ГБ" if file.size_bytes else "размер неизвестен"
+            text = f"{file.path} · {size}"
+            if file.filename.lower() in self.installed:
+                text += " · уже скачана"
+            if problem:
+                text += f" · {problem}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, file)
+            if problem:
+                item.setFlags(item.flags() & ~Qt.ItemIsEnabled & ~Qt.ItemIsSelectable)
+            self.files.addItem(item)
+            if problem or pick is not None:
+                continue
+            if (path and file.path == path) or (quant and quant.lower() in file.filename.lower()):
+                pick = item
+        usable = [self.files.item(i) for i in range(self.files.count())
+                  if self.files.item(i).flags() & Qt.ItemIsEnabled]
+        if not files:
+            self.status.setText("В этой модели нет файлов GGUF. Ищите репозиторий с «GGUF» в названии.")
+        elif not usable:
+            self.status.setText("Подходящих файлов нет.")
+        else:
+            self.status.setText(f"Файлов GGUF: {len(usable)}. Выберите один и нажмите «Скачать».")
+        if pick is None:
+            pick = next((i for i in usable if "q4_k_m" in i.text().lower()), None)
+        if pick is not None:
+            self.files.setCurrentItem(pick)
+
+    def _on_current(self, item, _previous=None) -> None:
+        self.download_button.setEnabled(item is not None and bool(item.flags() & Qt.ItemIsEnabled))
+
+    def _accept_selected(self) -> None:
+        item = self.files.currentItem()
+        if item is None or not item.flags() & Qt.ItemIsEnabled:
+            return
+        self.selected_file = item.data(Qt.UserRole)
+        self.accept()
+
+    def done(self, result: int) -> None:  # noqa: A003 — QDialog.done
+        if self._worker is not None:
+            self._worker.wait(3000)
+        super().done(result)
 
 
 class ModelImportWorker(QThread):
@@ -788,6 +959,10 @@ class IndexWorker(QThread):
         self.done.emit(int(count))
 
 
+# Pages of the main window (QStackedWidget indexes)
+PAGE_CHAT, PAGE_PROJECT, PAGE_TRAINING, PAGE_MODELS = range(4)
+
+
 class ModelListWorker(QThread):
     """Fetches available Ollama models without blocking the UI thread."""
 
@@ -809,6 +984,55 @@ class ModelListWorker(QThread):
             self.failed.emit(f"Не удалось получить список моделей: {exc}")
             return
         self.done.emit(models)
+
+
+# Filters of the "Модели" page: (label, kind).  A kind is a catalog tag, or
+# installed / rag (embeddings) / free / pro.
+MODEL_KINDS = (
+    ("Все модели", ""),
+    ("Для кода", "code"),
+    ("Для текстов и документов", "text"),
+    ("Для слабых компьютеров", "small"),
+    ("Поиск по проекту (эмбеддинги)", "rag"),
+    ("Установленные", "installed"),
+    ("Бесплатные", "free"),
+    ("Pro", "pro"),
+)
+MODEL_VRAM_LIMITS = (
+    ("Любая видеокарта", 0.0),
+    ("До 4 ГБ видеопамяти", 4.0),
+    ("До 8 ГБ", 8.0),
+    ("До 12 ГБ", 12.0),
+    ("До 16 ГБ", 16.0),
+    ("До 24 ГБ", 24.0),
+)
+
+
+class CatalogWorker(QThread):
+    """Fetches the website model catalog and the video card memory off the UI thread."""
+
+    done = Signal(int, str, float)
+
+    def __init__(self, manager, parent=None):
+        super().__init__(parent)
+        self.manager = manager
+
+    def run(self) -> None:
+        from core.model_manager import catalog_url, detect_gpu_memory_gb
+
+        try:
+            gpu_gb = float(detect_gpu_memory_gb())
+        except Exception:
+            gpu_gb = 0.0
+        if not catalog_url():
+            self.done.emit(0, "", gpu_gb)
+            return
+        try:
+            count = self.manager.fetch_remote_catalog()
+        except Exception as exc:  # offline is normal: the bundled catalog stays
+            self.done.emit(0, str(exc), gpu_gb)
+            return
+        self.done.emit(count, "", gpu_gb)
 
 
 class CloudApiWorker(QThread):
@@ -947,6 +1171,7 @@ class FluxionWindow(QMainWindow):
         self._last_plan = ""
         self._plan_entry: dict | None = None
         self._plan_pending = False
+        self._stop_requested = False
         self._web_opened_for_current = False
         web_cfg = getattr(settings, "web", None) if settings is not None else None
         self._search_base = str(getattr(web_cfg, "searxng_url", "") or "")
@@ -960,6 +1185,10 @@ class FluxionWindow(QMainWindow):
             client = getattr(self.backend, "client", None)
             if client is not None and hasattr(client, "model"):
                 client.model = saved_model
+        saved_gguf = str(self.qsettings.value("gguf_path", "") or "")
+        if saved_gguf and self.settings is not None and Path(saved_gguf).is_file():
+            # the chat model chosen in "⚙ Настройки чата" for the embedded engine
+            self._set_gguf_path(saved_gguf)
         self.setWindowTitle("Fluxion")
         self.setMinimumSize(920, 620)
         self.resize(1120, 760)
@@ -1192,14 +1421,17 @@ class FluxionWindow(QMainWindow):
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
 
-        for index, title in enumerate(("Чат", "Проект", "Обучение", "Модели")):
+        # Chat and Project are in the sidebar; "Модели" and "Обучение" open from
+        # the top menu "Модели" (pages 2 and 3 keep their indexes).
+        for index, title in ((PAGE_CHAT, "Чат"), (PAGE_PROJECT, "Проект")):
             button = QPushButton(title)
             button.setCheckable(True)
             button.setProperty("nav", True)
+            button.setProperty("page", index)
             button.clicked.connect(lambda checked=False, page=index: self.pages.setCurrentIndex(page))
             self.nav_group.addButton(button)
             sidebar_layout.addWidget(button)
-            if index == 0:
+            if index == PAGE_CHAT:
                 button.setChecked(True)
 
         sidebar_layout.addStretch()
@@ -1210,6 +1442,7 @@ class FluxionWindow(QMainWindow):
         self.pages.addWidget(self._models_page())
         for i in range(self.pages.count()):
             self.pages.widget(i).setObjectName("page")
+        self.pages.currentChanged.connect(self._sync_nav)
 
         self.web_panel = create_browser_panel(
             web_search=self.web_search, search_base=self._search_base
@@ -1305,6 +1538,20 @@ class FluxionWindow(QMainWindow):
         act_index.triggered.connect(self._start_indexing)
         m_proj.addAction(act_index)
 
+        # Модели: the catalog, the cloud model and training open from here
+        m_models = bar.addMenu("&Модели")
+        act_models = QAction("Скачать и выбрать модели…", self)
+        act_models.setShortcut("Ctrl+M")
+        act_models.triggered.connect(lambda: self.pages.setCurrentIndex(PAGE_MODELS))
+        m_models.addAction(act_models)
+        act_cloud = QAction("Облачная модель по API…", self)
+        act_cloud.triggered.connect(self._open_cloud_section)
+        m_models.addAction(act_cloud)
+        m_models.addSeparator()
+        act_training = QAction("Обучение модели…", self)
+        act_training.triggered.connect(lambda: self.pages.setCurrentIndex(PAGE_TRAINING))
+        m_models.addAction(act_training)
+
         # Помощь
         m_help = bar.addMenu("&Помощь")
         act_update = QAction("Проверить обновления…", self)
@@ -1316,6 +1563,20 @@ class FluxionWindow(QMainWindow):
         act_about = QAction("О Fluxion", self)
         # act_about.triggered.connect(self._show_about)
         m_help.addAction(act_about)
+
+    def _sync_nav(self, index: int) -> None:
+        """Sidebar shows the open page; none is lit for pages from the menu."""
+        self.nav_group.setExclusive(False)
+        for button in self.nav_group.buttons():
+            button.setChecked(button.property("page") == index)
+        self.nav_group.setExclusive(True)
+
+    def _open_cloud_section(self) -> None:
+        self.pages.setCurrentIndex(PAGE_MODELS)
+        scroll = self.pages.widget(PAGE_MODELS)
+        card = getattr(self, "_cloud_card", None)
+        if isinstance(scroll, QScrollArea) and card is not None:
+            QTimer.singleShot(0, lambda: scroll.ensureWidgetVisible(card, 0, 0))
 
     def _searxng_on(self) -> bool:
         try:
@@ -1529,6 +1790,13 @@ class FluxionWindow(QMainWindow):
         self.model_refresh_button.clicked.connect(self._load_models)
         model_row.addWidget(self.model_refresh_button)
         box.addLayout(model_row)
+        self.message_sound = QCheckBox("Звук, когда Fluxion ответил")
+        self.message_sound.setToolTip("Короткий сигнал в конце ответа чата и агента")
+        self.message_sound.setChecked(message_sound_enabled(self.qsettings))
+        self.message_sound.toggled.connect(
+            lambda checked: self.qsettings.setValue("message_sound", int(checked))
+        )
+        box.addWidget(self.message_sound)
 
         box.addWidget(self._settings_caption("Агент"))
         row = QHBoxLayout()
@@ -1659,10 +1927,11 @@ class FluxionWindow(QMainWindow):
         layout.addLayout(header)
 
         subtitle = QLabel(
-            "Выберите папку проекта и проиндексируйте код — "
-            "чат будет использовать его как контекст."
+            "Выберите папку проекта и проиндексируйте её: код, тексты и документы "
+            "(PDF, Word, Excel, PowerPoint) — чат будет использовать их как контекст."
         )
         subtitle.setObjectName("subtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
         # ── карточка пути: mono + стат-строка чипами ─────────────────
@@ -1843,7 +2112,7 @@ class FluxionWindow(QMainWindow):
     def _on_index_done(self, count: int) -> None:
         self._set_indexing_done()
         self.index_status.setText(self._chunks_label())
-        self.project_view.append(f"<p><b>Готово:</b> проиндексировано {count} чанков. Чат теперь будет автоматически использовать RAG для вопросов по коду.</p>")
+        self.project_view.append(f"<p><b>Готово:</b> проиндексировано {count} чанков. Чат теперь будет сам искать ответы в коде и документах папки.</p>")
         self._refresh_index_chip()
         self.qsettings.setValue("index_updated_at", datetime.now().strftime("%Y-%m-%d %H:%M"))
         self.qsettings.setValue("index_embed_backend", self._embed_backend_id())
@@ -2186,8 +2455,8 @@ class FluxionWindow(QMainWindow):
         header.addStretch()
         self.models_refresh_button = QPushButton("⟳")
         self.models_refresh_button.setObjectName("iconButton")
-        self.models_refresh_button.setToolTip("Обновить список")
-        self.models_refresh_button.clicked.connect(self._refresh_models)
+        self.models_refresh_button.setToolTip("Обновить список и каталог с сайта")
+        self.models_refresh_button.clicked.connect(self._refresh_models_and_catalog)
         header.addWidget(self.models_refresh_button)
         layout.addLayout(header)
 
@@ -2208,44 +2477,49 @@ class FluxionWindow(QMainWindow):
         self.models_progress.setVisible(False)
         layout.addWidget(self.models_progress)
 
+        filters = QHBoxLayout()
+        filters.setSpacing(8)
+        self.models_search = QLineEdit()
+        self.models_search.setPlaceholderText("Поиск модели…")
+        self.models_search.setClearButtonEnabled(True)
+        self.models_search.textChanged.connect(self._apply_model_filter)
+        filters.addWidget(self.models_search, 1)
+        self.models_kind = QComboBox()
+        for label, kind in MODEL_KINDS:
+            self.models_kind.addItem(label, kind)
+        self.models_kind.currentIndexChanged.connect(self._apply_model_filter)
+        filters.addWidget(self.models_kind)
+        self.models_vram = QComboBox()
+        for label, gb in MODEL_VRAM_LIMITS:
+            self.models_vram.addItem(label, gb)
+        self.models_vram.setToolTip("Показать модели, которым хватит памяти видеокарты")
+        self.models_vram.currentIndexChanged.connect(self._apply_model_filter)
+        filters.addWidget(self.models_vram)
+        layout.addLayout(filters)
+
+        self._model_cards_box = QVBoxLayout()
+        self._model_cards_box.setSpacing(12)
+        layout.addLayout(self._model_cards_box)
+        self.models_empty = QLabel("Под условия поиска не подходит ни одна модель.")
+        self.models_empty.setObjectName("subtitle")
+        self.models_empty.setVisible(False)
+        layout.addWidget(self.models_empty)
         self._model_buttons: dict[str, QPushButton] = {}
-        for entry in self.model_mgr.catalog():
-            card = QFrame()
-            card.setObjectName("stepCard")
-            row = QHBoxLayout(card)
-            row.setContentsMargins(16, 12, 16, 12)
-            row.setSpacing(10)
-            pro_mark = (
-                ' <span style="color:#8B4BFF; font-weight:600;">PRO</span>' if entry.pro else ""
-            )
-            summary = (
-                f'<br><span style="color:#94A3B8;">{html.escape(entry.summary)}</span>'
-                if entry.summary else ""
-            )
-            name = QLabel(f"<b>{html.escape(entry.name)}</b>{pro_mark}{summary}")
-            name.setTextFormat(Qt.RichText)
-            name.setWordWrap(True)
-            row.addWidget(name, 1)
-            meta = QLabel(
-                f"{entry.size_bytes / 1_000_000_000:.1f} ГБ"
-                + (f" · ~{entry.vram_gb:.0f} ГБ VRAM" if entry.vram_gb else "")
-                + (" · эмбеддинги" if entry.task == "embedding" else "")
-                + (" · по умолчанию" if entry.default else "")
-            )
-            meta.setObjectName("statusChip")
-            row.addWidget(meta)
-            button = QPushButton()
-            button.setProperty("suggestion", True)
-            button.clicked.connect(lambda checked=False, mid=entry.model_id: self._on_model_button(mid))
-            row.addWidget(button)
-            self._model_buttons[entry.model_id] = button
-            layout.addWidget(card)
+        self._model_cards: dict[str, tuple] = {}
+        self._catalog_worker: CatalogWorker | None = None
+        self._gpu_memory_gb = 0.0
+        self._build_model_cards()
 
         actions = QHBoxLayout()
         import_disk = QPushButton("Импорт с диска…")
         import_disk.setProperty("suggestion", True)
         import_disk.clicked.connect(self._import_model_disk)
         actions.addWidget(import_disk)
+        by_link = QPushButton("Скачать по ссылке…")
+        by_link.setProperty("suggestion", True)
+        by_link.setToolTip("Любая модель GGUF с Hugging Face, не только из списка")
+        by_link.clicked.connect(self._download_model_by_link)
+        actions.addWidget(by_link)
         import_ollama = QPushButton("Импорт из Ollama")
         import_ollama.setProperty("suggestion", True)
         import_ollama.clicked.connect(self._import_models_ollama)
@@ -2257,10 +2531,12 @@ class FluxionWindow(QMainWindow):
         self.models_installed.setObjectName("subtitle")
         self.models_installed.setWordWrap(True)
         layout.addWidget(self.models_installed)
-        layout.addWidget(self._cloud_api_card())
+        self._cloud_card = self._cloud_api_card()
+        layout.addWidget(self._cloud_card)
         layout.addStretch()
 
         self._refresh_models()
+        self._start_catalog_fetch()
         # Scrollable: the catalog plus the cloud section do not fit a small window.
         scroll = QScrollArea()
         scroll.setObjectName("pageScroll")
@@ -2498,6 +2774,122 @@ class FluxionWindow(QMainWindow):
         self._load_models()
         self._start_status_check()
 
+    def _build_model_cards(self) -> None:
+        """(Re)create one card per catalog model; the filters only hide cards."""
+        box = self._model_cards_box
+        while box.count():
+            item = box.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._model_buttons = {}
+        self._model_cards = {}
+        for entry in self.model_mgr.catalog():
+            card = QFrame()
+            card.setObjectName("stepCard")
+            row = QHBoxLayout(card)
+            row.setContentsMargins(16, 12, 16, 12)
+            row.setSpacing(10)
+            pro_mark = (
+                ' <span style="color:#8B4BFF; font-weight:600;">PRO</span>' if entry.pro else ""
+            )
+            summary = (
+                f'<br><span style="color:#94A3B8;">{html.escape(entry.summary)}</span>'
+                if entry.summary else ""
+            )
+            name = QLabel(f"<b>{html.escape(entry.name)}</b>{pro_mark}{summary}")
+            name.setTextFormat(Qt.RichText)
+            name.setWordWrap(True)
+            row.addWidget(name, 1)
+            meta = QLabel(
+                f"{entry.size_bytes / 1_000_000_000:.1f} ГБ"
+                + (f" · ~{entry.vram_gb:.0f} ГБ VRAM" if entry.vram_gb else "")
+                + (" · эмбеддинги" if entry.task == "embedding" else "")
+                + (" · по умолчанию" if entry.default else "")
+            )
+            meta.setObjectName("statusChip")
+            row.addWidget(meta)
+            button = QPushButton()
+            button.setProperty("suggestion", True)
+            button.clicked.connect(lambda checked=False, mid=entry.model_id: self._on_model_button(mid))
+            row.addWidget(button)
+            self._model_buttons[entry.model_id] = button
+            self._model_cards[entry.model_id] = (card, entry)
+            box.addWidget(card)
+        self._apply_model_filter()
+
+    def _model_matches(self, entry, text: str, kind: str, vram_gb: float) -> bool:
+        if text:
+            haystack = " ".join(
+                [entry.name, entry.summary, entry.repo_id, entry.filename, " ".join(entry.tags)]
+            ).casefold()
+            if not all(word in haystack for word in text.split()):
+                return False
+        if kind == "installed":
+            if not self.model_mgr.is_installed(entry.model_id):
+                return False
+        elif kind == "rag":
+            if entry.task != "embedding":
+                return False
+        elif kind == "pro":
+            if not entry.pro:
+                return False
+        elif kind == "free":
+            if entry.pro:
+                return False
+        elif kind and kind not in entry.tags:
+            return False
+        return not (vram_gb > 0 and entry.vram_gb > vram_gb)
+
+    def _apply_model_filter(self, *_args) -> None:
+        cards = getattr(self, "_model_cards", None)
+        if cards is None or not hasattr(self, "models_search"):
+            return
+        text = self.models_search.text().strip().casefold()
+        kind = str(self.models_kind.currentData() or "")
+        vram_gb = float(self.models_vram.currentData() or 0)
+        if vram_gb < 0:  # "my video card"
+            vram_gb = float(self._gpu_memory_gb or 0)
+        shown = 0
+        for card, entry in cards.values():
+            visible = self._model_matches(entry, text, kind, vram_gb)
+            card.setHidden(not visible)
+            shown += visible
+        self.models_empty.setHidden(shown > 0 or not cards)
+
+    def _refresh_models_and_catalog(self) -> None:
+        self._refresh_models()
+        self._start_catalog_fetch()
+
+    def _start_catalog_fetch(self) -> None:
+        """New models from the website catalog, and the video card's memory."""
+        if getattr(self, "_catalog_worker", None) is not None:
+            return
+        self._catalog_worker = CatalogWorker(self.model_mgr, self)
+        self._catalog_worker.done.connect(self._on_catalog_fetched)
+        self._catalog_worker.start()
+
+    def _on_catalog_fetched(self, count: int, error: str, gpu_gb: float) -> None:
+        worker, self._catalog_worker = self._catalog_worker, None
+        if worker is not None:
+            worker.wait(1000)
+            worker.deleteLater()
+        if gpu_gb > 0 and self.models_vram.findData(-1.0) < 0:
+            # "my card": the detected memory, right after "any card"
+            self._gpu_memory_gb = gpu_gb
+            self.models_vram.insertItem(1, f"Моя видеокарта ({gpu_gb:.0f} ГБ)", -1.0)
+        if count <= 0:
+            if error:
+                self.models_refresh_button.setToolTip(f"Обновить список. {error}")
+            return
+        self.models_refresh_button.setToolTip("Обновить список и каталог с сайта")
+        if getattr(self, "_model_download_worker", None) is not None:
+            return  # no rebuild under a running download; the next refresh does it
+        shown = [entry for _card, entry in self._model_cards.values()]
+        if shown != self.model_mgr.catalog():
+            self._build_model_cards()
+            self._refresh_models()
+
     def _refresh_models(self) -> None:
         from core.model_manager import model_allowed
 
@@ -2539,6 +2931,7 @@ class FluxionWindow(QMainWindow):
                 mm.delete(entry.filename)
                 self.models_status.setText(f"Удалено: {entry.filename}")
                 self._refresh_models()
+                self._load_models()
             return
         if not model_allowed(entry):
             self.models_status.setText(
@@ -2548,7 +2941,18 @@ class FluxionWindow(QMainWindow):
             return
         self._start_model_download(model_id)
 
-    def _start_model_download(self, model_id: str) -> None:
+    def _download_model_by_link(self) -> None:
+        if getattr(self, "_model_download_worker", None) is not None:
+            self.models_status.setText("Дождитесь окончания текущей загрузки.")
+            return
+        mm = getattr(self, "model_mgr", None)
+        installed = {m.filename for m in mm.list_installed()} if mm is not None else set()
+        dialog = HfDownloadDialog(self, installed=installed)
+        if dialog.exec() != QDialog.Accepted or dialog.selected_file is None:
+            return
+        self._start_model_download("", hf_file=dialog.selected_file)
+
+    def _start_model_download(self, model_id: str, hf_file=None) -> None:
         if getattr(self, "_model_download_worker", None) is not None:
             return
         self.models_progress.setVisible(True)
@@ -2556,7 +2960,7 @@ class FluxionWindow(QMainWindow):
         self.models_status.setText("Скачиваем модель… докачка поддерживается")
         for button in self._model_buttons.values():
             button.setEnabled(False)
-        self._model_download_worker = ModelDownloadWorker(model_id)
+        self._model_download_worker = ModelDownloadWorker(model_id, hf_file=hf_file)
         self._model_download_worker.progress.connect(self._on_model_download_progress)
         self._model_download_worker.done.connect(self._on_model_download_done)
         self._model_download_worker.failed.connect(self._on_model_download_failed)
@@ -2585,14 +2989,13 @@ class FluxionWindow(QMainWindow):
         try:
             entry_name = Path(path).name
             default_entry = next((e for e in self.model_mgr.catalog() if e.filename == entry_name), None)
-            if (
-                default_entry is not None
-                and default_entry.task == "chat"
-                and _detect_backend_type(self.settings) == "llama_cpp"
-            ):
-                self.settings.gguf_path = path
+            task = default_entry.task if default_entry is not None else self.model_mgr._sidecar(Path(path)).get("task", "chat")
+            if task == "chat" and _detect_backend_type(self.settings) == "llama_cpp":
+                self._set_gguf_path(path)
+                self.qsettings.setValue("gguf_path", path)
         except Exception:
             pass
+        self._load_models()  # the new model appears in "⚙ Настройки чата" → «Модель»
         self._start_status_check()  # the engine picks the model up: show it online
 
     def _on_model_download_failed(self, message: str) -> None:
@@ -2627,6 +3030,7 @@ class FluxionWindow(QMainWindow):
         self._model_import_worker = None
         self.models_status.setText(message)
         self._refresh_models()
+        self._load_models()
 
     def _toggle_training_advanced(self, opened: bool) -> None:
         self.training_advanced.setVisible(opened)
@@ -3193,6 +3597,9 @@ class FluxionWindow(QMainWindow):
         if self._is_cloud_backend():
             self._show_models_unavailable("Облачная модель: сменить её можно на странице «Модели»")
             return
+        if self._is_embedded_backend():
+            self._show_local_models()
+            return
         if self._model_worker is not None:
             return
         self.model_combo.setEnabled(False)
@@ -3241,7 +3648,77 @@ class FluxionWindow(QMainWindow):
     def _on_models_failed(self, message: str) -> None:
         self._show_models_unavailable(message)
 
+    def _is_embedded_backend(self) -> bool:
+        """The built-in llama.cpp engine: it runs a GGUF file, not an Ollama model."""
+        return getattr(self.backend, "client", None) is None and isinstance(
+            getattr(self.backend, "model_path", None), str
+        )
+
+    def _local_chat_models(self) -> list[tuple[str, str]]:
+        """(name, path) of the chat models in the models folder: downloaded on
+        the "Модели" page or imported; the code-search model is left out."""
+        from core.model_manager import ModelManager
+
+        try:
+            mm = getattr(self, "model_mgr", None) or ModelManager()
+            catalog = {m.filename.lower(): m for m in mm.catalog()}
+            installed = mm.list_installed()
+        except Exception:
+            return []
+        models = []
+        for item in installed:
+            entry = catalog.get(item.filename.lower())
+            if (entry.task if entry is not None else item.task) != "chat":
+                continue
+            models.append((entry.name if entry is not None else item.filename, str(item.path)))
+        return models
+
+    @staticmethod
+    def _same_path(a: str, b: str) -> bool:
+        return bool(a and b) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+    def _show_local_models(self) -> None:
+        models = self._local_chat_models()
+        current = str(getattr(self.backend, "model_path", "") or "")
+        if current and Path(current).is_file() and not any(self._same_path(current, p) for _n, p in models):
+            models.insert(0, (Path(current).name, current))  # e.g. a gguf_path from config.yaml
+        self._applying_model = True
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        for name, path in models:
+            self.model_combo.addItem(name, path)
+            if self._same_path(current, path):
+                self.model_combo.setCurrentIndex(self.model_combo.count() - 1)
+        self.model_combo.blockSignals(False)
+        self._applying_model = False
+        self.model_combo.setEnabled(bool(models))
+        self.model_combo.setToolTip(
+            "Модель для чата и агента" if models else "Скачайте модель на странице «Модели»"
+        )
+
+    def _set_gguf_path(self, path: str) -> None:
+        self.settings.gguf_path = path
+        engine_settings = getattr(self.backend, "settings", None)
+        if engine_settings is not None and engine_settings is not self.settings:
+            engine_settings.gguf_path = path  # the engine loads it on the next request
+
+    def _on_local_model_selected(self) -> None:
+        path = str(self.model_combo.currentData() or "")
+        if self.generating or self.agent_running:
+            self._show_local_models()  # no switch mid-answer: show the model in use
+            return
+        if not path or self.settings is None:
+            return
+        if self._same_path(path, str(getattr(self.backend, "model_path", "") or "")):
+            return
+        self._set_gguf_path(path)
+        self.qsettings.setValue("gguf_path", path)
+        self._start_status_check()
+
     def _on_model_selected(self, name: str) -> None:
+        if self._is_embedded_backend():
+            self._on_local_model_selected()
+            return
         if self.generating or self.agent_running:
             self._applying_model = True
             self.model_combo.blockSignals(True)
@@ -3379,7 +3856,17 @@ class FluxionWindow(QMainWindow):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
+    def _notify_answer(self) -> None:
+        """Play the "answer ready" sound, unless switched off or the user pressed Stop."""
+        if self._stop_requested or not message_sound_enabled(self.qsettings):
+            return
+        from .sound import play_message_sound
+
+        play_message_sound()
+
     def stop_generation(self) -> None:
+        if self.generating:
+            self._stop_requested = True
         if self.worker is not None and self.generating:
             self.worker.stop()
         if self.agent_worker is not None and self.generating:
@@ -3516,6 +4003,8 @@ class FluxionWindow(QMainWindow):
             fragments.append(answer)
             self.history.append({"role": "assistant", "content": answer})
         entry["text"] = "\n".join(fragments) or "(пустой ответ)"
+        if answer:
+            self._notify_answer()
         meta = ["агент", f"{result.get('iterations_used', 0)} итер."]
         verification = VERIFICATION_LABELS.get(result.get("verification", ""))
         if verification:
@@ -3540,6 +4029,8 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
 
     def _set_generating(self, active: bool) -> None:
+        if active:
+            self._stop_requested = False
         self.generating = active
         self.send_button.setEnabled(not active)
         self.stop_button.setVisible(active)
@@ -3622,6 +4113,7 @@ class FluxionWindow(QMainWindow):
             self._messages[-1]["text"] += "(пустой ответ)"
         else:
             self.history.append({"role": "assistant", "content": text})
+            self._notify_answer()
         self._set_generating(False)
         self._render_messages()
         self._save_memory()
@@ -3903,6 +4395,8 @@ class FluxionWindow(QMainWindow):
             self._health_worker.wait(10000)
         if self._model_worker is not None:
             self._model_worker.wait(5000)
+        if getattr(self, "_catalog_worker", None) is not None:
+            self._catalog_worker.wait(12000)  # the request times out at 10 s
         if getattr(self, "_cloud_worker", None) is not None:
             self._cloud_worker.wait(16000)  # the request times out at 15 s
         if self.training_worker is not None and self.training_running:

@@ -357,10 +357,11 @@ def test_agent_without_factory_shows_message(qapp, tmp_path):
 def test_agent_has_no_page_and_no_menu(qapp, tmp_path):
     window = _window(qapp, tmp_path)
     nav = [button.text() for button in window.nav_group.buttons()]
-    assert nav == ["Чат", "Проект", "Обучение", "Модели"]
+    assert nav == ["Чат", "Проект"]
     assert window.pages.count() == 4
     menus = [action.text().replace("&", "") for action in window.menuBar().actions()]
     assert "Агент" not in menus
+    assert "Модели" in menus
     for name in ("agent_view", "agent_task", "agent_write", "run_agent", "act_write"):
         assert not hasattr(window, name)
 
@@ -1804,3 +1805,69 @@ def test_training_frees_the_chat_model(qapp, tmp_path, monkeypatch):
     _drain(qapp, window)
     assert unloaded == [True]
     assert "Модель чата выгружена" in window.training_view.toPlainText()
+
+
+def test_models_and_training_open_from_the_top_menu(qapp, tmp_path):
+    from desktop_browser.app import PAGE_CHAT, PAGE_MODELS, PAGE_TRAINING
+
+    window = _window(qapp, tmp_path)
+    menu = next(a.menu() for a in window.menuBar().actions() if a.text().replace("&", "") == "Модели")
+    actions = {a.text(): a for a in menu.actions() if a.text()}
+    assert set(actions) == {"Скачать и выбрать модели…", "Облачная модель по API…", "Обучение модели…"}
+
+    actions["Скачать и выбрать модели…"].trigger()
+    assert window.pages.currentIndex() == PAGE_MODELS
+    assert not any(b.isChecked() for b in window.nav_group.buttons())   # no sidebar item lit
+    actions["Обучение модели…"].trigger()
+    assert window.pages.currentIndex() == PAGE_TRAINING
+    actions["Облачная модель по API…"].trigger()
+    assert window.pages.currentIndex() == PAGE_MODELS
+
+    chat = next(b for b in window.nav_group.buttons() if b.text() == "Чат")
+    chat.click()
+    assert window.pages.currentIndex() == PAGE_CHAT and chat.isChecked()
+    window.pages.setCurrentIndex(1)                                      # e.g. from the index chip
+    assert next(b for b in window.nav_group.buttons() if b.text() == "Проект").isChecked()
+
+
+def test_sound_when_fluxion_answered(qapp, tmp_path, monkeypatch):
+    import desktop_browser.sound as sound
+
+    played = []
+    monkeypatch.setattr(sound, "play_message_sound", lambda *a: played.append(1) or True)
+    window = _window(qapp, tmp_path)
+    assert window.message_sound.isChecked()                      # on by default
+
+    def answer(text, stop=False):
+        window._messages.append({"role": "assistant", "text": text, "meta": ""})
+        window._set_generating(True)
+        if stop:
+            window.stop_generation()
+        window._on_done()
+
+    answer("Готово")
+    assert played == [1]
+    answer("")                                                   # empty answer: no sound
+    answer("частично", stop=True)                                # stopped by the user: no sound
+    assert played == [1]
+
+    window._messages.append({"role": "assistant", "text": "", "meta": ""})
+    window._set_generating(True)
+    window._on_chat_agent_done({"final_answer": "Исправил", "iterations_used": 2})
+    assert played == [1, 1]
+
+    window.message_sound.setChecked(False)                       # switched off and remembered
+    answer("ещё")
+    assert played == [1, 1]
+    assert not _window(qapp, tmp_path).message_sound.isChecked()
+
+
+def test_message_sound_file_is_shipped():
+    import wave
+
+    from desktop_browser.sound import MESSAGE_SOUND
+
+    with wave.open(str(MESSAGE_SOUND)) as w:
+        assert 0.2 < w.getnframes() / w.getframerate() < 1.5      # a short chime
+    spec = (MESSAGE_SOUND.parent.parent / "fluxion-desktop-browser-lite.spec").read_text(encoding="utf-8")
+    assert '"assets/message.wav"' in spec

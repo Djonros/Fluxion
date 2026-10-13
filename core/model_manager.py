@@ -10,7 +10,8 @@ import json
 import logging
 import os
 import shutil
-from dataclasses import dataclass, asdict
+import re
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import httpx
@@ -51,71 +52,143 @@ class ModelInfo:
     # Pro catalog: downloading requires the "model_catalog" Pro feature.
     pro: bool = False
     summary: str = ""  # one line for the "Models" page and the website
+    tags: list[str] = field(default_factory=list)  # code | chat | small | rag: filters of the page
+    min_app_version: str = ""  # shown only in this app version and newer
 
 
-MODEL_CATALOG: list[ModelInfo] = [
-    ModelInfo(
-        model_id="qwen2.5-coder-7b-q4km",
-        name="Qwen2.5 Coder 7B Instruct (Q4_K_M)",
-        repo_id="Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-        filename="qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-        size_bytes=4_681_000_000,
-        vram_gb=6.0,
-        default=True,
-        summary="Чат и агент. Модель по умолчанию",
-    ),
-    ModelInfo(
-        model_id="qwen2.5-coder-3b-q4km",
-        name="Qwen2.5 Coder 3B Instruct (Q4_K_M) — для слабых машин",
-        repo_id="Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
-        filename="qwen2.5-coder-3b-instruct-q4_k_m.gguf",
-        size_bytes=2_200_000_000,
-        vram_gb=3.0,
-        summary="Чат и агент на слабых компьютерах",
-    ),
-    ModelInfo(
-        model_id="bge-m3-gguf",
-        name="BGE-M3 (эмбеддинги, GGUF)",
-        repo_id="gpustack/bge-m3-GGUF",
-        filename="bge-m3-Q8_0.gguf",
-        size_bytes=1_300_000_000,
-        task="embedding",
-        summary="Поиск по коду проекта (RAG)",
-    ),
-    # ── Pro catalog (same Qwen2.5-Coder family: chat template, agent JSON
-    #    grammar and llama.cpp support are the same as for the default model;
-    #    Apache-2.0 licensed; single-file GGUFs, which the downloader needs) ──
-    ModelInfo(
-        model_id="qwen2.5-coder-7b-q8",
-        name="Qwen2.5 Coder 7B Instruct (Q8_0)",
-        repo_id="bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
-        filename="Qwen2.5-Coder-7B-Instruct-Q8_0.gguf",
-        size_bytes=8_100_000_000,
-        vram_gb=10.0,
-        pro=True,
-        summary="Модель по умолчанию в повышенной точности: отвечает точнее, памяти нужно больше",
-    ),
-    ModelInfo(
-        model_id="qwen2.5-coder-14b-q4km",
-        name="Qwen2.5 Coder 14B Instruct (Q4_K_M)",
-        repo_id="bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
-        filename="Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
-        size_bytes=8_990_000_000,
-        vram_gb=12.0,
-        pro=True,
-        summary="Вдвое крупнее модели по умолчанию — сильнее в сложных задачах",
-    ),
-    ModelInfo(
-        model_id="qwen2.5-coder-32b-q4km",
-        name="Qwen2.5 Coder 32B Instruct (Q4_K_M)",
-        repo_id="bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
-        filename="Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
-        size_bytes=19_850_000_000,
-        vram_gb=24.0,
-        pro=True,
-        summary="Самая сильная модель линейки, для мощных компьютеров",
-    ),
-]
+# The catalog lives in model_catalog.json: shipped inside the app and published
+# on the website (data/catalog.json), where the app picks up new models
+# without a release (fetch_remote_catalog).
+CATALOG_FILE = Path(__file__).with_name("model_catalog.json")
+DEFAULT_CATALOG_URL = "https://djonros.github.io/fluxion/data/catalog.json"
+REMOTE_CACHE_NAME = "catalog-remote.json"
+
+_REPO_RE = re.compile(r"[\w.-]+/[\w.-]+")
+_SPLIT_GGUF_RE = re.compile(r"-\d{5}-of-\d{5}")
+
+
+def entry_from_dict(data: dict) -> ModelInfo | None:
+    """One catalog record, or None when it is malformed.
+
+    Remote records come from the network: only a Hugging Face repo and a single
+    plain .gguf file name are accepted, so a record cannot point the downloader
+    anywhere else or at a path outside the models folder.
+    """
+    try:
+        model_id = str(data.get("id") or data.get("model_id") or "").strip()
+        repo_id = str(data.get("repo_id", "")).strip()
+        filename = str(data.get("filename", "")).strip()
+        task = str(data.get("task", "chat") or "chat")
+        tags = data.get("tags") or []
+        entry = ModelInfo(
+            model_id=model_id,
+            name=str(data.get("name", "")).strip(),
+            repo_id=repo_id,
+            filename=filename,
+            size_bytes=int(data.get("size_bytes") or 0),
+            task=task,
+            vram_gb=float(data.get("vram_gb") or 0.0),
+            sha256=str(data.get("sha256", "") or "").strip().lower(),
+            default=bool(data.get("default", False)),
+            pro=bool(data.get("pro", False)),
+            summary=str(data.get("summary", "") or "").strip(),
+            tags=[str(t).strip().lower() for t in tags if str(t).strip()] if isinstance(tags, list) else [],
+            min_app_version=str(data.get("min_app_version", "") or "").strip(),
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not (entry.model_id and entry.name and entry.size_bytes > 0):
+        return None
+    if not _REPO_RE.fullmatch(repo_id) or ".." in repo_id:
+        return None
+    if (
+        not filename.lower().endswith(".gguf")
+        or filename != Path(filename).name
+        or "\\" in filename
+        or _SPLIT_GGUF_RE.search(filename)
+    ):
+        return None
+    if task not in ("chat", "embedding"):
+        return None
+    if entry.sha256 and not re.fullmatch(r"[0-9a-f]{64}", entry.sha256):
+        return None
+    return entry
+
+
+def parse_catalog(data) -> list[ModelInfo]:
+    """Entries of a catalog document ({"models": [...]}); bad records are skipped."""
+    records = data.get("models", []) if isinstance(data, dict) else []
+    entries: list[ModelInfo] = []
+    seen: set[str] = set()
+    for record in records if isinstance(records, list) else []:
+        entry = entry_from_dict(record) if isinstance(record, dict) else None
+        if entry is None or entry.model_id in seen:
+            continue
+        seen.add(entry.model_id)
+        entries.append(entry)
+    return entries
+
+
+def load_catalog_file(path: Path) -> list[ModelInfo]:
+    try:
+        return parse_catalog(json.loads(Path(path).read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+
+
+MODEL_CATALOG: list[ModelInfo] = load_catalog_file(CATALOG_FILE)
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in re.findall(r"\d+", version)[:3])
+
+
+def _app_version() -> str:
+    try:
+        from desktop_browser import APP_VERSION
+
+        return APP_VERSION
+    except Exception:
+        return ""
+
+
+def merge_catalog(
+    bundled: list[ModelInfo], remote: list[ModelInfo], app_version: str = ""
+) -> list[ModelInfo]:
+    """The bundled catalog updated by the remote one.
+
+    A remote record updates the bundled model with the same id (size, summary,
+    tags…) or adds a new model.  It never changes which model is the default
+    and never adds a second file name, and a record needing a newer app is
+    left out.
+    """
+    merged = {m.model_id: m for m in bundled}
+    order = [m.model_id for m in bundled]
+    for entry in remote:
+        if entry.min_app_version and app_version and _version_key(entry.min_app_version) > _version_key(app_version):
+            continue
+        old = merged.get(entry.model_id)
+        files = {m.filename.lower() for m in merged.values() if m is not old}
+        if entry.filename.lower() in files:
+            continue
+        if old is not None:
+            entry.default = old.default
+            entry.task = old.task
+        else:
+            entry.default = False
+            order.append(entry.model_id)
+        merged[entry.model_id] = entry
+    return [merged[i] for i in order]
+
+
+def catalog_url() -> str:
+    """Where the app looks for new models; "off" (or empty) switches it off."""
+    value = os.environ.get("FLUXION_CATALOG_URL")
+    if value is None:
+        return DEFAULT_CATALOG_URL
+    value = value.strip()
+    return "" if value.lower() in ("", "off", "0", "no") else value
+
 
 PRO_FEATURE = "model_catalog"
 
@@ -163,6 +236,148 @@ def hf_download_url(repo_id: str, filename: str) -> str:
     return f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
 
 
+# ── any GGUF model from Hugging Face by link ("Скачать по ссылке…") ─────────
+
+HF_HOSTS = ("huggingface.co", "www.huggingface.co", "hf.co")
+
+
+@dataclass
+class HfFile:
+    """One GGUF file of a Hugging Face repository."""
+
+    repo_id: str
+    path: str  # inside the repository, may contain folders
+    size_bytes: int = 0
+    sha256: str = ""
+
+    @property
+    def filename(self) -> str:
+        return self.path.rsplit("/", 1)[-1]
+
+
+def parse_hf_link(text: str) -> tuple[str, str, str]:
+    """(repo_id, file path or "", quant hint or "") from what the user pasted.
+
+    Accepts "owner/repo", a model page, a /tree/ or /blob/ or /resolve/ link
+    to a file, and the "hf.co/owner/repo:Q4_K_M" form.  Raises ValueError
+    with a user-facing message for anything else.
+    """
+    from urllib.parse import unquote, urlparse
+
+    value = (text or "").strip().strip("\"'")
+    if not value:
+        raise ValueError("Вставьте ссылку на модель с Hugging Face.")
+    if "://" not in value and value.split("/", 1)[0].lower() in HF_HOSTS:
+        value = "https://" + value
+    if "://" in value:
+        url = urlparse(value)
+        if url.scheme not in ("http", "https") or (url.hostname or "").lower() not in HF_HOSTS:
+            raise ValueError("Поддерживаются только ссылки на huggingface.co.")
+        parts = [unquote(p) for p in url.path.split("/") if p]
+    else:
+        parts = [p for p in value.split("/") if p]
+    if parts and parts[0] == "models":
+        parts = parts[1:]
+    if len(parts) < 2:
+        raise ValueError("В ссылке нет модели: нужен вид «автор/модель», например bartowski/Qwen2.5-7B-Instruct-GGUF.")
+    owner, repo = parts[0], parts[1]
+    quant = ""
+    if ":" in repo:
+        repo, quant = repo.split(":", 1)
+    repo_id = f"{owner}/{repo}"
+    if not _REPO_RE.fullmatch(repo_id) or ".." in repo_id:
+        raise ValueError(f"Непонятное имя модели: {repo_id}")
+    path = ""
+    if len(parts) > 4 and parts[2] in ("blob", "resolve", "tree"):
+        path = "/".join(parts[4:])  # parts[3] is the branch
+        if not path.lower().endswith(".gguf"):
+            path = ""  # a folder link: list the files
+    if path and (".." in path.split("/") or "\\" in path):
+        raise ValueError("Недопустимый путь к файлу в ссылке.")
+    return repo_id, path, quant
+
+
+def hf_file_problem(path: str) -> str:
+    """Why a repository file cannot be used, or "" when it can."""
+    name = path.rsplit("/", 1)[-1]
+    if not name.lower().endswith(".gguf"):
+        return "не GGUF"
+    if _SPLIT_GGUF_RE.search(name):
+        return "модель разбита на части: такие пока не поддерживаются"
+    if "mmproj" in name.lower():
+        return "это не модель, а дополнение для картинок (mmproj)"
+    return ""
+
+
+def list_hf_gguf_files(repo_id: str, timeout: float = 20.0) -> list[HfFile]:
+    """GGUF files of a Hugging Face model repository (one request to the HF API)."""
+    url = f"https://huggingface.co/api/models/{repo_id}/tree/main?recursive=1"
+    try:
+        resp = httpx.get(url, timeout=timeout, follow_redirects=True)
+    except Exception as exc:
+        if _is_http_error(exc):
+            raise ModelDownloadError("Нет связи с Hugging Face: проверьте интернет.") from exc
+        raise
+    if resp.status_code in (401, 403):
+        raise ModelDownloadError(
+            f"Модель {repo_id} закрытая: её автор выдаёт доступ по запросу на Hugging Face. "
+            "Скачайте файл в браузере и добавьте кнопкой «Импорт с диска…»."
+        )
+    if resp.status_code == 404:
+        raise ModelDownloadError(f"Модель {repo_id} не найдена на Hugging Face.")
+    if resp.status_code != 200:
+        raise ModelDownloadError(f"Hugging Face ответил ошибкой {resp.status_code}.")
+    try:
+        items = resp.json()
+    except ValueError as exc:
+        raise ModelDownloadError("Hugging Face прислал непонятный ответ.") from exc
+    files: list[HfFile] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or item.get("type") != "file":
+            continue
+        path = str(item.get("path", ""))
+        if not path.lower().endswith(".gguf"):
+            continue
+        lfs = item.get("lfs") if isinstance(item.get("lfs"), dict) else {}
+        sha = str(lfs.get("oid", "") or "").lower()
+        files.append(
+            HfFile(
+                repo_id=repo_id,
+                path=path,
+                size_bytes=int(lfs.get("size") or item.get("size") or 0),
+                sha256=sha if re.fullmatch(r"[0-9a-f]{64}", sha) else "",
+            )
+        )
+    files.sort(key=lambda f: (bool(hf_file_problem(f.path)), f.size_bytes))
+    return files
+
+
+def detect_gpu_memory_gb() -> float:
+    """Memory of the largest NVIDIA video card in GB (nvidia-smi); 0 when unknown."""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return 0.0
+    try:
+        import subprocess
+
+        from .proc import no_window
+
+        out = subprocess.run(
+            [exe, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5, **no_window(),
+        ).stdout
+    except Exception:
+        return 0.0
+    values = [float(v) for v in re.findall(r"\d+(?:\.\d+)?", out or "")]
+    return round(max(values) / 1024, 1) if values else 0.0  # MiB -> GB
+
+
+def _entry_to_dict(entry: ModelInfo) -> dict:
+    data = asdict(entry)
+    data["id"] = data.pop("model_id")
+    return data
+
+
 @dataclass
 class InstalledModel:
     filename: str
@@ -181,12 +396,49 @@ class ModelManager:
 
     # ── catalog / listing ─────────────────────────────────────────────
 
-    @staticmethod
-    def catalog() -> list[ModelInfo]:
-        return list(MODEL_CATALOG)
+    def catalog(self) -> list[ModelInfo]:
+        """Bundled catalog plus the models last fetched from the website."""
+        remote = load_catalog_file(self.models_dir / REMOTE_CACHE_NAME)
+        if not remote:
+            return list(MODEL_CATALOG)
+        return merge_catalog(list(MODEL_CATALOG), remote, _app_version())
 
     def catalog_entry(self, model_id: str) -> ModelInfo | None:
-        return next((m for m in MODEL_CATALOG if m.model_id == model_id), None)
+        return next((m for m in self.catalog() if m.model_id == model_id), None)
+
+    def fetch_remote_catalog(self, url: str | None = None, timeout: float = 10.0) -> int:
+        """Download the website catalog into the models folder.
+
+        Returns the number of models it lists; raises RuntimeError with a
+        user-facing message.  The cached copy is used until the next fetch,
+        also offline.
+        """
+        url = catalog_url() if url is None else url
+        if not url:
+            raise RuntimeError("Обновление каталога выключено (FLUXION_CATALOG_URL).")
+        try:
+            resp = httpx.get(url, timeout=timeout, follow_redirects=True)
+        except Exception as exc:
+            if _is_http_error(exc):
+                raise RuntimeError("Нет связи с сайтом Fluxion: показан каталог программы.") from exc
+            raise
+        if resp.status_code != 200:
+            raise RuntimeError(f"Сайт Fluxion ответил ошибкой {resp.status_code}: показан каталог программы.")
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise RuntimeError("Каталог на сайте повреждён: показан каталог программы.") from exc
+        entries = parse_catalog(data)
+        if not entries:
+            raise RuntimeError("Каталог на сайте пуст: показан каталог программы.")
+        cache = self.models_dir / REMOTE_CACHE_NAME
+        tmp = cache.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps({"models": [_entry_to_dict(e) for e in entries]}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(cache)
+        return len(entries)
 
     def list_installed(self) -> list[InstalledModel]:
         installed: list[InstalledModel] = []
@@ -233,10 +485,28 @@ class ModelManager:
                 f"Модель «{entry.name}» доступна в Fluxion Pro. "
                 "Активируйте лицензию: меню Помощь → Лицензия…"
             )
+        return self._download_entry(entry, entry.filename, on_progress, timeout)
+
+    def download_hf_file(self, file: HfFile, on_progress=None, timeout: float = 60.0) -> Path:
+        """Download any GGUF file of a Hugging Face repository (not from the catalog)."""
+        problem = hf_file_problem(file.path)
+        if problem or not _REPO_RE.fullmatch(file.repo_id) or ".." in file.path.split("/"):
+            raise ModelDownloadError(f"Файл {file.filename} не скачать: {problem or 'недопустимое имя'}.")
+        entry = ModelInfo(
+            model_id=f"hf:{file.repo_id}/{file.path}",
+            name=file.filename,
+            repo_id=file.repo_id,
+            filename=file.filename,
+            size_bytes=file.size_bytes,
+            sha256=file.sha256,
+        )
+        return self._download_entry(entry, file.path, on_progress, timeout)
+
+    def _download_entry(self, entry: ModelInfo, repo_path: str, on_progress, timeout: float) -> Path:
         target = self.models_dir / entry.filename
         if target.is_file():
             return target
-        url = hf_download_url(entry.repo_id, entry.filename)
+        url = hf_download_url(entry.repo_id, repo_path)
         part = target.with_suffix(target.suffix + ".part")
         try:
             self._fetch(url, part, entry, on_progress, timeout)

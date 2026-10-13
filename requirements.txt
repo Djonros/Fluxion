@@ -14,6 +14,7 @@ sentence-transformers>=3.0
 tree-sitter>=0.23
 tree-sitter-python>=0.23
 flashrank>=0.2
+pypdf>=5.0  # PDF text for the project index (rag/documents.py)
 
 # Web (Phase 4)
 trafilatura>=1.12

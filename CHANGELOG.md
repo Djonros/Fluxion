@@ -5,6 +5,23 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] — 2026-10-13
+
+### Added
+- A short sound when Fluxion finishes an answer in the chat or the agent (`assets/message.wav`, played with `winsound` on Windows, the system beep elsewhere). Not after an empty answer or Stop; switch it off in "⚙ Настройки чата" → "Звук, когда Fluxion ответил".
+- The "Модели" page has a search box and filters: kind (code, texts and documents, weak computers, project search, installed, free, Pro) and video memory, including "Моя видеокарта (N ГБ)" when an NVIDIA card is found (`nvidia-smi`).
+- New models arrive without a release: the catalog moved to `core/model_catalog.json`, the website publishes it as `data/catalog.json`, and the page fetches it in the background on open and on "Обновить". Fetched records are checked (Hugging Face repo, one plain `.gguf` file name) and cached in the models folder for offline use; they cannot change the default model, and a record can ask for a newer app with `min_app_version`. `FLUXION_CATALOG_URL=off` switches fetching off.
+- "Скачать по ссылке…" on the "Модели" page (free): paste a Hugging Face link (model page, file link or `hf.co/owner/model:Q4_K_M`), pick a GGUF file from the list (sizes shown, Q4_K_M preselected) and it downloads with resume like a catalog model, checked against the SHA256 that Hugging Face reports. Gated, split and mmproj files are listed but cannot be picked; the dialog says models outside the catalog are not tested with the agent.
+- General text models for letters, documents and translations: Qwen2.5 1.5B and 7B Instruct (free) and Qwen2.5 14B Instruct (Pro).
+- The project index reads documents: PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) and CSV, so the chat answers from contracts, reports and tables in the folder. PDF needs `pypdf` (added to `requirements.txt`); damaged, password-protected and files over 50 MB are skipped.
+
+### Changed
+- "Модели" and "Обучение" left the sidebar: they open from the new top menu "Модели" ("Скачать и выбрать модели…" Ctrl+M, "Облачная модель по API…", "Обучение модели…"). The sidebar keeps "Чат" and "Проект".
+
+### Fixed
+- "⚙ Настройки чата" → «Модель» was greyed out with the built-in engine: the list was taken from Ollama only. It now lists the chat models downloaded on the "Модели" page (or imported); the choice switches the model without a restart and is remembered.
+- Splitting a large text file for the index took quadratic time (every piece was searched from the start of the file).
+
 ## [0.13.0] — 2026-10-09
 
 ### Added

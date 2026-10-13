@@ -3,7 +3,7 @@
     python scripts/build_site.py                # -> _site/
     python scripts/build_site.py --out public
 
-The model table comes from the app's own catalog (core/model_manager.py) and
+The model table comes from the app's own catalog (core/model_catalog.json) and
 the training presets from presets/training/*.json, so the site cannot drift
 from the program. The documentation (mkdocs) is built separately into
 <out>/docs by the Pages workflow.
@@ -221,6 +221,10 @@ def build(out: Path) -> Path:
                 "id": m.model_id, "name": m.name, "task": m.task, "default": m.default,
                 "pro": getattr(m, "pro", False), "summary": getattr(m, "summary", ""),
                 "size_bytes": m.size_bytes, "vram_gb": m.vram_gb, "filename": m.filename,
+                # the app reads this file to pick up new models without a release
+                "repo_id": m.repo_id, "tags": list(getattr(m, "tags", [])),
+                **({"sha256": m.sha256} if m.sha256 else {}),
+                **({"min_app_version": m.min_app_version} if getattr(m, "min_app_version", "") else {}),
                 **({} if getattr(m, "pro", False) else {"url": hf_url(m.repo_id, m.filename)}),
             }
             for m in catalog

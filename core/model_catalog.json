@@ -1,0 +1,136 @@
+{
+  "_comment": "Каталог моделей страницы «Модели». Этот файл едет внутри программы и публикуется на сайте (data/catalog.json), откуда программа подтягивает новые модели без выпуска версии. Поля: id, name, summary, repo_id и filename на Hugging Face (один файл GGUF), size_bytes, task (chat | embedding), vram_gb, sha256, pro, tags (code, chat, text, small), min_app_version — модель видна только в этой версии программы и новее.",
+  "models": [
+    {
+      "id": "qwen2.5-coder-7b-q4km",
+      "name": "Qwen2.5 Coder 7B Instruct (Q4_K_M)",
+      "summary": "Чат и агент. Модель по умолчанию",
+      "repo_id": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "filename": "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "size_bytes": 4681000000,
+      "task": "chat",
+      "vram_gb": 6.0,
+      "default": true,
+      "tags": [
+        "code",
+        "chat"
+      ]
+    },
+    {
+      "id": "qwen2.5-coder-3b-q4km",
+      "name": "Qwen2.5 Coder 3B Instruct (Q4_K_M) — для слабых машин",
+      "summary": "Чат и агент на слабых компьютерах",
+      "repo_id": "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+      "filename": "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+      "size_bytes": 2200000000,
+      "task": "chat",
+      "vram_gb": 3.0,
+      "tags": [
+        "code",
+        "chat",
+        "small"
+      ]
+    },
+    {
+      "id": "qwen2.5-7b-q4km",
+      "name": "Qwen2.5 7B Instruct (Q4_K_M)",
+      "summary": "Универсальная модель: тексты, письма, ответы на вопросы, работа с документами",
+      "repo_id": "bartowski/Qwen2.5-7B-Instruct-GGUF",
+      "filename": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 4683000000,
+      "task": "chat",
+      "vram_gb": 6.0,
+      "tags": [
+        "chat",
+        "text"
+      ]
+    },
+    {
+      "id": "qwen2.5-1.5b-q4km",
+      "name": "Qwen2.5 1.5B Instruct (Q4_K_M)",
+      "summary": "Лёгкая универсальная модель для слабых компьютеров и ноутбуков без видеокарты",
+      "repo_id": "bartowski/Qwen2.5-1.5B-Instruct-GGUF",
+      "filename": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 986000000,
+      "task": "chat",
+      "vram_gb": 2.0,
+      "tags": [
+        "chat",
+        "text",
+        "small"
+      ]
+    },
+    {
+      "id": "bge-m3-gguf",
+      "name": "BGE-M3 (эмбеддинги, GGUF)",
+      "summary": "Поиск по коду проекта (RAG)",
+      "repo_id": "gpustack/bge-m3-GGUF",
+      "filename": "bge-m3-Q8_0.gguf",
+      "size_bytes": 1300000000,
+      "task": "embedding",
+      "tags": [
+        "rag"
+      ]
+    },
+    {
+      "id": "qwen2.5-coder-7b-q8",
+      "name": "Qwen2.5 Coder 7B Instruct (Q8_0)",
+      "summary": "Модель по умолчанию в повышенной точности: отвечает точнее, памяти нужно больше",
+      "repo_id": "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "filename": "Qwen2.5-Coder-7B-Instruct-Q8_0.gguf",
+      "size_bytes": 8100000000,
+      "task": "chat",
+      "vram_gb": 10.0,
+      "pro": true,
+      "tags": [
+        "code",
+        "chat"
+      ]
+    },
+    {
+      "id": "qwen2.5-coder-14b-q4km",
+      "name": "Qwen2.5 Coder 14B Instruct (Q4_K_M)",
+      "summary": "Вдвое крупнее модели по умолчанию — сильнее в сложных задачах",
+      "repo_id": "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
+      "filename": "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 8990000000,
+      "task": "chat",
+      "vram_gb": 12.0,
+      "pro": true,
+      "tags": [
+        "code",
+        "chat"
+      ]
+    },
+    {
+      "id": "qwen2.5-coder-32b-q4km",
+      "name": "Qwen2.5 Coder 32B Instruct (Q4_K_M)",
+      "summary": "Самая сильная модель линейки, для мощных компьютеров",
+      "repo_id": "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
+      "filename": "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 19850000000,
+      "task": "chat",
+      "vram_gb": 24.0,
+      "pro": true,
+      "tags": [
+        "code",
+        "chat"
+      ]
+    },
+    {
+      "id": "qwen2.5-14b-q4km",
+      "name": "Qwen2.5 14B Instruct (Q4_K_M)",
+      "summary": "Крупная универсальная модель: точнее в длинных текстах и сложных вопросах",
+      "repo_id": "bartowski/Qwen2.5-14B-Instruct-GGUF",
+      "filename": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 8990000000,
+      "task": "chat",
+      "vram_gb": 12.0,
+      "pro": true,
+      "tags": [
+        "chat",
+        "text"
+      ]
+    }
+  ]
+}

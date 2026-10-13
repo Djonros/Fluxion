@@ -14,6 +14,7 @@ on:
       - "presets/**"
       - "assets/**"
       - "core/model_manager.py"
+      - "core/model_catalog.json"
       - "finetune/presets.py"
       - "scripts/build_site.py"
       - ".github/workflows/pages.yml"

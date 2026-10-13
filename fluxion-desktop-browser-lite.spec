@@ -34,8 +34,10 @@ a = Analysis(
     pathex=[os.path.abspath(".")],
     binaries=llama_cpp_binaries,
     datas=[
-        ("assets/icon-256.png", "assets"),  # runtime needs only the window icon
+        ("assets/icon-256.png", "assets"),  # the window icon
+        ("assets/message.wav", "assets"),  # "answer ready" sound (desktop_browser/sound.py)
         ("config", "config"),
+        ("core/model_catalog.json", "core"),  # catalog of the "Модели" page
         ("finetune", "finetune"),
         ("licensing", "licensing"),
         # plain sources for the training env's own interpreter (PYTHONPATH)
@@ -49,6 +51,8 @@ a = Analysis(
         "desktop_browser.browser",
         "desktop_browser.engine",
         "desktop_browser.license_dialog",
+        "desktop_browser.sound",
+        "winsound",
         "desktop_browser.training",
         "PySide6.QtWebEngineWidgets",
         "PySide6.QtWebEngineCore",
@@ -91,6 +95,8 @@ a = Analysis(
         "rag",
         "rag.service",
         "rag.chunker",
+        "rag.documents",
+        "pypdf",  # PDF text for the project index
         "rag.embedder",
         "rag.indexer",
         "rag.retriever",

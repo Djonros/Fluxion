@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from .chunker import Chunk, TreeSitterChunker
+from .documents import DOCUMENT_EXTENSIONS
 from .embedder import Embedder
 from .store import ChromaStore
 
@@ -17,6 +18,8 @@ SUPPORTED_EXTENSIONS = {
     ".java", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
     ".yaml", ".yml", ".toml", ".cfg", ".ini",
     ".sh", ".sql",
+    ".csv",
+    *DOCUMENT_EXTENSIONS,  # PDF, Word, Excel, PowerPoint (rag/documents.py)
 }
 
 SKIP_DIRS = {

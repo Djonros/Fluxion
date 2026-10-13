@@ -55,6 +55,10 @@ class TreeSitterChunker:
         self.overlap = overlap
 
     def chunk_file(self, path: Path) -> list[Chunk]:
+        from .documents import extract_text, is_document
+
+        if is_document(path):  # PDF, Word, Excel, PowerPoint
+            return self._chunk_text(extract_text(path), str(path), language="document")
         text = Path(path).read_text(encoding="utf-8", errors="replace")
         ext = Path(path).suffix.lower()
         if ext == ".py" and _TS_AVAILABLE:
@@ -133,13 +137,22 @@ class TreeSitterChunker:
 
     def _chunk_text(self, source: str, file_path: str, language: str = "text") -> list[Chunk]:
         results: list[Chunk] = []
-        for i, piece in enumerate(self._split_by_size(source, self.max_chars, self.overlap)):
+        cursor = 0  # pieces come in order: search forward, not from the start (big documents)
+        line = 1
+        for piece in self._split_by_size(source, self.max_chars, self.overlap):
+            pos = source.find(piece, cursor)
+            if pos >= 0:
+                line += source.count("\n", cursor, pos)
+                cursor = pos
+                start_line = line
+            else:
+                start_line = 1
             results.append(
                 Chunk(
                     content=piece,
                     file_path=file_path,
-                    start_line=source[: source.index(piece)].count("\n") + 1 if piece in source else 1,
-                    end_line=source[: source.index(piece)].count("\n") + 1 + piece.count("\n") if piece in source else 1 + piece.count("\n"),
+                    start_line=start_line,
+                    end_line=start_line + piece.count("\n"),
                     node_type="text",
                     name="",
                     language=language,

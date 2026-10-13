@@ -49,6 +49,12 @@ def _isolated_models_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_remote_model_catalog(monkeypatch):
+    """The "Модели" page fetches the catalog from the website: no network in tests."""
+    monkeypatch.setenv("FLUXION_CATALOG_URL", "off")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_cloud_settings(tmp_path, monkeypatch):
     """The cloud model settings of the app live in ``data/cloud_api.json``
     (%APPDATA%\\Fluxion in a build) and go into the environment: keep both

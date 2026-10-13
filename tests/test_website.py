@@ -65,6 +65,10 @@ def test_internal_links_resolve(site):
 def test_catalog_json(site):
     data = json.loads((site / "data" / "catalog.json").read_text(encoding="utf-8"))
     assert {m["id"] for m in data["models"]} == {m.model_id for m in MODEL_CATALOG}
+    # the app reads this file for new models: every record must be valid for it
+    from core.model_manager import parse_catalog
+
+    assert len(parse_catalog(data)) == len(data["models"])
     assert data["presets"] and all((site / p["url"]).is_file() for p in data["presets"])
 
 
