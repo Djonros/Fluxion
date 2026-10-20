@@ -38,6 +38,7 @@ a = Analysis(
         ("assets/message.wav", "assets"),  # "answer ready" sound (desktop_browser/sound.py)
         ("config", "config"),
         ("core/model_catalog.json", "core"),  # catalog of the "Модели" page
+        ("cad/materials.json", "cad"),  # materials of "Деталь в КОМПАС" (cad/materials.py)
         ("finetune", "finetune"),
         ("licensing", "licensing"),
         # plain sources for the training env's own interpreter (PYTHONPATH)
@@ -125,6 +126,21 @@ a = Analysis(
         "licensing.trial",
         "licensing.release",
         "cryptography.hazmat.primitives.asymmetric.ed25519",
+        # "Деталь в КОМПАС": imported lazily from desktop_browser/app.py, and
+        # KOMPAS-3D is driven through COM (pywin32)
+        "cad",
+        "cad.spec",
+        "cad.sheet",
+        "cad.materials",
+        "cad.text2cad",
+        "cad.kompas",
+        "cad.dxf",
+        "pythoncom",
+        "pywintypes",
+        "win32com",
+        "win32com.client",
+        "win32com.client.gencache",
+        "win32com.client.dynamic",
         "yaml",
         "dotenv",
         "httpx",

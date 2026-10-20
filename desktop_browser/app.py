@@ -4800,6 +4800,8 @@ def main() -> int:
             )
             window.close()
             result = _rag_smoke_check(rag_service) if os.environ.get("FLUXION_SMOKE_RAG") == "1" else 0
+            if os.environ.get("FLUXION_SMOKE_CAD"):
+                result = result or _cad_smoke_check(os.environ["FLUXION_SMOKE_CAD"])
         else:
             result = app.exec()
 
@@ -4816,6 +4818,25 @@ def main() -> int:
         except Exception:
             pass
         return 1
+
+
+def _cad_smoke_check(folder: str) -> int:
+    """Build the sample bent angle in KOMPAS-3D into *folder* (FLUXION_SMOKE_CAD):
+    checks that the built exe carries the cad package, its materials catalog
+    and pywin32; returns process exit code."""
+    try:
+        from cad import kompas, materials, spec
+
+        tpl = spec.TEMPLATES["sheet_angle"]
+        part, _ = spec.build("sheet_angle", tpl.example[1], material=materials.default("sheet"))
+        result = kompas.build_part(part, kompas.part_path("smoke " + tpl.title, folder), log=lambda line: None)
+    except Exception as exc:
+        print(f"[cad-smoke] FAIL: {type(exc).__name__}: {exc}")
+        return 6
+    print(f"[cad-smoke] materials: {len(materials.load())}, part: {result.path}, mass: {result.mass_text()}")
+    print("[cad-smoke] flat: {:.2f} x {:.2f} x {:g}".format(*result.flat_size) + f", dxf: {result.dxf_path}")
+    print("[cad-smoke] OK")
+    return 0
 
 
 def _rag_smoke_check(rag_service) -> int:
