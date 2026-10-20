@@ -152,6 +152,11 @@ main > section { width: var(--page); margin: 0 auto; }
 }
 .features dt { font-family: var(--display); font-weight: 500; font-size: var(--step-0); margin-bottom: 0.5rem; }
 .features dd { margin: 0; color: var(--muted); font-size: var(--step--1); line-height: 1.55; }
+.badge {
+  display: inline-block; margin-left: 0.35rem; padding: 0.05rem 0.45rem; vertical-align: 0.15em;
+  border: 1px solid var(--cyan); border-radius: 999px; color: var(--cyan);
+  font-family: var(--body); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.02em;
+}
 
 /* ── sections ───────────────────────────────────────────────────────── */
 #download, #pro, #models, #presets { padding: 4.5rem 0 1rem; }

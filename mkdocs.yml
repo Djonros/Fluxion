@@ -59,6 +59,7 @@ nav:
       - Веб-поиск: guides/web-search.md
       - VS Code extension: guides/vscode.md
       - QLoRA-дообучение: guides/finetune.md
+      - Детали в КОМПАС-3D: guides/kompas.md
       - Eval (HumanEval / MBPP): guides/eval.md
       - Лицензия Pro: guides/licensing.md
   - API сервер: api.md
