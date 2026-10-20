@@ -1915,6 +1915,8 @@ def test_restarting_status_check_does_not_kill_the_app(tmp_path):
         while time.time() < deadline:
             app.processEvents()
             time.sleep(0.02)
+        window.close()  # waits on the status worker: it must not be a deleted one
+        app.processEvents()
         print("alive")
         """
     )

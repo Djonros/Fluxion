@@ -3932,10 +3932,17 @@ class FluxionWindow(QMainWindow):
             return
         # parented: a new check replaces self.status_worker while the old one may
         # still run, and a parentless running QThread dropped by Python kills the app
-        self.status_worker = StatusWorker(self.backend, self)
-        self.status_worker.result.connect(self._on_status_result)
-        self.status_worker.finished.connect(self.status_worker.deleteLater)
-        self.status_worker.start()
+        worker = StatusWorker(self.backend, self)
+        self.status_worker = worker
+        worker.result.connect(self._on_status_result)
+        worker.finished.connect(lambda: self._on_status_worker_finished(worker))
+        worker.start()
+
+    def _on_status_worker_finished(self, worker) -> None:
+        # forget it before deleting: closeEvent waits on self.status_worker
+        if self.status_worker is worker:
+            self.status_worker = None
+        worker.deleteLater()
 
     def _status_model_name(self) -> str:
         """The model the engine actually uses: the GGUF file for llama.cpp
