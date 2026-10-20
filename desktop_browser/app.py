@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLayout,
     QLineEdit,
@@ -629,6 +630,144 @@ class ChatWorker(QThread):
         self.finished_ok.emit()
 
 
+CAD_PREFIXES = ("/компас", "/kompas")
+CAD_HINT = "Например: втулка 30 на 20 длиной 50, фаска 1, бронза"
+
+
+def cad_command(text: str) -> str | None:
+    """The part description of a "/компас ..." chat message; None for other messages."""
+    lowered = text.lower()
+    for prefix in CAD_PREFIXES:
+        rest = lowered[len(prefix):]
+        if lowered.startswith(prefix) and (not rest or rest[0].isspace()):
+            return text[len(prefix):].strip()
+    return None
+
+
+class CadWorker(QThread):
+    """One step of a part conversation (package cad) in a background thread:
+    the chat model reads the description (and answers), Fluxion asks for the
+    missing main sizes and material, or KOMPAS builds and saves the part."""
+
+    progress = Signal(str)
+    asked = Signal(str)
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, conversation, message: str, parent=None):
+        super().__init__(parent)
+        self.conversation = conversation
+        self.message = message
+
+    def run(self) -> None:
+        from cad import kompas, spec
+
+        try:
+            reply = self.conversation.step(self.message)
+        except spec.SpecError as exc:
+            self.failed.emit(f"Не получилось разобрать описание: {exc}")
+            return
+        except Exception as exc:
+            self.failed.emit(f"Модель не ответила: {exc}")
+            return
+        if reply.kind == "ask":
+            self.asked.emit(reply.text)
+            return
+        if reply.kind != "build":
+            self.done.emit(reply.text)
+            return
+        part = reply.part
+        self.progress.emit(reply.text)
+        self.progress.emit("Строю в КОМПАС-3D…")
+        try:
+            result = kompas.build_part(part, kompas.part_path(part["name"]), log=lambda line: None)
+        except kompas.KompasError as exc:
+            self.failed.emit(str(exc))
+            return
+        except Exception as exc:  # COM errors carry the KOMPAS message
+            reason = getattr(exc, "strerror", None) or str(exc)
+            self.failed.emit(f"КОМПАС-3D не смог построить деталь: {reason}")
+            return
+        from cad.text2cad import result_text
+
+        self.done.emit(result_text(part, result))
+
+
+class MaterialsDialog(QDialog):
+    """The materials catalog of "Деталь в КОМПАС": the shipped one plus the user's
+    %APPDATA%\\Fluxion\\materials.json; open that file, import CSV/Excel, reload."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Каталог материалов")
+        self.resize(720, 520)
+        layout = QVBoxLayout(self)
+        self.info = QLabel()
+        self.info.setWordWrap(True)
+        layout.addWidget(self.info)
+        self.list = QListWidget()
+        layout.addWidget(self.list, 1)
+        buttons = QHBoxLayout()
+        for title, slot in (("Открыть файл каталога", self._open_file),
+                            ("Импорт из Excel/CSV…", self._import),
+                            ("Обновить", self.refresh)):
+            button = QPushButton(title)
+            button.clicked.connect(slot)
+            buttons.addWidget(button)
+        buttons.addStretch(1)
+        close = QPushButton("Закрыть")
+        close.clicked.connect(self.accept)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        self.refresh()
+
+    def refresh(self) -> None:
+        from cad import materials
+
+        catalog, errors = materials.load_with_errors(reload=True)
+        self.list.clear()
+        kinds = {"solid": "сплошной", "sheet": "лист", "checker": "рифлёный лист"}
+        for m in catalog:
+            line = f"{m.short} — {kinds.get(m.kind, m.kind)}, {m.density:g} г/см³"
+            if m.thicknesses:
+                line += ", толщины: " + " ".join(f"{t:g}" for t in m.thicknesses)
+            if m.source == "user":
+                line += "  [свой]"
+            item = QListWidgetItem(line)
+            item.setToolTip(f"{m.name}\nсинонимы: {', '.join(m.synonyms)}" + (f"\n{m.note}" if m.note else ""))
+            self.list.addItem(item)
+        text = (f"Материалов: {len(catalog)}. Свои материалы — в файле {materials.user_catalog_path()} "
+                "(запись с тем же названием заменяет встроенную).")
+        if errors:
+            text += "\nНе прочитано: " + "; ".join(errors)
+        self.info.setText(text)
+
+    def _open_file(self) -> None:
+        from cad import materials
+
+        path = materials.ensure_user_catalog()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _import(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        from cad import materials
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Импорт материалов", str(Path.home()), "Таблицы (*.xlsx *.csv);;Все файлы (*)"
+        )
+        if not path:
+            return
+        result = materials.import_table(Path(path))
+        lines = [f"Добавлено: {len(result.added)}, заменено: {len(result.replaced)}."]
+        if result.path:
+            lines.append(f"Каталог: {result.path}")
+        if result.errors:
+            lines.append("Пропущены строки:\n" + "\n".join(result.errors[:30]))
+        QMessageBox.information(self, "Импорт материалов", "\n".join(lines))
+        self.refresh()
+
+
 class StatusWorker(QThread):
     """Checks backend availability without blocking the UI thread."""
 
@@ -1156,6 +1295,8 @@ class FluxionWindow(QMainWindow):
         self.worker: ChatWorker | None = None
         self.status_worker: StatusWorker | None = None
         self.agent_worker: AgentWorker | None = None
+        self.cad_worker: CadWorker | None = None
+        self._cad_conversation = None  # cad.text2cad.Conversation waiting for an answer
         self.index_worker: IndexWorker | None = None
         self._model_worker: ModelListWorker | None = None
         self._health_worker: HealthWorker | None = None
@@ -1551,6 +1692,15 @@ class FluxionWindow(QMainWindow):
         act_training = QAction("Обучение модели…", self)
         act_training.triggered.connect(lambda: self.pages.setCurrentIndex(PAGE_TRAINING))
         m_models.addAction(act_training)
+
+        # Инструменты: part in KOMPAS-3D by description (prototype, for everyone)
+        m_tools = bar.addMenu("&Инструменты")
+        act_cad = QAction("Деталь в КОМПАС…", self)
+        act_cad.triggered.connect(self._open_cad_dialog)
+        m_tools.addAction(act_cad)
+        act_materials = QAction("Каталог материалов…", self)
+        act_materials.triggered.connect(self._open_materials_dialog)
+        m_tools.addAction(act_materials)
 
         # Помощь
         m_help = bar.addMenu("&Помощь")
@@ -3828,6 +3978,19 @@ class FluxionWindow(QMainWindow):
         text = self.prompt.text().strip()
         if not text or self.generating or self.agent_running:
             return
+        description = cad_command(text)
+        if description is not None:
+            if not description:
+                self._open_cad_dialog()
+                return
+            self.prompt.clear()
+            self._send_cad_message(description, shown=text)
+            return
+        if self._cad_conversation is not None:
+            # the answer to Fluxion's question about the part
+            self.prompt.clear()
+            self._send_cad_message(text, shown=text, answer=True)
+            return
         wants_agent = agent_once or self.chat_agent_files.isChecked() or self.chat_plan.isChecked()
         if (self.agent_factory if wants_agent else self.assistant) is None:
             self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
@@ -3855,6 +4018,104 @@ class FluxionWindow(QMainWindow):
         self.worker.text_reset.connect(self._on_text_reset)
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
+
+    def _open_cad_dialog(self) -> None:
+        """Menu Инструменты → Деталь в КОМПАС: the text of the chat input, or ask for it."""
+        if self.generating or self.agent_running:
+            return
+        text = self.prompt.text().strip()
+        description = cad_command(text)
+        if description is None:
+            description = text
+        if not description:
+            description, ok = QInputDialog.getMultiLineText(
+                self,
+                "Деталь в КОМПАС-3D",
+                "Опишите деталь, размеры в мм и материал — модель выберет шаблон "
+                "(пластина, фланец, втулка, вал, уголок, гайка; из листа со сгибами: уголок, кронштейн, "
+                "П- и Z-профиль, лоток или короб, полка с отбортовкой), КОМПАС построит её, "
+                "для листовых — и развёртку в DXF.\n"
+                "Чего не хватит, Fluxion спросит в чате.\n"
+                + CAD_HINT,
+            )
+            description = description.strip()
+            if not ok or not description:
+                return
+        else:
+            self.prompt.clear()
+        self._send_cad_message(description, shown=f"/компас {description}")
+
+    def _open_materials_dialog(self) -> None:
+        """Инструменты → Каталог материалов: the merged catalog, the user's file, import."""
+        dialog = MaterialsDialog(self)
+        dialog.exec()
+
+    def _send_cad_message(self, message: str, shown: str, answer: bool = False) -> None:
+        """Part in KOMPAS-3D: *message* starts a new description or, with *answer*,
+        answers Fluxion's question; the model and KOMPAS work in the background."""
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._last_query = shown
+        self._append_message("user", shown)
+        self.history.append({"role": "user", "content": shown})
+        if self.backend is None:
+            self._cad_conversation = None
+            self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
+            return
+        if not answer or self._cad_conversation is None:
+            from cad.text2cad import Conversation
+
+            self._cad_conversation = Conversation(self.backend)
+        self._append_message("assistant", "")
+        # banners may be added to the chat meanwhile: keep the answer's entry
+        self._cad_entry = self._messages[-1]
+        self._cad_entry["meta"] = "[КОМПАС-3D]"
+        self._start_thinking()
+
+        self._set_generating(True)
+        self.cad_worker = CadWorker(self._cad_conversation, message)
+        self.cad_worker.progress.connect(self._on_cad_progress)
+        self.cad_worker.asked.connect(self._on_cad_asked)
+        self.cad_worker.done.connect(self._on_cad_done)
+        self.cad_worker.failed.connect(self._on_cad_failed)
+        self.cad_worker.finished.connect(self.cad_worker.deleteLater)
+        self.cad_worker.start()
+
+    def _add_cad_line(self, text: str) -> dict:
+        entry = self._cad_entry
+        entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + text
+        return entry
+
+    def _on_cad_progress(self, text: str) -> None:
+        self._add_cad_line(text)
+        self._render_messages()
+
+    def _on_cad_asked(self, question: str) -> None:
+        """Fluxion asks for what is missing; the next chat message is the answer."""
+        entry = self._add_cad_line(question)
+        self.history.append({"role": "assistant", "content": entry["text"]})
+        self._notify_answer()
+        self.cad_worker = None
+        self._set_generating(False)
+        self.prompt.setPlaceholderText("Ответ про деталь: размеры, материал… или «отмена»")
+        self._render_messages()
+        self._save_memory()
+
+    def _on_cad_done(self, text: str) -> None:
+        entry = self._add_cad_line(text)
+        self.history.append({"role": "assistant", "content": entry["text"]})
+        self._notify_answer()
+        self._end_cad_turn()
+
+    def _on_cad_failed(self, message: str) -> None:
+        self._add_cad_line(message)
+        self._end_cad_turn()
+
+    def _end_cad_turn(self) -> None:
+        self.cad_worker = None
+        self._cad_conversation = None
+        self._set_generating(False)  # also puts back the usual placeholder
+        self._render_messages()
+        self._save_memory()
 
     def _notify_answer(self) -> None:
         """Play the "answer ready" sound, unless switched off or the user pressed Stop."""
