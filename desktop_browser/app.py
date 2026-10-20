@@ -3930,8 +3930,11 @@ class FluxionWindow(QMainWindow):
         self.status_label.setText(f"Модель: {model} — проверка...")
         if self.backend is None:
             return
-        self.status_worker = StatusWorker(self.backend)
+        # parented: a new check replaces self.status_worker while the old one may
+        # still run, and a parentless running QThread dropped by Python kills the app
+        self.status_worker = StatusWorker(self.backend, self)
         self.status_worker.result.connect(self._on_status_result)
+        self.status_worker.finished.connect(self.status_worker.deleteLater)
         self.status_worker.start()
 
     def _status_model_name(self) -> str:
@@ -4009,7 +4012,7 @@ class FluxionWindow(QMainWindow):
         self._start_thinking()
 
         self._set_generating(True)
-        self.worker = ChatWorker(self.assistant, text, history)
+        self.worker = ChatWorker(self.assistant, text, history, self)
         self.worker.target = resolve_target(getattr(self.settings, "language", "auto"), text)
         self.worker.token.connect(self._on_token)
         self.worker.meta.connect(self._on_meta)
@@ -4072,7 +4075,7 @@ class FluxionWindow(QMainWindow):
         self._start_thinking()
 
         self._set_generating(True)
-        self.cad_worker = CadWorker(self._cad_conversation, message)
+        self.cad_worker = CadWorker(self._cad_conversation, message, self)
         self.cad_worker.progress.connect(self._on_cad_progress)
         self.cad_worker.asked.connect(self._on_cad_asked)
         self.cad_worker.done.connect(self._on_cad_done)
@@ -4216,6 +4219,7 @@ class FluxionWindow(QMainWindow):
             f"{PLAN_TASK_PREFIX}\n\n{task}" if plan else task,
             False if plan else self._agent_write_allowed(),
             self._agent_max_iterations(),
+            self,
         )
         self.agent_worker.step.connect(self._on_chat_agent_step)
         self.agent_worker.done.connect(self._on_chat_agent_done)

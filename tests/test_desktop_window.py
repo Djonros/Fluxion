@@ -1871,3 +1871,52 @@ def test_message_sound_file_is_shipped():
         assert 0.2 < w.getnframes() / w.getframerate() < 1.5      # a short chime
     spec = (MESSAGE_SOUND.parent.parent / "fluxion-desktop-browser-lite.spec").read_text(encoding="utf-8")
     assert '"assets/message.wav"' in spec
+
+
+def test_restarting_status_check_does_not_kill_the_app(tmp_path):
+    """A new status check replaced the running one; the old QThread, parentless,
+    was destroyed by Python while running and Qt aborted the process (seen on CI
+    as a silent crash in a later test). Runs in a child process: a regression
+    fails this test instead of killing the whole run."""
+    import subprocess
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""
+        import gc, os, sys, time
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        os.environ["FLUXION_DISABLE_WEBENGINE"] = "1"
+        sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+        from pathlib import Path
+        from PySide6.QtCore import QSettings
+        from PySide6.QtWidgets import QApplication
+        import desktop_browser.memory as memory
+        memory.chats_path = lambda: Path({str(tmp_path)!r}) / "chats.json"
+        memory.history_path = lambda: Path({str(tmp_path)!r}) / "history.json"
+        from desktop_browser.app import FluxionWindow
+
+        class SlowBackend:
+            model = "slow"
+            def is_available(self):
+                time.sleep(0.5)
+                return True
+
+        class Assistant:
+            backend = None
+
+        app = QApplication([])
+        ini = str(Path({str(tmp_path)!r}) / "ui.ini")
+        window = FluxionWindow(assistant=Assistant(), backend=SlowBackend(),
+                               qsettings=QSettings(ini, QSettings.IniFormat))
+        for _ in range(3):
+            window._start_status_check()
+        gc.collect()
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            app.processEvents()
+            time.sleep(0.02)
+        print("alive")
+        """
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0 and "alive" in result.stdout, result.stderr[-2000:]
