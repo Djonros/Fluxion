@@ -288,3 +288,14 @@ class TestDisabledUser:
             "Authorization": f"Bearer {tokens['access_token']}",
         })
         assert r.status_code == 403
+
+
+def test_init_db_creates_the_sqlite_folder(tmp_path):
+    """A fresh checkout has no data/ (it is not in git): the default SQLite file
+    could not be opened and the server failed on start."""
+    from server.database import _ensure_sqlite_dir
+
+    _ensure_sqlite_dir(f"sqlite:///{tmp_path / 'new' / 'fluxion.db'}")
+    assert (tmp_path / "new").is_dir()
+    _ensure_sqlite_dir("sqlite:///:memory:")
+    _ensure_sqlite_dir("postgresql://user@host/db")

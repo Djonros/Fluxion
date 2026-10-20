@@ -184,12 +184,14 @@ def test_cloud_section_requires_pro(make_window, monkeypatch):
 
 
 def test_cloud_section_saves_and_switches_engine(make_window, monkeypatch):
+    # cli.app binds licensing.feature_enabled at import: import it before the
+    # patch, or its first import here keeps the "always Pro" stub for good and
+    # later tests (test_licensing) see every feature unlocked
+    import cli.app
     import licensing
     from core.config import Settings
 
     monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
-    import cli.app
-
     monkeypatch.setattr(cli.app, "feature_enabled", lambda feature: True)
 
     class FakeAssistant:

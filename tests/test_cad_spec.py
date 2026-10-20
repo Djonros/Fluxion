@@ -162,9 +162,21 @@ def test_text2cad_with_stub_backend():
 
 # ── desktop app: "/компас ..." and the menu item ──────────────────────────────
 
-def test_cad_command_prefixes():
+def _desktop_app():
+    """desktop_browser.app, or skip: PySide6 may be installed but not load
+    (a Linux machine without libEGL raises ImportError/OSError on QtWidgets)."""
     pytest.importorskip("PySide6")
-    from desktop_browser.app import cad_command
+    try:
+        from PySide6 import QtWidgets  # noqa: F401
+    except (ImportError, OSError) as exc:
+        pytest.skip(f"PySide6 не загружается: {exc}")
+    from desktop_browser import app
+
+    return app
+
+
+def test_cad_command_prefixes():
+    cad_command = _desktop_app().cad_command
 
     assert cad_command("/компас втулка 30 на 20") == "втулка 30 на 20"
     assert cad_command("/KOMPAS  вал 40") == "вал 40"
@@ -350,11 +362,9 @@ def _cad_window(tmp_path, backend):
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("FLUXION_DISABLE_WEBENGINE", "1")
-    pytest.importorskip("PySide6")
+    FluxionWindow = _desktop_app().FluxionWindow
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
-
-    from desktop_browser.app import FluxionWindow
 
     app = QApplication.instance() or QApplication([])
     window = FluxionWindow(backend=backend, qsettings=QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat))
