@@ -6,6 +6,15 @@ import pytest
 from cad import materials, sheet, spec, text2cad
 
 
+@pytest.fixture(autouse=True)
+def _model_reads_descriptions(monkeypatch):
+    """These tests drive the model path with scripted answers; the rules that
+    read typical descriptions without the model are tested in test_cad_quick.py."""
+    from cad import quick
+
+    monkeypatch.setattr(quick, "read", lambda description: None)
+
+
 @pytest.mark.parametrize("key", list(spec.TEMPLATES))
 def test_every_template_builds_with_defaults(key):
     part, _ = spec.build(key, {})
@@ -154,7 +163,7 @@ def test_text2cad_with_stub_backend():
             assert "flange" in messages[0]["content"]
             return 'Вот: {"template": "flange", "name": "Фланец Ду50", "params": {"outer_d": 150, "inner_d": 50, "thickness": 15, "bolt_count": 6, "bolt_d": 11, "bolt_circle_d": 110}}'
 
-    part, _ = text2cad.parse("фланец 150", Stub())
+    part, _ = text2cad.parse("фланец Ду50", Stub())  # "Ду50": the rules leave it to the model
     assert part["name"] == "Фланец Ду50"
     assert sum("circle" in s for s in part["ops"][0]["shapes"]) == 8
     json.dumps(part)

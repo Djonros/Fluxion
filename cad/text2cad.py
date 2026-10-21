@@ -132,6 +132,7 @@ class Draft:
     name: str = ""
     params: dict = field(default_factory=dict)
     material_text: str = ""
+    source: str = "model"  # "rules": read by cad.quick without the model
 
 
 def ask_model(description: str, backend) -> Draft:
@@ -157,6 +158,17 @@ def ask_model(description: str, backend) -> Draft:
     return Draft(template, str(data.get("name") or ""), params, str(data.get("material") or "").strip())
 
 
+def read_description(description: str, backend) -> Draft:
+    """Rules first (cad.quick: instant), the model when they are not sure."""
+    from . import quick
+
+    draft = quick.read(description)
+    if draft is not None:
+        draft.source = "rules"
+        return draft
+    return ask_model(description, backend)
+
+
 def _material_kinds(template: str) -> tuple[str, ...]:
     return materials.SHEET_KINDS if spec.TEMPLATES[template].sheet else ("solid",)
 
@@ -168,7 +180,7 @@ def _find_material(draft: "Draft", description: str):
 
 def parse(description: str, backend) -> tuple[dict, list[str]]:
     """Ask the model and build at once (no questions); return (operation spec, assumptions)."""
-    draft = ask_model(description, backend)
+    draft = read_description(description, backend)
     return spec.build(draft.template, draft.params, draft.name, _find_material(draft, description))
 
 
@@ -225,7 +237,7 @@ class Conversation:
         only_defaults = self.draft is not None and bool(_ONLY_DEFAULTS.match(message))
         if not only_defaults:
             self.description = f"{self.description}. {message}" if self.description else message
-            self.draft = ask_model(self.description, self.backend)
+            self.draft = read_description(self.description, self.backend)
         draft = self.draft
         material = _find_material(draft, self.description)
         missing = spec.missing_params(draft.template, draft.params)

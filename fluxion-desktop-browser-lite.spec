@@ -145,6 +145,7 @@ a = Analysis(
         "cad.text2cad",
         "cad.kompas",
         "cad.dxf",
+        "cad.quick",
         "pythoncom",
         "pywintypes",
         # voice input and reading answers aloud (imported lazily from the window)

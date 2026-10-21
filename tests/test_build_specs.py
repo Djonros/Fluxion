@@ -84,3 +84,10 @@ def test_lite_leaves_out_pyav_and_onnxruntime():
     assert "tokenizers" not in excludes  # faster-whisper needs it at import
     stt = (ROOT / "voice" / "stt.py").read_text(encoding="utf-8")
     assert "vad_filter=False" in stt
+
+
+def test_lite_ships_every_cad_module():
+    """"Деталь в КОМПАС" is imported lazily from the window too."""
+    hidden = set(_spec_list("hiddenimports"))
+    modules = {f"cad.{p.stem}" for p in (ROOT / "cad").glob("*.py") if p.stem not in ("__init__", "__main__")}
+    assert modules <= hidden, sorted(modules - hidden)

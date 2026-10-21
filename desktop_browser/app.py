@@ -103,6 +103,11 @@ PLAN_TASK_PREFIX = (
 PLAN_RUN_PREFIX = "Реализуй план:\n"
 PLAN_RUN_URL = "fluxion://run-plan"
 SPEAK_URL = "fluxion://speak/"  # + index of the answer in _messages
+HANDS_FREE_WAIT = 8.0  # seconds to wait for speech before listening again
+HANDS_FREE_SILENT_TURNS = 3  # turns without speech that switch hands-free mode off
+HANDS_FREE_STOP = re.compile(
+    r"^\W*(стоп|хватит|отбой|выход|выключи(?:сь)?(?:\s+голос\w*)?|закончи\w*|конец)\W*$", re.IGNORECASE
+)
 SPEAK_ICON = "fluxion-icon:speaker"  # images of the chat document (_refresh_voice_icons)
 SPEAK_ICON_STOP = "fluxion-icon:stop"
 AGENT_DEFAULT_ITERATIONS = 15
@@ -586,13 +591,13 @@ class VoiceInputWorker(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, model_dir: str, parent=None, audio=None):
+    def __init__(self, model_dir: str, parent=None, audio=None, wait_seconds: float | None = None):
         super().__init__(parent)
         from voice.stt import Recorder
 
         self.model_dir = model_dir
         self.audio = audio
-        self.recorder = Recorder(on_level=self.level.emit)
+        self.recorder = Recorder(on_level=self.level.emit, wait_seconds=wait_seconds)
 
     def stop(self) -> None:
         self.recorder.stop()
@@ -714,6 +719,15 @@ def cad_command(text: str) -> str | None:
         if lowered.startswith(prefix) and (not rest or rest[0].isspace()):
             return text[len(prefix):].strip()
     return None
+
+
+_SPOKEN_CAD_RE = re.compile(r"^\W*(?:в\s+)?(?:компас[еау]?|kompas)\b[\s,.:;!—-]*(.+)$", re.IGNORECASE | re.DOTALL)
+
+
+def spoken_command(text: str) -> str:
+    """A slash cannot be said: "Компас, втулка 30 на 20" -> "/компас втулка 30 на 20"."""
+    match = _SPOKEN_CAD_RE.match(text)
+    return f"{CAD_PREFIXES[0]} {match.group(1).strip()}" if match else text
 
 
 class CadWorker(QThread):
@@ -1372,6 +1386,11 @@ class FluxionWindow(QMainWindow):
         self._speech_download_worker: SpeechModelDownloadWorker | None = None
         self._speaker = None  # voice.tts.Speaker, created on first use
         self._speaking_index = -1  # answer being read aloud
+        self._hands_free = False  # hands-free voice mode: listen, send, read aloud, listen again
+        self._hands_free_silent = 0
+        self._hands_free_timer = QTimer(self)
+        self._hands_free_timer.setInterval(400)
+        self._hands_free_timer.timeout.connect(self._on_hands_free_tick)
         self._speech_timer = QTimer(self)
         self._speech_timer.setInterval(500)
         self._speech_timer.timeout.connect(self._on_speech_tick)
@@ -1983,8 +2002,20 @@ class FluxionWindow(QMainWindow):
         self.speak_toggle.setCheckable(True)
         self.speak_toggle.setChecked(flag_setting(self.qsettings, "voice_speak_answers"))
         self.speak_toggle.toggled.connect(self._on_speak_answers_toggled)
+        self.hands_free_button = QToolButton()
+        self.hands_free_button.setObjectName("composerIcon")
+        self.hands_free_button.setIconSize(QSize(20, 20))
+        self.hands_free_button.setCheckable(True)
+        self.hands_free_button.setToolTip(
+            "Голосом без рук (Ctrl+Shift+Пробел): Fluxion слушает, отправляет, читает ответ вслух "
+            "и снова слушает. «Стоп» голосом или эта кнопка — выключить"
+        )
+        self.hands_free_button.toggled.connect(self.set_hands_free)
         self._show_speak_toggle()
         composer_layout.addWidget(self.speak_toggle)
+        composer_layout.addWidget(self.hands_free_button)
+        hands_free_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Space"), self)
+        hands_free_shortcut.activated.connect(self.hands_free_button.toggle)
         voice_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
         voice_shortcut.activated.connect(self.toggle_voice_input)
         self.stop_button = QPushButton("Стоп")
@@ -4320,8 +4351,15 @@ class FluxionWindow(QMainWindow):
         self._add_cad_line(text)
         self._render_messages()
 
+    def _mark_cad_source(self) -> None:
+        """"без модели" in the meta line when the rules read the description (cad/quick.py)."""
+        draft = getattr(self._cad_conversation, "draft", None)
+        if draft is not None and getattr(draft, "source", "") == "rules":
+            self._cad_entry["meta"] = "[КОМПАС-3D | разобрано без модели]"
+
     def _on_cad_asked(self, question: str) -> None:
         """Fluxion asks for what is missing; the next chat message is the answer."""
+        self._mark_cad_source()
         entry = self._add_cad_line(question)
         self.history.append({"role": "assistant", "content": entry["text"]})
         self._notify_answer()
@@ -4332,9 +4370,10 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
 
     def _on_cad_done(self, text: str) -> None:
+        self._mark_cad_source()
         entry = self._add_cad_line(text)
         self.history.append({"role": "assistant", "content": entry["text"]})
-        self._notify_answer()
+        self._notify_answer(text)  # read aloud the result, not every size of the template again
         self._end_cad_turn()
 
     def _on_cad_failed(self, message: str) -> None:
@@ -4352,9 +4391,15 @@ class FluxionWindow(QMainWindow):
 
     def toggle_voice_input(self) -> None:
         """Microphone button / Ctrl+Space: start recording, or stop it and recognise what was said."""
+        if self._hands_free:
+            self.hands_free_button.setChecked(False)  # the microphone takes the mode off
+            return
+        self._start_listening()
+
+    def _start_listening(self, wait_seconds: float | None = None) -> bool:
         if self.voice_worker is not None:
             self.voice_worker.stop()
-            return
+            return False
         from voice.models import is_installed, model_path, speech_model
 
         model_id = voice_model_id(self.qsettings)
@@ -4363,9 +4408,9 @@ class FluxionWindow(QMainWindow):
                 f"Для голосового ввода нужна модель распознавания речи ({speech_model(model_id).name}). "
                 "Скачайте её: меню «Модели» (Ctrl+M) → раздел «Распознавание речи»."
             )
-            return
+            return False
         self._stop_speaking()  # do not record Fluxion's own voice
-        worker = VoiceInputWorker(str(model_path(model_id)), self)
+        worker = VoiceInputWorker(str(model_path(model_id)), self, wait_seconds=wait_seconds)
         self.voice_worker = worker
         worker.level.connect(self._on_voice_level)
         worker.recognizing.connect(self._on_voice_recognizing)
@@ -4374,6 +4419,7 @@ class FluxionWindow(QMainWindow):
         worker.finished.connect(lambda: self._on_voice_worker_finished(worker))
         self._set_voice_recording(True)
         worker.start()
+        return True
 
     def _set_voice_recording(self, active: bool, placeholder: str = "") -> None:
         self.mic_button.setProperty("recording", active)
@@ -4395,17 +4441,22 @@ class FluxionWindow(QMainWindow):
         self.prompt.setPlaceholderText("Распознаю речь…")
 
     def _on_voice_done(self, text: str) -> None:
+        if self._hands_free:
+            self._hands_free_heard(text)
+            return
         if not text:
             self._set_voice_recording(False, "Не расслышал — нажмите микрофон и скажите ещё раз")
             return
         self._set_voice_recording(False)
         current = self.prompt.text().strip()
-        self.prompt.setText(f"{current} {text}" if current else text)
+        self.prompt.setText(f"{current} {text}" if current else spoken_command(text))
         self.prompt.setFocus()
         if self.voice_send_at_once.isChecked() and not self.generating:
             self.send_message()
 
     def _on_voice_failed(self, message: str) -> None:
+        if self._hands_free:
+            self.set_hands_free(False)
         self._set_voice_recording(False)
         self._append_banner(f"Голосовой ввод: {message}")
 
@@ -4418,6 +4469,56 @@ class FluxionWindow(QMainWindow):
             self._refresh_voice_icons()
             self.voice_level.setVisible(False)
         worker.deleteLater()
+
+    def set_hands_free(self, on: bool) -> None:
+        """Hands-free voice mode: listen → send → read the answer aloud → listen again."""
+        if on == self._hands_free:
+            return
+        if on:
+            from voice.models import is_installed
+
+            if not is_installed(voice_model_id(self.qsettings)):
+                self.hands_free_button.setChecked(False)
+                self._start_listening()  # explains where to get the speech model
+                return
+        self._hands_free = on
+        self._hands_free_silent = 0
+        if self.hands_free_button.isChecked() != on:
+            self.hands_free_button.setChecked(on)
+        if on:
+            self._hands_free_timer.start()
+            self._on_hands_free_tick()
+        else:
+            self._hands_free_timer.stop()
+            self._stop_speaking()
+            if self.voice_worker is not None:
+                self.voice_worker.stop()
+            self._set_voice_recording(False)
+        self._refresh_voice_icons()
+
+    def _on_hands_free_tick(self) -> None:
+        """Listen again when Fluxion has answered and finished reading aloud."""
+        if not self._hands_free or self.voice_worker is not None or self.generating:
+            return
+        if self._speaker is not None and self._speaker.speaking():
+            return
+        self._start_listening(wait_seconds=HANDS_FREE_WAIT)
+
+    def _hands_free_heard(self, text: str) -> None:
+        self._set_voice_recording(False)
+        if not text:
+            self._hands_free_silent += 1
+            if self._hands_free_silent >= HANDS_FREE_SILENT_TURNS:
+                self.set_hands_free(False)
+                self._append_banner("Голосом без рук: выключено — речи не слышно.")
+            return  # the timer listens again
+        self._hands_free_silent = 0
+        if HANDS_FREE_STOP.match(text):
+            self.set_hands_free(False)
+            self._append_banner("Голосом без рук: выключено по команде «стоп».")
+            return
+        self.prompt.setText(spoken_command(text))
+        self.send_message()
 
     def _refresh_voice_icons(self) -> None:
         """Line icons of the composer and of "Озвучить" in the colours of the theme."""
@@ -4432,6 +4533,7 @@ class FluxionWindow(QMainWindow):
         self.mic_button.setIcon(icons.stop(colors["rec"]) if recording else icons.microphone(colors["fg"]))
         on = self.speak_toggle.isChecked()
         self.speak_toggle.setIcon(icons.speaker(colors["on"] if on else colors["fg"], on))
+        self.hands_free_button.setIcon(icons.headphones(colors["on"] if self._hands_free else colors["fg"]))
         document = self.messages.document()
         size = QSize(32, 32)
         document.addResource(QTextDocument.ImageResource, QUrl(SPEAK_ICON),
@@ -4504,7 +4606,7 @@ class FluxionWindow(QMainWindow):
             from .sound import play_message_sound
 
             play_message_sound()
-        if self.speak_toggle.isChecked() and self._messages:
+        if (self.speak_toggle.isChecked() or self._hands_free) and self._messages:
             index = len(self._messages) - 1
             self._speak(spoken if spoken is not None else self._messages[index]["text"], index)
 
@@ -5039,6 +5141,8 @@ class FluxionWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._save_memory()
         self._stop_speaking()
+        self._hands_free = False
+        self._hands_free_timer.stop()
         if self.voice_worker is not None:
             self.voice_worker.stop()
             self.voice_worker.wait(30000)  # recognition of a long phrase on a slow CPU

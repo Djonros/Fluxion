@@ -23,6 +23,11 @@ _LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+", re.M)
 _QUOTE_RE = re.compile(r"^\s*>\s?", re.M)
 _TABLE_RULE_RE = re.compile(r"^\s*\|?\s*:?-{3,}.*$", re.M)
 _EMPHASIS_RE = re.compile(r"(\*\*|__|\*|_|~~)(?=\S)(.+?)(?<=\S)\1")
+_SAVED_IN_RE = re.compile(r"\s+(?:в|во)\s+[A-Za-z]:\\[^\n]*")  # "сохранена в C:\...\x.m3d"
+_PATH_RE = re.compile(r"[A-Za-z]:\\[^\n]*")
+_ZEROS_RE = re.compile(r"(?<=\d)\.0+\b")  # 100.00 -> 100
+_DECIMAL_RE = re.compile(r"(?<=\d)\.(?=\d)")  # 96.15 -> 96,15: a Russian voice reads the comma
+_TIMES_RE = re.compile(r"(?<=\d)\s*[×xх]\s*(?=\d)")  # 100 × 96 -> 100 на 96
 
 
 def speech_text(markdown: str) -> str:
@@ -38,7 +43,12 @@ def speech_text(markdown: str) -> str:
     for _ in range(2):  # nested **_bold italic_**
         text = _EMPHASIS_RE.sub(r"\2", text)
     text = text.replace("|", ", ")
-    lines = [line.strip() for line in text.splitlines()]
+    text = _SAVED_IN_RE.sub("", text)
+    text = _PATH_RE.sub("", text)
+    text = _ZEROS_RE.sub("", text)
+    text = _DECIMAL_RE.sub(",", text)
+    text = _TIMES_RE.sub(" на ", text)
+    lines = [line.strip() for line in text.splitlines() if not line.strip().endswith(":")]
     out: list[str] = []
     for line in lines:
         if not line:

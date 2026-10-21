@@ -180,6 +180,18 @@ def test_recorder_waits_for_speech_then_max_seconds(monkeypatch):
     assert len(audio) == stt.BLOCK  # one block, then the time limit
 
 
+def test_recorder_gives_up_when_nobody_speaks(monkeypatch):
+    _fake_sounddevice(monkeypatch, [])  # endless silence
+    audio = stt.Recorder(wait_seconds=2.0).record()
+    assert len(audio) == 2 * stt.SAMPLE_RATE
+
+
+def test_recorder_wait_does_not_cut_speech(monkeypatch):
+    _fake_sounddevice(monkeypatch, _blocks(np.concatenate([_silence(0.5), _tone(3.0), _silence(3.0)])))
+    audio = stt.Recorder(pause_seconds=1.0, wait_seconds=1.0).record()
+    assert len(audio) / stt.SAMPLE_RATE >= 3.5  # speech began before the wait ran out
+
+
 def test_recorder_stop_before_start(monkeypatch):
     _fake_sounddevice(monkeypatch, [])
     recorder = stt.Recorder()
@@ -271,3 +283,17 @@ def test_live_sapi_voice_to_whisper(tmp_path):
 
     text = stt.transcribe(stt.read_wav(path), models.model_path(installed[0].model_id, real_models)).lower()
     assert "втулк" in text and "бронз" in text
+
+
+def test_speech_text_of_a_part_reply():
+    """Paths are not read out; sizes are read as a person would say them."""
+    reply = (
+        r"Готово: деталь «Уголок гнутый» сохранена в C:\Users\PC\Documents\Fluxion CAD\Уголок (2).m3d" "\n"
+        "Масса: 152 г.\n"
+        "Развёртка (КОМПАС): 100.00 × 96.15 мм, толщина 2 мм.\n"
+        r"DXF развёртки: C:\Users\PC\Documents\Fluxion CAD\Уголок (2) — развёртка.dxf"
+    )
+    text = speech_text(reply)
+    assert "C:" not in text and "Users" not in text and "DXF" not in text
+    assert "сохранена." in text and "100 на 96,15 мм" in text
+    assert speech_text("box 5 и 30х20") == "box 5 и 30 на 20"

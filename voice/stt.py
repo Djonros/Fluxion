@@ -122,11 +122,14 @@ def transcribe(audio: np.ndarray, folder: Path | str, language: str | None = "ru
 
 
 class Recorder:
-    """Records the default microphone until stop(), a pause after speech or MAX_SECONDS."""
+    """Records the default microphone until stop(), a pause after speech or MAX_SECONDS;
+    with *wait_seconds* it also gives up when nobody started speaking by then."""
 
-    def __init__(self, pause_seconds: float = 1.5, max_seconds: float = MAX_SECONDS, on_level=None):
+    def __init__(self, pause_seconds: float = 1.5, max_seconds: float = MAX_SECONDS, on_level=None,
+                 wait_seconds: float | None = None):
         self.pause_seconds = pause_seconds
         self.max_seconds = max_seconds
+        self.wait_seconds = wait_seconds
         self.on_level = on_level
         self._stop = threading.Event()
 
@@ -158,6 +161,8 @@ class Recorder:
                         if quiet >= self.pause_seconds * SAMPLE_RATE:
                             break
                     if recorded >= self.max_seconds * SAMPLE_RATE:
+                        break
+                    if not heard and self.wait_seconds is not None and recorded >= self.wait_seconds * SAMPLE_RATE:
                         break
         except Exception as exc:
             raise SpeechError(

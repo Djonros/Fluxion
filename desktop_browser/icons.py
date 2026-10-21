@@ -73,3 +73,18 @@ def speaker(color: str, on: bool) -> QIcon:
         p.drawLine(QPointF(16, 9), QPointF(22, 15))
         p.drawLine(QPointF(22, 9), QPointF(16, 15))
     return _icon(pixmap, p)
+
+
+def headphones(color: str) -> QIcon:
+    """Hands-free voice mode."""
+    pixmap, p = _canvas()
+    p.setPen(_pen(color))
+    p.setBrush(Qt.NoBrush)
+    band = QPainterPath(QPointF(3, 18))
+    band.lineTo(3, 12)
+    band.arcTo(QRectF(3, 3, 18, 18), 180, -180)
+    band.lineTo(21, 18)
+    p.drawPath(band)
+    p.drawRoundedRect(QRectF(3, 14, 5, 7), 2, 2)
+    p.drawRoundedRect(QRectF(16, 14, 5, 7), 2, 2)
+    return _icon(pixmap, p)

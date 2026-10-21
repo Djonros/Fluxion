@@ -234,3 +234,91 @@ def test_speech_models_card_download_and_choice(qapp, tmp_path, monkeypatch):
     assert buttons["whisper-base"].text() == "✓ Используется"
     assert buttons["whisper-small"].text() == "Использовать"
     window.close()
+
+
+# ── hands-free voice mode ────────────────────────────────────────────────
+
+
+class QuietSpeaker(FakeSpeaker):
+    """Reads aloud instantly: hands-free mode may listen again at once."""
+
+    def speaking(self):
+        return False
+
+
+def _heard(monkeypatch, phrases):
+    """Recognition returns *phrases* one by one (then silence)."""
+    queue = list(phrases)
+    monkeypatch.setattr(voice.models, "is_installed", lambda model_id, models_dir=None: True)
+    monkeypatch.setattr(voice.stt, "transcribe", lambda audio, folder, language="ru": queue.pop(0) if queue else "")
+    monkeypatch.setattr(
+        voice.stt.Recorder, "record", lambda self: np.zeros(voice.stt.SAMPLE_RATE, dtype=np.float32)
+    )
+    return queue
+
+
+def test_hands_free_listens_sends_reads_and_stops_by_voice(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(voice.tts, "Speaker", QuietSpeaker)
+    queue = _heard(monkeypatch, ["Как дела?", "", "Стоп."])
+    window = _window(qapp, tmp_path, assistant=FakeAssistant())
+    window.hands_free_button.setChecked(True)  # Ctrl+Shift+Space
+    assert window._hands_free
+    _wait(qapp, lambda: not window._hands_free, timeout=10)
+
+    assert not queue
+    assert window.history[0] == {"role": "user", "content": "Как дела?"}
+    assert FakeSpeaker.instances[-1].spoken  # the answer was read aloud though the switch is off
+    assert not window.speak_toggle.isChecked()
+    assert "выключено по команде «стоп»" in window.messages.toPlainText()
+    assert not window.hands_free_button.isChecked() and window.voice_worker is None
+    window.close()
+
+
+def test_hands_free_turns_off_when_nobody_speaks(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(voice.tts, "Speaker", QuietSpeaker)
+    _heard(monkeypatch, [])
+    window = _window(qapp, tmp_path)
+    window.hands_free_button.setChecked(True)
+    _wait(qapp, lambda: not window._hands_free, timeout=10)
+    assert "речи не слышно" in window.messages.toPlainText()
+    assert not window.history
+    window.close()
+
+
+def test_hands_free_waits_while_answer_is_read(qapp, tmp_path, monkeypatch):
+    _heard(monkeypatch, ["Привет"])
+    window = _window(qapp, tmp_path, assistant=FakeAssistant())
+    window.hands_free_button.setChecked(True)
+    _wait(qapp, lambda: FakeSpeaker.instances and FakeSpeaker.instances[-1].spoken)
+    _wait(qapp, lambda: False, timeout=1.0)  # the voice still talks: no new recording
+    assert window.voice_worker is None and window._hands_free
+    window.hands_free_button.setChecked(False)  # the button takes the mode off and the voice
+    assert not FakeSpeaker.instances[-1].talking
+    window.close()
+
+
+def test_hands_free_without_model_explains(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(voice.models, "is_installed", lambda model_id, models_dir=None: False)
+    window = _window(qapp, tmp_path)
+    window.hands_free_button.setChecked(True)
+    assert not window._hands_free and not window.hands_free_button.isChecked()
+    assert "Распознавание речи" in window.messages.toPlainText()
+    window.close()
+
+
+def test_spoken_kompas_command():
+    from desktop_browser.app import spoken_command
+
+    assert spoken_command("Компас, втулка 30 на 20 длиной 50.") == "/компас втулка 30 на 20 длиной 50."
+    assert spoken_command("В компасе построй уголок") == "/компас построй уголок"
+    assert spoken_command("компасный вопрос") == "компасный вопрос"
+    assert spoken_command("Как дела?") == "Как дела?"
+
+
+def test_dictated_kompas_command_goes_into_the_field(qapp, tmp_path, monkeypatch):
+    _fake_model(monkeypatch, "Компас, гайка под ключ 13.")
+    window = _window(qapp, tmp_path)
+    window.toggle_voice_input()
+    _wait(qapp, lambda: window.voice_worker is None)
+    assert window.prompt.text() == "/компас гайка под ключ 13."
+    window.close()
