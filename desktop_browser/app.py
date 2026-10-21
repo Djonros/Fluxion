@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QSettings, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -103,6 +103,8 @@ PLAN_TASK_PREFIX = (
 PLAN_RUN_PREFIX = "Реализуй план:\n"
 PLAN_RUN_URL = "fluxion://run-plan"
 SPEAK_URL = "fluxion://speak/"  # + index of the answer in _messages
+SPEAK_ICON = "fluxion-icon:speaker"  # images of the chat document (_refresh_voice_icons)
+SPEAK_ICON_STOP = "fluxion-icon:stop"
 AGENT_DEFAULT_ITERATIONS = 15
 STICKY_SCROLL_SLACK = 8
 ACTIVITY_QUIET_WARNING = 300
@@ -1969,13 +1971,15 @@ class FluxionWindow(QMainWindow):
         self.voice_level.setVisible(False)
         composer_layout.addWidget(self.voice_level)
         self.mic_button = QToolButton()
-        self.mic_button.setText("🎤")
-        self.mic_button.setObjectName("iconButton")
+        self.mic_button.setObjectName("composerIcon")
+        self.mic_button.setIconSize(QSize(20, 20))
+        self.mic_button.setProperty("recording", False)
         self.mic_button.setToolTip("Голосовой ввод (Ctrl+Пробел): говорите, пауза или повторное нажатие — стоп")
         self.mic_button.clicked.connect(self.toggle_voice_input)
         composer_layout.addWidget(self.mic_button)
         self.speak_toggle = QToolButton()
-        self.speak_toggle.setObjectName("iconButton")
+        self.speak_toggle.setObjectName("composerIcon")
+        self.speak_toggle.setIconSize(QSize(20, 20))
         self.speak_toggle.setCheckable(True)
         self.speak_toggle.setChecked(flag_setting(self.qsettings, "voice_speak_answers"))
         self.speak_toggle.toggled.connect(self._on_speak_answers_toggled)
@@ -2824,7 +2828,7 @@ class FluxionWindow(QMainWindow):
         box.setSpacing(8)
         title = QLabel(
             "<b>Распознавание речи</b>"
-            '<br><span style="color:#94A3B8;">Модель Whisper для голосового ввода в чате (🎤 или Ctrl+Пробел). '
+            '<br><span style="color:#94A3B8;">Модель Whisper для голосового ввода в чате (кнопка микрофона или Ctrl+Пробел). '
             "Речь распознаётся на компьютере, звук никуда не отправляется. Бесплатно.</span>"
         )
         title.setTextFormat(Qt.RichText)
@@ -2899,7 +2903,7 @@ class FluxionWindow(QMainWindow):
         self.qsettings.setValue("voice_model", model_id)
         self.models_progress.setVisible(False)
         self.models_status.setText(
-            f"Модель {speech_model(model_id).name} загружена: голосовой ввод в чате — 🎤 или Ctrl+Пробел."
+            f"Модель {speech_model(model_id).name} загружена: голосовой ввод в чате — кнопка микрофона или Ctrl+Пробел."
         )
 
     def _on_speech_download_failed(self, message: str) -> None:
@@ -4347,7 +4351,7 @@ class FluxionWindow(QMainWindow):
     # ── voice: input (faster-whisper) and reading answers aloud (SAPI) ────
 
     def toggle_voice_input(self) -> None:
-        """🎤 / Ctrl+Space: start recording, or stop it and recognise what was said."""
+        """Microphone button / Ctrl+Space: start recording, or stop it and recognise what was said."""
         if self.voice_worker is not None:
             self.voice_worker.stop()
             return
@@ -4372,7 +4376,8 @@ class FluxionWindow(QMainWindow):
         worker.start()
 
     def _set_voice_recording(self, active: bool, placeholder: str = "") -> None:
-        self.mic_button.setText("⏹" if active else "🎤")
+        self.mic_button.setProperty("recording", active)
+        self._refresh_voice_icons()
         self.voice_level.setValue(0)
         self.voice_level.setVisible(active)
         if active:
@@ -4391,7 +4396,7 @@ class FluxionWindow(QMainWindow):
 
     def _on_voice_done(self, text: str) -> None:
         if not text:
-            self._set_voice_recording(False, "Не расслышал — нажмите 🎤 и скажите ещё раз")
+            self._set_voice_recording(False, "Не расслышал — нажмите микрофон и скажите ещё раз")
             return
         self._set_voice_recording(False)
         current = self.prompt.text().strip()
@@ -4409,13 +4414,34 @@ class FluxionWindow(QMainWindow):
         if self.voice_worker is worker:
             self.voice_worker = None
             self.mic_button.setEnabled(True)
-            self.mic_button.setText("🎤")
+            self.mic_button.setProperty("recording", False)
+            self._refresh_voice_icons()
             self.voice_level.setVisible(False)
         worker.deleteLater()
 
+    def _refresh_voice_icons(self) -> None:
+        """Line icons of the composer and of "Озвучить" in the colours of the theme."""
+        if not hasattr(self, "speak_toggle"):
+            return  # the theme is applied before the chat page exists
+        from . import icons
+
+        colors = getattr(self, "_icon_colors", {"fg": "#94A3B8", "on": "#00E5FF", "rec": "#FF5C5C"})
+        recording = bool(self.mic_button.property("recording"))
+        self.mic_button.style().unpolish(self.mic_button)  # [recording="true"] border
+        self.mic_button.style().polish(self.mic_button)
+        self.mic_button.setIcon(icons.stop(colors["rec"]) if recording else icons.microphone(colors["fg"]))
+        on = self.speak_toggle.isChecked()
+        self.speak_toggle.setIcon(icons.speaker(colors["on"] if on else colors["fg"], on))
+        document = self.messages.document()
+        size = QSize(32, 32)
+        document.addResource(QTextDocument.ImageResource, QUrl(SPEAK_ICON),
+                             icons.speaker(colors["on"], True).pixmap(size).toImage())
+        document.addResource(QTextDocument.ImageResource, QUrl(SPEAK_ICON_STOP),
+                             icons.stop(colors["rec"]).pixmap(size).toImage())
+
     def _show_speak_toggle(self) -> None:
         on = self.speak_toggle.isChecked()
-        self.speak_toggle.setText("🔊" if on else "🔈")
+        self._refresh_voice_icons()
         self.speak_toggle.setToolTip(
             "Ответы озвучиваются голосом Windows — нажмите, чтобы выключить"
             if on
@@ -4453,7 +4479,7 @@ class FluxionWindow(QMainWindow):
             self._render_messages()
 
     def _toggle_speak_answer(self, value: str) -> None:
-        """🔊 under an answer: read it aloud, or stop it when it is being read."""
+        """"Озвучить" under an answer: read it aloud, or stop it when it is being read."""
         try:
             index = int(value)
         except ValueError:
@@ -4772,8 +4798,14 @@ class FluxionWindow(QMainWindow):
                 parts.append(f"<div>{body}</div>")
                 last = index == len(self._messages) - 1
                 if entry["role"] != "user" and entry["text"].strip() and not (last and self.generating):
-                    label = "⏹ Остановить озвучку" if index == self._speaking_index else "🔊 Озвучить"
-                    parts.append(f'<p><a href="{SPEAK_URL}{index}">{label}</a></p>')
+                    if index == self._speaking_index:
+                        icon, label = SPEAK_ICON_STOP, "Остановить озвучку"
+                    else:
+                        icon, label = SPEAK_ICON, "Озвучить"
+                    parts.append(
+                        f'<p><a href="{SPEAK_URL}{index}"><img src="{icon}" width="16" height="16"'
+                        f' style="vertical-align: middle"> {label}</a></p>'
+                    )
                 if entry is self._plan_entry and not self.generating:
                     parts.append(f'<p><a href="{PLAN_RUN_URL}">▶ Выполнить план</a></p>')
             content = "".join(parts)
@@ -4865,8 +4897,9 @@ class FluxionWindow(QMainWindow):
         text2 = "#94A3B8" if theme.name == "dark" else "#64748B"
         accent = "#00E5FF"
         primary = "#7B2FFF"
-        ok = "#B4FF39"
+        ok = "#B4FF39" if theme.name == "dark" else "#2E7D00"  # lime is unreadable on white
         err = "#FF5C5C"
+        self._icon_colors = {"fg": text2, "on": accent, "rec": err}
 
         self.setStyleSheet(f"""
             QMainWindow, QWidget#page {{ background: {bg0}; color: {text1}; font-family: {ui_font}; font-size: 14px; }}
@@ -4908,6 +4941,9 @@ class FluxionWindow(QMainWindow):
             QTextBrowser#messages pre {{ background: {bg2}; border-radius: 6px; padding: 10px; font-family: {mono_font}; font-size: 13px; }}
             QFrame#composer {{ background: {bg1}; border: 1px solid {border}; border-radius: 6px; }}
             QFrame#composer QLineEdit {{ background: transparent; border: none; padding: 6px; }}
+            QToolButton#composerIcon {{ background: transparent; border: none; border-radius: 6px; padding: 5px; }}
+            QToolButton#composerIcon:hover {{ background: {bg2}; }}
+            QToolButton#composerIcon[recording="true"] {{ background: {bg2}; border: 1px solid {err}; }}
             QProgressBar#voiceLevel {{ background: {border}; border: none; border-radius: 3px; }}
             QProgressBar#voiceLevel::chunk {{ background: {accent}; border-radius: 3px; }}
 
@@ -4996,6 +5032,7 @@ class FluxionWindow(QMainWindow):
             apply_colors = getattr(target, "apply_colors", None)
             if callable(apply_colors):
                 apply_colors(dark)
+        self._refresh_voice_icons()
 
     # ── shutdown ─────────────────────────────────────────────────────────
 

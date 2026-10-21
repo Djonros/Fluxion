@@ -106,11 +106,13 @@ def test_dictation_goes_into_the_input_field(qapp, tmp_path, monkeypatch):
     window.prompt.setText("Скажи:")
     window.toggle_voice_input()
     assert window.voice_worker is not None
+    assert window.mic_button.property("recording")  # the stop square while recording
     _wait(qapp, lambda: window.voice_worker is None)
 
     assert window.prompt.text() == "Скажи: Привет из микрофона"
     assert not window.generating  # not sent: "send at once" is off by default
-    assert window.mic_button.isEnabled() and window.mic_button.text() == "🎤"
+    assert window.mic_button.isEnabled() and not window.mic_button.property("recording")
+    assert not window.mic_button.icon().isNull()
     window.close()
 
 
@@ -185,7 +187,7 @@ def test_answers_silent_by_default_and_speak_link_reads_one(qapp, tmp_path):
     window.send_message()
     _wait(qapp, lambda: not window.generating)
     assert not FakeSpeaker.instances  # nothing read aloud
-    assert window.messages.toPlainText().count("🔊 Озвучить") == 1  # under the answer, not the question
+    assert window.messages.toPlainText().count("Озвучить") == 1  # under the answer, not the question
 
     index = len(window._messages) - 1
     window._on_anchor(f"{SPEAK_URL}{index}")
@@ -203,7 +205,8 @@ def test_speech_end_restores_the_link(qapp, tmp_path):
     window._on_anchor(f"{SPEAK_URL}{len(window._messages) - 1}")
     FakeSpeaker.instances[-1].talking = False  # the voice finished by itself
     window._on_speech_tick()
-    assert "🔊 Озвучить" in window.messages.toPlainText()
+    assert "Озвучить" in window.messages.toPlainText()
+    assert "Остановить озвучку" not in window.messages.toPlainText()
     window.close()
 
 

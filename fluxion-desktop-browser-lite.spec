@@ -62,6 +62,7 @@ a = Analysis(
         "desktop_browser.engine",
         "desktop_browser.license_dialog",
         "desktop_browser.sound",
+        "desktop_browser.icons",
         "winsound",
         "desktop_browser.training",
         "PySide6.QtWebEngineWidgets",
