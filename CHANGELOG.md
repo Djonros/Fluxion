@@ -5,6 +5,16 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Voice input in the chat (for everyone): 🎤 next to the input field or Ctrl+Space records the microphone until a pause in speech or a second press, recognises the speech on the computer with faster-whisper and puts the text into the input field (not sent unless "⚙ Настройки чата" → "Отправлять сразу после диктовки" is on). Speech models are a new "Распознавание речи" section of the "Модели" page: Whisper Base (0.1 GB, weak computers), Small (0.5 GB, the default, good Russian on a CPU) and Medium (1.5 GB), downloaded from Hugging Face with resume into `%LOCALAPPDATA%\Fluxion\models\speech`. Without a model the chat says where to get one; a missing or forbidden microphone is reported in plain words.
+- Answers read aloud by the Windows voice (SAPI, a Russian voice when the system has one): the 🔈/🔊 switch next to 🎤 (also "⚙ Настройки чата" → "Озвучивать ответы", off by default) reads every answer, and "🔊 Озвучить" under each answer reads that one; pressing it again or "Стоп" cuts it off. Markdown is cleaned, code is not read ("Пример кода пропущен").
+- `FLUXION_SMOKE_VOICE=<folder>` in the smoke mode of the exe: a Windows voice says a phrase into a WAV and the downloaded speech model must recognise it.
+
+### Changed
+- New dependencies: `faster-whisper` and `sounddevice` (the microphone); `pywin32` is listed in `requirements.txt` for Windows (it was needed by KOMPAS already). The Lite build leaves out PyAV and onnxruntime: Fluxion passes the samples to Whisper itself and trims silence without the VAD filter.
+
 ## [0.15.0] — 2026-10-21
 
 ### Added

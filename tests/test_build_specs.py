@@ -61,3 +61,26 @@ def test_window_icon_is_bundled():
     assert '"icon-256.png"' in app
     lite = (ROOT / "fluxion-desktop-browser-lite.spec").read_text(encoding="utf-8")
     assert '"assets/icon-256.png"' in lite
+
+
+def _spec_list(name: str) -> list[str]:
+    tree = ast.parse((ROOT / "fluxion-desktop-browser-lite.spec").read_text(encoding="utf-8"))
+    return [ast.literal_eval(e) for e in _kw(_call(tree, "Analysis"), name).elts]
+
+
+def test_lite_ships_lazily_imported_voice_modules():
+    """The window imports voice/* only when the user presses 🎤 or 🔊, so
+    PyInstaller cannot see them: every module must be listed."""
+    hidden = set(_spec_list("hiddenimports"))
+    modules = {"voice"} | {f"voice.{p.stem}" for p in (ROOT / "voice").glob("*.py") if p.stem != "__init__"}
+    assert modules <= hidden, sorted(modules - hidden)
+    assert {"faster_whisper", "ctranslate2", "sounddevice"} <= hidden
+
+
+def test_lite_leaves_out_pyav_and_onnxruntime():
+    """voice/stt.py works without them (no file decoding, no VAD filter)."""
+    excludes = set(_spec_list("excludes"))
+    assert {"av", "onnxruntime", "huggingface_hub"} <= excludes
+    assert "tokenizers" not in excludes  # faster-whisper needs it at import
+    stt = (ROOT / "voice" / "stt.py").read_text(encoding="utf-8")
+    assert "vad_filter=False" in stt

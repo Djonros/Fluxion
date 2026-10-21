@@ -63,6 +63,20 @@ def message_sound_enabled(qsettings: QSettings) -> bool:
     return str(raw).strip().lower() not in ("0", "false", "")
 
 
+def flag_setting(qsettings: QSettings, key: str, default: bool = False) -> bool:
+    """A stored on/off switch; a stored 0 may come back as int or text."""
+    raw = qsettings.value(key, int(default))
+    return str(raw).strip().lower() not in ("0", "false", "")
+
+
+def voice_model_id(qsettings: QSettings) -> str:
+    """The speech recognition model of voice input (voice.models.SPEECH_MODELS)."""
+    from voice.models import DEFAULT_SPEECH_MODEL, speech_model
+
+    value = str(qsettings.value("voice_model", DEFAULT_SPEECH_MODEL) or "")
+    return value if speech_model(value) is not None else DEFAULT_SPEECH_MODEL
+
+
 def git_tools_enabled(qsettings: QSettings) -> bool:
     """Read the "agent git tools" switch; a stored 0 may come back as int or text."""
     raw = qsettings.value("agent_git_enabled", 1)
@@ -88,6 +102,7 @@ PLAN_TASK_PREFIX = (
 )
 PLAN_RUN_PREFIX = "Реализуй план:\n"
 PLAN_RUN_URL = "fluxion://run-plan"
+SPEAK_URL = "fluxion://speak/"  # + index of the answer in _messages
 AGENT_DEFAULT_ITERATIONS = 15
 STICKY_SCROLL_SLACK = 8
 ACTIVITY_QUIET_WARNING = 300
@@ -536,6 +551,61 @@ class HfDownloadDialog(QDialog):
         if self._worker is not None:
             self._worker.wait(3000)
         super().done(result)
+
+
+class SpeechModelDownloadWorker(QThread):
+    """Downloads the files of a speech recognition model (voice.models)."""
+
+    progress = Signal(int, int)
+    failed = Signal(str)
+    done = Signal(str)
+
+    def __init__(self, model_id: str, parent=None):
+        super().__init__(parent)
+        self.model_id = model_id
+
+    def run(self) -> None:
+        from voice import models
+
+        try:
+            path = models.download(self.model_id, on_progress=lambda d, t: self.progress.emit(d, t))
+        except Exception as exc:
+            self.failed.emit(f"Ошибка загрузки модели распознавания речи: {exc}")
+            return
+        self.done.emit(str(path))
+
+
+class VoiceInputWorker(QThread):
+    """Voice input: records the microphone until stop() or a pause in speech,
+    then recognises it with faster-whisper. *audio* skips the microphone (tests)."""
+
+    level = Signal(float)
+    recognizing = Signal()
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, model_dir: str, parent=None, audio=None):
+        super().__init__(parent)
+        from voice.stt import Recorder
+
+        self.model_dir = model_dir
+        self.audio = audio
+        self.recorder = Recorder(on_level=self.level.emit)
+
+    def stop(self) -> None:
+        self.recorder.stop()
+
+    def run(self) -> None:
+        from voice import stt
+
+        try:
+            audio = self.audio if self.audio is not None else self.recorder.record()
+            self.recognizing.emit()
+            text = stt.transcribe(audio, self.model_dir)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.done.emit(text)
 
 
 class ModelImportWorker(QThread):
@@ -1296,6 +1366,13 @@ class FluxionWindow(QMainWindow):
         self.status_worker: StatusWorker | None = None
         self.agent_worker: AgentWorker | None = None
         self.cad_worker: CadWorker | None = None
+        self.voice_worker: VoiceInputWorker | None = None
+        self._speech_download_worker: SpeechModelDownloadWorker | None = None
+        self._speaker = None  # voice.tts.Speaker, created on first use
+        self._speaking_index = -1  # answer being read aloud
+        self._speech_timer = QTimer(self)
+        self._speech_timer.setInterval(500)
+        self._speech_timer.timeout.connect(self._on_speech_tick)
         self._cad_conversation = None  # cad.text2cad.Conversation waiting for an answer
         self.index_worker: IndexWorker | None = None
         self._model_worker: ModelListWorker | None = None
@@ -1795,6 +1872,9 @@ class FluxionWindow(QMainWindow):
         if target == PLAN_RUN_URL:
             self.run_plan()
             return
+        if target.startswith(SPEAK_URL):
+            self._toggle_speak_answer(target[len(SPEAK_URL):])
+            return
         self._open_in_browser(target)
 
     def _open_in_browser(self, url: str) -> None:
@@ -1881,6 +1961,28 @@ class FluxionWindow(QMainWindow):
             shortcut.setContext(Qt.WidgetShortcut)
             shortcut.activated.connect(self.send_agent_once)
         composer_layout.addWidget(self.prompt, 1)
+        self.voice_level = QProgressBar()
+        self.voice_level.setObjectName("voiceLevel")
+        self.voice_level.setRange(0, 100)
+        self.voice_level.setTextVisible(False)
+        self.voice_level.setFixedSize(56, 6)
+        self.voice_level.setVisible(False)
+        composer_layout.addWidget(self.voice_level)
+        self.mic_button = QToolButton()
+        self.mic_button.setText("🎤")
+        self.mic_button.setObjectName("iconButton")
+        self.mic_button.setToolTip("Голосовой ввод (Ctrl+Пробел): говорите, пауза или повторное нажатие — стоп")
+        self.mic_button.clicked.connect(self.toggle_voice_input)
+        composer_layout.addWidget(self.mic_button)
+        self.speak_toggle = QToolButton()
+        self.speak_toggle.setObjectName("iconButton")
+        self.speak_toggle.setCheckable(True)
+        self.speak_toggle.setChecked(flag_setting(self.qsettings, "voice_speak_answers"))
+        self.speak_toggle.toggled.connect(self._on_speak_answers_toggled)
+        self._show_speak_toggle()
+        composer_layout.addWidget(self.speak_toggle)
+        voice_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
+        voice_shortcut.activated.connect(self.toggle_voice_input)
         self.stop_button = QPushButton("Стоп")
         self.stop_button.setObjectName("stopButton")
         self.stop_button.clicked.connect(self.stop_generation)
@@ -1947,6 +2049,20 @@ class FluxionWindow(QMainWindow):
             lambda checked: self.qsettings.setValue("message_sound", int(checked))
         )
         box.addWidget(self.message_sound)
+
+        box.addWidget(self._settings_caption("Голос"))
+        self.voice_speak_answers = QCheckBox("Озвучивать ответы")
+        self.voice_speak_answers.setToolTip("Fluxion читает ответ вслух голосом Windows; код не читается")
+        self.voice_speak_answers.setChecked(self.speak_toggle.isChecked())
+        self.voice_speak_answers.toggled.connect(self.speak_toggle.setChecked)
+        box.addWidget(self.voice_speak_answers)
+        self.voice_send_at_once = QCheckBox("Отправлять сразу после диктовки")
+        self.voice_send_at_once.setToolTip("Иначе распознанный текст остаётся в поле ввода, его можно поправить")
+        self.voice_send_at_once.setChecked(flag_setting(self.qsettings, "voice_send_at_once"))
+        self.voice_send_at_once.toggled.connect(
+            lambda checked: self.qsettings.setValue("voice_send_at_once", int(checked))
+        )
+        box.addWidget(self.voice_send_at_once)
 
         box.addWidget(self._settings_caption("Агент"))
         row = QHBoxLayout()
@@ -2683,6 +2799,7 @@ class FluxionWindow(QMainWindow):
         layout.addWidget(self.models_installed)
         self._cloud_card = self._cloud_api_card()
         layout.addWidget(self._cloud_card)
+        layout.addWidget(self._speech_models_card())
         layout.addStretch()
 
         self._refresh_models()
@@ -2694,6 +2811,106 @@ class FluxionWindow(QMainWindow):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(page)
         return scroll
+
+    # ── speech recognition models (voice input) ───────────────────────────
+
+    def _speech_models_card(self) -> QFrame:
+        from voice.models import SPEECH_MODELS
+
+        card = QFrame()
+        card.setObjectName("stepCard")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 12, 16, 12)
+        box.setSpacing(8)
+        title = QLabel(
+            "<b>Распознавание речи</b>"
+            '<br><span style="color:#94A3B8;">Модель Whisper для голосового ввода в чате (🎤 или Ctrl+Пробел). '
+            "Речь распознаётся на компьютере, звук никуда не отправляется. Бесплатно.</span>"
+        )
+        title.setTextFormat(Qt.RichText)
+        title.setWordWrap(True)
+        box.addWidget(title)
+        self._speech_buttons: dict[str, QPushButton] = {}
+        for model in SPEECH_MODELS:
+            row = QHBoxLayout()
+            label = QLabel(
+                f"<b>{html.escape(model.name)}</b> · {model.size_bytes / 1e9:.1f} ГБ"
+                f'<br><span style="color:#94A3B8;">{html.escape(model.summary)}</span>'
+            )
+            label.setTextFormat(Qt.RichText)
+            label.setWordWrap(True)
+            row.addWidget(label, 1)
+            button = QPushButton()
+            button.clicked.connect(lambda checked=False, mid=model.model_id: self._on_speech_model_button(mid))
+            row.addWidget(button)
+            self._speech_buttons[model.model_id] = button
+            box.addLayout(row)
+        self._refresh_speech_models()
+        return card
+
+    def _refresh_speech_models(self) -> None:
+        from voice.models import is_installed
+
+        current = voice_model_id(self.qsettings)
+        busy = self._speech_download_worker is not None
+        for model_id, button in self._speech_buttons.items():
+            if not is_installed(model_id):
+                button.setText("Скачать")
+                button.setEnabled(not busy)
+            elif model_id == current:
+                button.setText("✓ Используется")
+                button.setEnabled(False)
+            else:
+                button.setText("Использовать")
+                button.setEnabled(not busy)
+
+    def _on_speech_model_button(self, model_id: str) -> None:
+        from voice.models import is_installed
+
+        if is_installed(model_id):
+            self.qsettings.setValue("voice_model", model_id)
+            self._refresh_speech_models()
+            return
+        if self._speech_download_worker is not None:
+            return
+        self.models_progress.setVisible(True)
+        self.models_progress.setRange(0, 0)
+        self.models_status.setText("Скачиваем модель распознавания речи… докачка поддерживается")
+        worker = SpeechModelDownloadWorker(model_id, self)
+        self._speech_download_worker = worker
+        worker.progress.connect(self._on_speech_download_progress)
+        worker.done.connect(lambda path, mid=model_id: self._on_speech_download_done(mid))
+        worker.failed.connect(self._on_speech_download_failed)
+        worker.finished.connect(lambda: self._on_speech_download_finished(worker))
+        self._refresh_speech_models()
+        worker.start()
+
+    def _on_speech_download_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self.models_progress.setRange(0, total)
+            self.models_progress.setValue(min(done, total))
+            self.models_status.setText(
+                f"Скачиваем модель распознавания речи… {done / 1e9:.2f} / {total / 1e9:.2f} ГБ"
+            )
+
+    def _on_speech_download_done(self, model_id: str) -> None:
+        from voice.models import speech_model
+
+        self.qsettings.setValue("voice_model", model_id)
+        self.models_progress.setVisible(False)
+        self.models_status.setText(
+            f"Модель {speech_model(model_id).name} загружена: голосовой ввод в чате — 🎤 или Ctrl+Пробел."
+        )
+
+    def _on_speech_download_failed(self, message: str) -> None:
+        self.models_progress.setVisible(False)
+        self.models_status.setText(message)
+
+    def _on_speech_download_finished(self, worker) -> None:
+        if self._speech_download_worker is worker:
+            self._speech_download_worker = None
+        worker.deleteLater()
+        self._refresh_speech_models()
 
     # ── cloud model by API (Pro) ──────────────────────────────────────────
 
@@ -4127,15 +4344,146 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
         self._save_memory()
 
-    def _notify_answer(self) -> None:
-        """Play the "answer ready" sound, unless switched off or the user pressed Stop."""
-        if self._stop_requested or not message_sound_enabled(self.qsettings):
-            return
-        from .sound import play_message_sound
+    # ── voice: input (faster-whisper) and reading answers aloud (SAPI) ────
 
-        play_message_sound()
+    def toggle_voice_input(self) -> None:
+        """🎤 / Ctrl+Space: start recording, or stop it and recognise what was said."""
+        if self.voice_worker is not None:
+            self.voice_worker.stop()
+            return
+        from voice.models import is_installed, model_path, speech_model
+
+        model_id = voice_model_id(self.qsettings)
+        if not is_installed(model_id):
+            self._append_banner(
+                f"Для голосового ввода нужна модель распознавания речи ({speech_model(model_id).name}). "
+                "Скачайте её: меню «Модели» (Ctrl+M) → раздел «Распознавание речи»."
+            )
+            return
+        self._stop_speaking()  # do not record Fluxion's own voice
+        worker = VoiceInputWorker(str(model_path(model_id)), self)
+        self.voice_worker = worker
+        worker.level.connect(self._on_voice_level)
+        worker.recognizing.connect(self._on_voice_recognizing)
+        worker.done.connect(self._on_voice_done)
+        worker.failed.connect(self._on_voice_failed)
+        worker.finished.connect(lambda: self._on_voice_worker_finished(worker))
+        self._set_voice_recording(True)
+        worker.start()
+
+    def _set_voice_recording(self, active: bool, placeholder: str = "") -> None:
+        self.mic_button.setText("⏹" if active else "🎤")
+        self.voice_level.setValue(0)
+        self.voice_level.setVisible(active)
+        if active:
+            self._placeholder_before_voice = self.prompt.placeholderText()
+            self.prompt.setPlaceholderText("Говорите… пауза или Ctrl+Пробел — стоп")
+        else:
+            self.prompt.setPlaceholderText(placeholder or getattr(self, "_placeholder_before_voice", ""))
+
+    def _on_voice_level(self, level: float) -> None:
+        self.voice_level.setValue(min(100, int(level * 600)))
+
+    def _on_voice_recognizing(self) -> None:
+        self.voice_level.setVisible(False)
+        self.mic_button.setEnabled(False)
+        self.prompt.setPlaceholderText("Распознаю речь…")
+
+    def _on_voice_done(self, text: str) -> None:
+        if not text:
+            self._set_voice_recording(False, "Не расслышал — нажмите 🎤 и скажите ещё раз")
+            return
+        self._set_voice_recording(False)
+        current = self.prompt.text().strip()
+        self.prompt.setText(f"{current} {text}" if current else text)
+        self.prompt.setFocus()
+        if self.voice_send_at_once.isChecked() and not self.generating:
+            self.send_message()
+
+    def _on_voice_failed(self, message: str) -> None:
+        self._set_voice_recording(False)
+        self._append_banner(f"Голосовой ввод: {message}")
+
+    def _on_voice_worker_finished(self, worker) -> None:
+        # forget it before deleting: closeEvent waits on self.voice_worker
+        if self.voice_worker is worker:
+            self.voice_worker = None
+            self.mic_button.setEnabled(True)
+            self.mic_button.setText("🎤")
+            self.voice_level.setVisible(False)
+        worker.deleteLater()
+
+    def _show_speak_toggle(self) -> None:
+        on = self.speak_toggle.isChecked()
+        self.speak_toggle.setText("🔊" if on else "🔈")
+        self.speak_toggle.setToolTip(
+            "Ответы озвучиваются голосом Windows — нажмите, чтобы выключить"
+            if on
+            else "Озвучивать ответы голосом Windows"
+        )
+
+    def _on_speak_answers_toggled(self, checked: bool) -> None:
+        self.qsettings.setValue("voice_speak_answers", int(checked))
+        self._show_speak_toggle()
+        box = getattr(self, "voice_speak_answers", None)
+        if box is not None and box.isChecked() != checked:
+            box.setChecked(checked)
+        if not checked:
+            self._stop_speaking()
+
+    def _speak(self, markdown: str, index: int) -> None:
+        if self._speaker is None:
+            from voice.tts import Speaker
+
+            self._speaker = Speaker()
+        if not self._speaker.speak(markdown):
+            if self._speaker.error:
+                self._append_banner(self._speaker.error)
+            return
+        self._speaking_index = index
+        self._speech_timer.start()
+        self._render_messages()
+
+    def _stop_speaking(self) -> None:
+        if self._speaker is not None:
+            self._speaker.stop()
+        if self._speaking_index != -1:
+            self._speaking_index = -1
+            self._speech_timer.stop()
+            self._render_messages()
+
+    def _toggle_speak_answer(self, value: str) -> None:
+        """🔊 under an answer: read it aloud, or stop it when it is being read."""
+        try:
+            index = int(value)
+        except ValueError:
+            return
+        if index == self._speaking_index:
+            self._stop_speaking()
+        elif 0 <= index < len(self._messages):
+            self._speak(self._messages[index]["text"], index)
+
+    def _on_speech_tick(self) -> None:
+        if self._speaker is None or not self._speaker.speaking():
+            self._speaking_index = -1
+            self._speech_timer.stop()
+            self._render_messages()
+
+    def _notify_answer(self, spoken: str | None = None) -> None:
+        """Play the "answer ready" sound and read the answer aloud (*spoken*, by default
+        the last message), unless switched off or the user pressed Stop."""
+        if self._stop_requested:
+            return
+        if message_sound_enabled(self.qsettings):
+            from .sound import play_message_sound
+
+            play_message_sound()
+        if self.speak_toggle.isChecked() and self._messages:
+            index = len(self._messages) - 1
+            self._speak(spoken if spoken is not None else self._messages[index]["text"], index)
 
     def stop_generation(self) -> None:
+        self._stop_speaking()
         if self.generating:
             self._stop_requested = True
         if self.worker is not None and self.generating:
@@ -4276,7 +4624,7 @@ class FluxionWindow(QMainWindow):
             self.history.append({"role": "assistant", "content": answer})
         entry["text"] = "\n".join(fragments) or "(пустой ответ)"
         if answer:
-            self._notify_answer()
+            self._notify_answer(answer)
         meta = ["агент", f"{result.get('iterations_used', 0)} итер."]
         verification = VERIFICATION_LABELS.get(result.get("verification", ""))
         if verification:
@@ -4406,7 +4754,7 @@ class FluxionWindow(QMainWindow):
             content = WELCOME_HTML
         else:
             parts = []
-            for entry in self._messages:
+            for index, entry in enumerate(self._messages):
                 if entry["role"] == "banner":
                     parts.append(f"<p><i>⚠ {html.escape(entry['text'])}</i></p>")
                     continue
@@ -4422,6 +4770,10 @@ class FluxionWindow(QMainWindow):
 
                 body = render_chat_html(entry["text"]) or "…"
                 parts.append(f"<div>{body}</div>")
+                last = index == len(self._messages) - 1
+                if entry["role"] != "user" and entry["text"].strip() and not (last and self.generating):
+                    label = "⏹ Остановить озвучку" if index == self._speaking_index else "🔊 Озвучить"
+                    parts.append(f'<p><a href="{SPEAK_URL}{index}">{label}</a></p>')
                 if entry is self._plan_entry and not self.generating:
                     parts.append(f'<p><a href="{PLAN_RUN_URL}">▶ Выполнить план</a></p>')
             content = "".join(parts)
@@ -4556,6 +4908,8 @@ class FluxionWindow(QMainWindow):
             QTextBrowser#messages pre {{ background: {bg2}; border-radius: 6px; padding: 10px; font-family: {mono_font}; font-size: 13px; }}
             QFrame#composer {{ background: {bg1}; border: 1px solid {border}; border-radius: 6px; }}
             QFrame#composer QLineEdit {{ background: transparent; border: none; padding: 6px; }}
+            QProgressBar#voiceLevel {{ background: {border}; border: none; border-radius: 3px; }}
+            QProgressBar#voiceLevel::chunk {{ background: {accent}; border-radius: 3px; }}
 
             /* Чекбоксы */
             QCheckBox {{ color: {text1}; spacing: 8px; }}
@@ -4647,6 +5001,12 @@ class FluxionWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_memory()
+        self._stop_speaking()
+        if self.voice_worker is not None:
+            self.voice_worker.stop()
+            self.voice_worker.wait(30000)  # recognition of a long phrase on a slow CPU
+        if self._speech_download_worker is not None:
+            self._speech_download_worker.wait(10000)
         if self.worker is not None and self.generating:
             self.worker.stop()
             self.worker.wait(2000)
@@ -4802,6 +5162,8 @@ def main() -> int:
             result = _rag_smoke_check(rag_service) if os.environ.get("FLUXION_SMOKE_RAG") == "1" else 0
             if os.environ.get("FLUXION_SMOKE_CAD"):
                 result = result or _cad_smoke_check(os.environ["FLUXION_SMOKE_CAD"])
+            if os.environ.get("FLUXION_SMOKE_VOICE"):
+                result = result or _voice_smoke_check(os.environ["FLUXION_SMOKE_VOICE"])
         else:
             result = app.exec()
 
@@ -4837,6 +5199,44 @@ def _cad_smoke_check(folder: str) -> int:
     print("[cad-smoke] flat: {:.2f} x {:.2f} x {:g}".format(*result.flat_size) + f", dxf: {result.dxf_path}")
     print("[cad-smoke] OK")
     return 0
+
+
+def _voice_smoke_check(folder: str) -> int:
+    """FLUXION_SMOKE_VOICE=<folder>: a Windows voice says a phrase into a WAV and the
+    downloaded speech model recognises it — checks that the built exe carries
+    faster-whisper, CTranslate2, sounddevice and the SAPI voice; returns exit code."""
+    try:
+        import sounddevice  # noqa: F401  (PortAudio library of the microphone)
+        import win32com.client
+
+        from voice import models, stt, tts
+
+        installed = models.installed_models()
+        if not installed:
+            print("[voice-smoke] FAIL: no speech model downloaded")
+            return 7
+        speaker = tts.Speaker()
+        if not speaker.available():
+            print(f"[voice-smoke] FAIL: {speaker.error}")
+            return 7
+        voice = speaker._voice
+        fmt = win32com.client.Dispatch("SAPI.SpAudioFormat")
+        fmt.Type = 18  # 16 kHz 16 bit mono
+        stream = win32com.client.Dispatch("SAPI.SpFileStream")
+        stream.Format = fmt
+        path = str(Path(folder) / "voice-smoke.wav")
+        stream.Open(path, 3, False)
+        voice.AudioOutputStream = stream
+        voice.Speak("Построй втулку из бронзы.")
+        stream.Close()
+        text = stt.transcribe(stt.read_wav(path), models.model_path(installed[0].model_id))
+    except Exception as exc:
+        print(f"[voice-smoke] FAIL: {type(exc).__name__}: {exc}")
+        return 7
+    print(f"[voice-smoke] voice: {speaker.voice_name()}, model: {installed[0].name}, heard: {text}")
+    ok = "втулк" in text.lower()
+    print("[voice-smoke] OK" if ok else "[voice-smoke] FAIL: phrase not recognised")
+    return 0 if ok else 7
 
 
 def _rag_smoke_check(rag_service) -> int:

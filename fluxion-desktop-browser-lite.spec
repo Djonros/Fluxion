@@ -27,12 +27,21 @@ llama_cpp_binaries = (
     else []
 )
 
+# voice input: CTranslate2 (faster-whisper's engine) keeps its DLLs next to its
+# extension module and has no PyInstaller hook
+try:
+    from PyInstaller.utils.hooks import collect_dynamic_libs as _collect_dynamic_libs
+
+    ctranslate2_binaries = _collect_dynamic_libs("ctranslate2")
+except Exception:
+    ctranslate2_binaries = []
+
 block_cipher = None
 
 a = Analysis(
     ["run_desktop_browser.py"],
     pathex=[os.path.abspath(".")],
-    binaries=llama_cpp_binaries,
+    binaries=llama_cpp_binaries + ctranslate2_binaries,
     datas=[
         ("assets/icon-256.png", "assets"),  # the window icon
         ("assets/message.wav", "assets"),  # "answer ready" sound (desktop_browser/sound.py)
@@ -137,6 +146,14 @@ a = Analysis(
         "cad.dxf",
         "pythoncom",
         "pywintypes",
+        # voice input and reading answers aloud (imported lazily from the window)
+        "voice",
+        "voice.models",
+        "voice.stt",
+        "voice.tts",
+        "faster_whisper",
+        "ctranslate2",
+        "sounddevice",
         "win32com",
         "win32com.client",
         "win32com.client.gencache",
@@ -149,6 +166,12 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        # --- voice input: Fluxion passes samples to faster-whisper itself, trims
+        # silence without its VAD filter and downloads models itself, so PyAV
+        # (FFmpeg, 65 MB), onnxruntime (45 MB) and huggingface_hub (below) are
+        # not needed (voice/stt.py) ---
+        "av",
+        "onnxruntime",
         # --- training stack: lives in data/training_env, never bundled ---
         "sentence_transformers",
         "torch",
@@ -163,7 +186,7 @@ a = Analysis(
         "bitsandbytes",
         "gguf",
         "safetensors",
-        "tokenizers",
+        # tokenizers stays: faster-whisper reads tokenizer.json with it (voice input)
         "huggingface_hub",
         "hf_xet",
         "pyarrow",
