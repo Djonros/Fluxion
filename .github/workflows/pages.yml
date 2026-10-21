@@ -17,6 +17,7 @@ on:
       - "core/model_catalog.json"
       - "finetune/presets.py"
       - "scripts/build_site.py"
+      - "desktop_browser/__init__.py"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
