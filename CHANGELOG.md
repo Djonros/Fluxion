@@ -5,7 +5,7 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.17.0] — 2026-10-23
 
 ### Added
 - Reports on a finished KOMPAS-3D assembly (for everyone): Инструменты → "Ведомость и металлоёмкость сборки…" or `python -m cad --report file.a3d`. The assembly is opened read-only and invisible and closed unsaved; one the designer has open is read and left open. The Excel workbook (`Документы\Fluxion CAD`, never overwritten) has: the summary statement in the shape of the build tree (positions from the specifications, the order of specification sections, subassemblies fold in Excel), the details with quantity on the product, mass and surface area, the metal report by material and sortament with a check against the mass in KOMPAS, the bought units ("Прочие изделия", kept out of the metal report and the remarks), the welds and the remarks a norm controller would make (no designation, no material, zero mass).
