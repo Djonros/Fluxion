@@ -146,6 +146,11 @@ a = Analysis(
         "cad.kompas",
         "cad.dxf",
         "cad.quick",
+        "cad.assembly",
+        "cad.report",
+        "cad.welds",
+        "cad.workload",
+        "openpyxl",  # Excel reports of an assembly (cad/report.py)
         "pythoncom",
         "pywintypes",
         # voice input and reading answers aloud (imported lazily from the window)

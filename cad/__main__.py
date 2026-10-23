@@ -5,6 +5,8 @@
   python -m cad --spec file.json  — готовый JSON (шаблон+параметры или список операций, "material")
   --dry-run                       — только показать JSON, КОМПАС не трогать
   --no-ask                        — не спрашивать недостающие размеры и материал, взять по умолчанию
+  python -m cad --report file.a3d — сводная ведомость, детали, металлоёмкость, сварка и замечания в Excel
+                                    (сборка открывается только для чтения; --out — папка отчёта)
 """
 from __future__ import annotations
 
@@ -66,6 +68,29 @@ def _ask_until_built(description: str, backend, ask: bool) -> dict | None:
             message = "по умолчанию"
 
 
+def _report(path: str, out: str | None, check_only: bool = False, accept: bool = False) -> int:
+    from . import assembly, report
+
+    try:
+        top = assembly.read(path)
+    except assembly.AssemblyError as exc:
+        print(f"[ОШИБКА] {exc}")
+        return 1
+    result = report.build(top, report.load_decisions(top.file))
+    report.add_welds(result)
+    print(report.warnings_text(result, limit=30))
+    print()
+    if check_only:
+        return 0
+    if result.unchecked and not accept:
+        print(f"[ОТЧЁТ НЕ СФОРМИРОВАН] Не отмечено предупреждений: {len(result.unchecked)}. Отметьте их в Fluxion "
+              "(Инструменты → «Ведомость и металлоёмкость сборки…») или запустите с --accept.")
+        return 3
+    target = report.save_xlsx(result, report.default_path(top, out), source=Path(path).name)
+    print(report.summary_text(result, target))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m cad", description="Деталь в КОМПАС-3D по описанию")
     ap.add_argument("description", nargs="*", help="описание детали")
@@ -75,7 +100,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", help="папка для .m3d (по умолчанию Документы\\Fluxion CAD)")
     ap.add_argument("--no-ask", action="store_true", help="не задавать вопросов: недостающее — по умолчанию")
     ap.add_argument("--only", help="с --demo: только эти шаблоны через запятую (например sheet_angle,sheet_z)")
+    ap.add_argument("--report", help="сборка .a3d: ведомость и металлоёмкость в Excel")
+    ap.add_argument("--check", action="store_true", help="с --report: только предупреждения, без отчёта")
+    ap.add_argument("--accept", action="store_true",
+                    help="с --report: сформировать, хотя предупреждения не отмечены (пометка «не проверено»)")
     args = ap.parse_args(argv)
+    if args.report:
+        return _report(args.report, args.out, check_only=args.check, accept=args.accept)
 
     parts: list[dict] = []
     try:

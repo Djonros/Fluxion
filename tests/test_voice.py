@@ -266,6 +266,9 @@ def test_live_sapi_voice_to_whisper(tmp_path):
         pytest.skip("no speech model downloaded")
     pytest.importorskip("faster_whisper")
     win32 = pytest.importorskip("win32com.client")
+    import pythoncom
+
+    pythoncom.CoInitialize()  # other tests may have left COM of this thread uninitialised
     voice = win32.Dispatch("SAPI.SpVoice")
     russian = [t for t in voice.GetVoices() if t.GetAttribute("Language").split(";")[0] == "419"]
     if not russian:

@@ -779,6 +779,127 @@ class CadWorker(QThread):
         self.done.emit(result_text(part, result))
 
 
+class AssemblyReportWorker(QThread):
+    """Summary statement and metal report of a KOMPAS-3D assembly (cad/report.py):
+    the assembly is opened read-only, the report is saved as an Excel workbook."""
+
+    progress = Signal(str)
+    ready = Signal(object)  # cad.report.Report: the window shows the warnings, then saves it
+    failed = Signal(str)
+
+    def __init__(self, path: str, parent=None):
+        super().__init__(parent)
+        self.path = path
+
+    def run(self) -> None:
+        from cad import assembly, report
+
+        try:
+            import pythoncom
+
+            pythoncom.CoInitialize()  # COM in a background thread
+        except ImportError:  # not Windows: assembly.read explains that pywin32 is missing
+            pythoncom = None
+        try:
+            top = assembly.read(self.path, log=self.progress.emit)
+            self.progress.emit("Считаю ведомость и металлоёмкость…")
+            result = report.build(top, report.load_decisions(top.file))
+            report.add_welds(result, log=self.progress.emit)
+        except assembly.AssemblyError as exc:
+            self.failed.emit(str(exc))
+            return
+        except Exception as exc:  # COM errors carry the KOMPAS message
+            self.failed.emit(f"Не получилось составить отчёт: {exc}")
+            return
+        finally:
+            if pythoncom is not None:
+                pythoncom.CoUninitialize()
+        self.ready.emit(result)
+
+
+class ReportWarningsDialog(QDialog):
+    """The disputed places of an assembly report, one row each: the designer marks
+    every one ("Проверено"; for a bought unit also "Покупное") and only then the
+    document can be made."""
+
+    def __init__(self, result, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
+
+        self.result = result
+        self.setWindowTitle("Перед оформлением отчёта")
+        self.resize(1100, 560)
+        box = QVBoxLayout(self)
+        intro = QLabel(
+            f"<b>{html.escape(result.top.title)}</b>: спорных мест — {len(result.remarks)}. "
+            "Отметьте каждое: отчёт формируется, только когда отмечено всё. "
+            "У покупных снимите «Покупное», если это ваше изготовление. Отметки запоминаются для этого изделия."
+        )
+        intro.setWordWrap(True)
+        intro.setTextFormat(Qt.RichText)
+        box.addWidget(intro)
+        headers = ["Проверено", "Покупное", "Уровень", "Замечание", "Обозначение и наименование", "Где",
+                   "Что будет и что сделать"]
+        self.table = QTableWidget(len(result.remarks), len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.table.setWordWrap(True)
+        for row, r in enumerate(result.remarks):
+            check = QTableWidgetItem()
+            check.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            check.setCheckState(Qt.Checked if r["checked"] else Qt.Unchecked)
+            self.table.setItem(row, 0, check)
+            bought = QTableWidgetItem()
+            if r["purchased"] is not None:
+                bought.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                bought.setCheckState(Qt.Checked if r["purchased"] else Qt.Unchecked)
+            else:
+                bought.setFlags(Qt.ItemIsEnabled)
+            self.table.setItem(row, 1, bought)
+            for col, text in enumerate((r["level"], r["problem"], r["title"], r["where"], r["message"]), 2):
+                item = QTableWidgetItem(text)
+                item.setFlags(Qt.ItemIsEnabled)
+                self.table.setItem(row, col, item)
+        header = self.table.horizontalHeader()
+        for col in (0, 1, 2):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        for col, width in ((3, 200), (4, 250), (5, 190), (6, 300)):
+            self.table.setColumnWidth(col, width)
+        header.setStretchLastSection(True)
+        self.table.resizeRowsToContents()  # after the widths: rows as high as their text
+        self.table.itemChanged.connect(self._update)
+        box.addWidget(self.table, 1)
+        buttons = QHBoxLayout()
+        self.counter = QLabel()
+        buttons.addWidget(self.counter, 1)
+        cancel = QPushButton("Отмена — исправлю модель")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        self.make_button = QPushButton("Сформировать отчёт")
+        self.make_button.setObjectName("sendButton")
+        self.make_button.clicked.connect(self.accept)
+        buttons.addWidget(self.make_button)
+        box.addLayout(buttons)
+        self._update()
+
+    def marks(self) -> dict:
+        out = {}
+        for row, r in enumerate(self.result.remarks):
+            mark = {"checked": self.table.item(row, 0).checkState() == Qt.Checked}
+            if r["purchased"] is not None:
+                mark["purchased"] = self.table.item(row, 1).checkState() == Qt.Checked
+            out[r["id"]] = mark
+        return out
+
+    def _update(self, *_args) -> None:
+        marks = self.marks()
+        done = sum(1 for m in marks.values() if m["checked"])
+        total = len(marks)
+        self.counter.setText(f"Отмечено {done} из {total}")
+        self.make_button.setEnabled(done == total)  # blocked until every place is marked
+
+
 class MaterialsDialog(QDialog):
     """The materials catalog of "Деталь в КОМПАС": the shipped one plus the user's
     %APPDATA%\\Fluxion\\materials.json; open that file, import CSV/Excel, reload."""
@@ -1799,6 +1920,11 @@ class FluxionWindow(QMainWindow):
         act_materials = QAction("Каталог материалов…", self)
         act_materials.triggered.connect(self._open_materials_dialog)
         m_tools.addAction(act_materials)
+        m_tools.addSeparator()
+        act_report = QAction("Ведомость и металлоёмкость сборки…", self)
+        act_report.setToolTip("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel")
+        act_report.triggered.connect(self._open_assembly_report)
+        m_tools.addAction(act_report)
 
         # Помощь
         m_help = bar.addMenu("&Помощь")
@@ -4281,6 +4407,96 @@ class FluxionWindow(QMainWindow):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
+    def _open_assembly_report(self) -> None:
+        """Menu Инструменты → Ведомость и металлоёмкость сборки: pick an .a3d, report in Excel."""
+        from PySide6.QtWidgets import QFileDialog
+
+        if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
+            return
+        start = str(self.qsettings.value("report_dir", "") or "")
+        path, _ = QFileDialog.getOpenFileName(self, "Сборка КОМПАС-3D", start, "Сборки КОМПАС-3D (*.a3d)")
+        if path:
+            self.qsettings.setValue("report_dir", str(Path(path).parent))
+            self.start_assembly_report(path)
+
+    def start_assembly_report(self, path: str) -> None:
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", f"Ведомость и металлоёмкость: {Path(path).name}")
+        self._append_message("assistant", "")
+        entry = self._messages[-1]
+        entry["meta"] = "[КОМПАС-3D | сборка открыта только для чтения]"
+        self._report_entry = entry
+        self._set_generating(True)
+        self._run_report_worker(path)
+
+    def _run_report_worker(self, path: str) -> None:
+        worker = AssemblyReportWorker(path, self)
+        self.report_worker = worker
+        worker.progress.connect(self._on_report_progress)
+        worker.ready.connect(self._on_report_ready)
+        worker.failed.connect(self._on_report_failed)
+        worker.finished.connect(lambda: self._on_report_worker_finished(worker))
+        worker.start()
+
+    def _on_report_progress(self, text: str) -> None:
+        entry = self._report_entry
+        entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + text
+        self._render_messages()
+
+    def _mark_warnings(self, result) -> tuple[bool, dict]:
+        """The disputed places, each to be marked: (made, the marks)."""
+        dialog = ReportWarningsDialog(result, self)
+        made = dialog.exec() == QDialog.Accepted
+        return made, dialog.marks()
+
+    def _on_report_ready(self, result) -> None:
+        from cad import report
+
+        source = Path(result.top.file).name if result.top.file else ""
+        if result.remarks:
+            made, marks = self._mark_warnings(result)
+            if result.top.file:  # marked once, not asked again
+                report.save_decisions(result.top.file, report.decisions_from_marks(result, marks))
+            if not made:
+                left = sum(1 for m in marks.values() if not m["checked"])
+                self._report_entry["text"] = (
+                    f"Отчёт не сформирован: не отмечено {left} из {len(marks)} спорных мест. Отметки сохранены.\n"
+                    + report.warnings_text(result))
+                self._set_generating(False)
+                self._render_messages()
+                return
+            if report.purchase_changed(result, marks):
+                # "bought or made here" changes the metal report and the welds: build it again
+                self._report_entry["text"] = "Пересчитываю с вашими отметками…"
+                self._render_messages()
+                self._run_report_worker(result.top.file)
+                return
+            for r in result.remarks:
+                r["checked"] = marks.get(r["id"], {}).get("checked", r["checked"])
+        try:
+            path = str(report.save_xlsx(result, report.default_path(result.top), source=source))
+        except Exception as exc:  # the workbook open in Excel, no rights to the folder
+            self._on_report_failed(f"Не удалось сохранить отчёт: {exc}")
+            return
+        summary = report.summary_text(result)
+        self._report_entry["text"] = summary + f"\nОтчёт: {path}"
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
+        self._notify_answer(summary)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _on_report_failed(self, message: str) -> None:
+        self._report_entry["text"] = message
+        self._set_generating(False)
+        self._render_messages()
+
+    def _on_report_worker_finished(self, worker) -> None:
+        # forget it before deleting: closeEvent waits on self.report_worker
+        if getattr(self, "report_worker", None) is worker:
+            self.report_worker = None
+        worker.deleteLater()
+
     def _open_cad_dialog(self) -> None:
         """Menu Инструменты → Деталь в КОМПАС: the text of the chat input, or ask for it."""
         if self.generating or self.agent_running:
@@ -5140,6 +5356,8 @@ class FluxionWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_memory()
+        if getattr(self, "report_worker", None) is not None:
+            self.report_worker.wait(120000)  # KOMPAS reads a big assembly for a while
         self._stop_speaking()
         self._hands_free = False
         self._hands_free_timer.stop()
