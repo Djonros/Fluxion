@@ -5,6 +5,12 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] — 2026-10-24
+
+### Fixed
+- The site address is `djonros.github.io/Fluxion/` (GitHub Pages is case sensitive here): the button to the prices in «Помощь → Лицензия…» opened a 404 page and the model catalog was not updated from the site.
+- The file name in «Источники» and the folder of a borrowed model are taken from a Windows path on any system (the tests failed on Linux CI).
+
 ## [0.18.0] — 2026-10-24
 
 ### Added
