@@ -150,6 +150,12 @@ a = Analysis(
         "cad.report",
         "cad.welds",
         "cad.workload",
+        "cad.drawing",
+        "cad.stamp",
+        "cad.acad",
+        "cad.acad_check",
+        "desktop_browser.acad_check_dialog",
+        "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         "openpyxl",  # Excel reports of an assembly (cad/report.py)
         "pythoncom",
         "pywintypes",

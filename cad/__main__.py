@@ -7,6 +7,8 @@
   --no-ask                        — не спрашивать недостающие размеры и материал, взять по умолчанию
   python -m cad --report file.a3d — сводная ведомость, детали, металлоёмкость, сварка и замечания в Excel
                                     (сборка открывается только для чтения; --out — папка отчёта)
+  python -m cad --acad file.dwg   — нормоконтроль чертежа AutoCAD (DWG/DXF) по ЕСКД или СПДС, отчёт в Excel
+                                    (--norm ЕСКД|СПДС, --check, --accept, --out как у --report)
 """
 from __future__ import annotations
 
@@ -91,6 +93,29 @@ def _report(path: str, out: str | None, check_only: bool = False, accept: bool =
     return 0
 
 
+def _acad(path: str, out: str | None, norm: str | None, check_only: bool = False, accept: bool = False) -> int:
+    from . import acad, acad_check, report
+    from .drawing import DrawingError
+
+    try:
+        drawing = acad.open_drawing(path)
+    except DrawingError as exc:
+        print(f"[ОШИБКА] {exc}")
+        return 1
+    result = acad_check.check(drawing, report.load_decisions(drawing.file), norm=norm)
+    print(acad_check.warnings_text(result, limit=30))
+    print()
+    if check_only:
+        return 0
+    if result.unchecked and not accept:
+        print(f"[ОТЧЁТ НЕ СФОРМИРОВАН] Не отмечено замечаний: {len(result.unchecked)}. Отметьте их в Fluxion "
+              "(Инструменты → «Нормоконтроль чертежа AutoCAD…») или запустите с --accept.")
+        return 3
+    target = acad_check.save_xlsx(result, acad_check.default_path(result, out))
+    print(acad_check.summary_text(result, target))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m cad", description="Деталь в КОМПАС-3D по описанию")
     ap.add_argument("description", nargs="*", help="описание детали")
@@ -101,10 +126,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-ask", action="store_true", help="не задавать вопросов: недостающее — по умолчанию")
     ap.add_argument("--only", help="с --demo: только эти шаблоны через запятую (например sheet_angle,sheet_z)")
     ap.add_argument("--report", help="сборка .a3d: ведомость и металлоёмкость в Excel")
-    ap.add_argument("--check", action="store_true", help="с --report: только предупреждения, без отчёта")
+    ap.add_argument("--check", action="store_true", help="с --report/--acad: только предупреждения, без отчёта")
     ap.add_argument("--accept", action="store_true",
                     help="с --report: сформировать, хотя предупреждения не отмечены (пометка «не проверено»)")
+    ap.add_argument("--acad", help="чертёж AutoCAD .dwg/.dxf: нормоконтроль, замечания в Excel")
+    ap.add_argument("--norm", choices=("ЕСКД", "СПДС"), help="с --acad: нормы (по умолчанию — по штампу)")
     args = ap.parse_args(argv)
+    if args.acad:
+        return _acad(args.acad, args.out, args.norm, check_only=args.check, accept=args.accept)
     if args.report:
         return _report(args.report, args.out, check_only=args.check, accept=args.accept)
 

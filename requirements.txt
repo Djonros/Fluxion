@@ -16,6 +16,7 @@ tree-sitter-python>=0.23
 flashrank>=0.2
 pypdf>=5.0  # PDF text for the project index (rag/documents.py)
 openpyxl>=3.1  # Excel reports of a KOMPAS assembly (cad/report.py)
+ezdxf>=1.3  # AutoCAD drawings for the norm control (cad/drawing.py)
 
 # Web (Phase 4)
 trafilatura>=1.12

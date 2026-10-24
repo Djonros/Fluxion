@@ -721,6 +721,19 @@ def cad_command(text: str) -> str | None:
     return None
 
 
+ACAD_PREFIXES = ("/автокад", "/autocad")
+
+
+def acad_command(text: str) -> str | None:
+    """The drawing of an "/автокад путь.dwg" chat message ("" — choose it); None for other messages."""
+    lowered = text.lower()
+    for prefix in ACAD_PREFIXES:
+        rest = lowered[len(prefix):]
+        if lowered.startswith(prefix) and (not rest or rest[0].isspace()):
+            return text[len(prefix):].strip().strip('"')
+    return None
+
+
 _SPOKEN_CAD_RE = re.compile(r"^\W*(?:в\s+)?(?:компас[еау]?|kompas)\b[\s,.:;!—-]*(.+)$", re.IGNORECASE | re.DOTALL)
 
 
@@ -1925,6 +1938,11 @@ class FluxionWindow(QMainWindow):
         act_report.setToolTip("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel")
         act_report.triggered.connect(self._open_assembly_report)
         m_tools.addAction(act_report)
+        m_tools.addSeparator()
+        act_acad = QAction("Нормоконтроль чертежа AutoCAD…", self)
+        act_acad.setToolTip("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel")
+        act_acad.triggered.connect(self._open_acad_check)
+        m_tools.addAction(act_acad)
 
         # Помощь
         m_help = bar.addMenu("&Помощь")
@@ -4366,6 +4384,14 @@ class FluxionWindow(QMainWindow):
         text = self.prompt.text().strip()
         if not text or self.generating or self.agent_running:
             return
+        drawing = acad_command(text)
+        if drawing is not None:
+            self.prompt.clear()
+            if drawing:
+                self.start_acad_check(drawing)
+            else:
+                self._open_acad_check()
+            return
         description = cad_command(text)
         if description is not None:
             if not description:
@@ -4495,6 +4521,91 @@ class FluxionWindow(QMainWindow):
         # forget it before deleting: closeEvent waits on self.report_worker
         if getattr(self, "report_worker", None) is worker:
             self.report_worker = None
+        worker.deleteLater()
+
+    def _open_acad_check(self) -> None:
+        """Menu Инструменты → Нормоконтроль чертежа AutoCAD: pick a DWG/DXF, remarks, report in Excel."""
+        from PySide6.QtWidgets import QFileDialog
+
+        from .acad_check_dialog import ACAD_FILTER
+
+        if self.generating or self.agent_running or getattr(self, "acad_worker", None) is not None:
+            return
+        start = str(self.qsettings.value("acad_dir", "") or "")
+        path, _ = QFileDialog.getOpenFileName(self, "Чертёж AutoCAD", start, ACAD_FILTER)
+        if path:
+            self.start_acad_check(path)
+
+    def start_acad_check(self, path: str) -> None:
+        from .acad_check_dialog import AcadCheckWorker
+
+        if self.generating or self.agent_running or getattr(self, "acad_worker", None) is not None:
+            return
+        self.qsettings.setValue("acad_dir", str(Path(path).parent))
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", f"Нормоконтроль: {Path(path).name}")
+        self._append_message("assistant", "")
+        self._acad_entry = self._messages[-1]
+        self._acad_entry["meta"] = "[AutoCAD | чертёж открыт только для чтения]"
+        self._set_generating(True)
+        worker = AcadCheckWorker(path, self)
+        self.acad_worker = worker
+        worker.progress.connect(self._on_acad_progress)
+        worker.ready.connect(self._on_acad_ready)
+        worker.failed.connect(self._on_acad_failed)
+        worker.finished.connect(lambda: self._on_acad_worker_finished(worker))
+        worker.start()
+
+    def _on_acad_progress(self, text: str) -> None:
+        entry = self._acad_entry
+        entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + text
+        self._render_messages()
+
+    def _on_acad_ready(self, result) -> None:
+        from cad import acad_check, report
+
+        from .acad_check_dialog import AcadWarningsDialog, report_links
+
+        entry = self._acad_entry
+        if result.remarks:
+            dialog = AcadWarningsDialog(result, self)
+            made = dialog.exec() == QDialog.Accepted
+            marks = dialog.marks()
+            report.save_decisions(result.drawing.file, marks)  # marked once, not asked again
+            if not made:
+                left = sum(1 for m in marks.values() if not m["checked"])
+                entry["text"] = (f"Отчёт не сформирован: не отмечено {left} из {len(marks)} замечаний. "
+                                 "Отметки сохранены.\n" + acad_check.warnings_text(result))
+                entry["sources"] = report_links(result)
+                entry["sources_title"] = "Ссылки"
+                self._set_generating(False)
+                self._render_messages()
+                return
+            for r in result.remarks:
+                r["checked"] = marks.get(r["id"], {}).get("checked", r["checked"])
+        try:
+            path = acad_check.save_xlsx(result, acad_check.default_path(result))
+        except Exception as exc:  # the workbook open in Excel, no rights to the folder
+            self._on_acad_failed(f"Не удалось сохранить отчёт: {exc}")
+            return
+        summary = acad_check.summary_text(result)
+        entry["text"] = summary + f"\nОтчёт: {path}"
+        entry["sources"] = report_links(result, path)
+        entry["sources_title"] = "Ссылки"
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
+        self._notify_answer(summary)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _on_acad_failed(self, message: str) -> None:
+        self._acad_entry["text"] = message
+        self._set_generating(False)
+        self._render_messages()
+
+    def _on_acad_worker_finished(self, worker) -> None:
+        if getattr(self, "acad_worker", None) is worker:
+            self.acad_worker = None
         worker.deleteLater()
 
     def _open_cad_dialog(self) -> None:
@@ -5358,6 +5469,8 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
         if getattr(self, "report_worker", None) is not None:
             self.report_worker.wait(120000)  # KOMPAS reads a big assembly for a while
+        if getattr(self, "acad_worker", None) is not None:
+            self.acad_worker.wait(120000)  # AutoCAD starts and saves the DXF
         self._stop_speaking()
         self._hands_free = False
         self._hands_free_timer.stop()
