@@ -213,7 +213,7 @@ def test_warnings_dialog_is_blocked_until_every_place_is_marked(tmp_path):
         dialog.table.cellDoubleClicked.emit(deck_row, 4)
     finally:
         appmod.QDesktopServices.openUrl = real
-    assert opened == [report.model_file(r.remarks[deck_row]["file"]).replace("\\", "/")]
+    assert [local(p) for p in opened] == [local(report.model_file(r.remarks[deck_row]["file"]))]
     assert dialog.table.item(deck_row, 4).toolTip().startswith("Открыть:")
 
 
@@ -481,6 +481,12 @@ def test_window_report_cancelled_at_the_warnings(tmp_path, monkeypatch):
     window.close()
 
 
+def local(path: str) -> str:
+    """A Windows path as QUrl.toLocalFile gives it back: forward slashes (on Linux Qt
+    also puts "/" before the drive)."""
+    return path.replace("\\", "/").lstrip("/")
+
+
 def borrowed_product():
     """A product in «…/Архив/792720/Рабочка/Модель» with its own parts, a valve from another
     project, a lamp from the shared «Покупные» and a subassembly borrowed from another project."""
@@ -538,5 +544,6 @@ def test_borrowed_model_path_shows_the_file_in_its_folder(tmp_path, monkeypatch)
     dialog.open_model(row, 6)  # the file does not exist here: its folder opens
     dialog.open_model(row, 4)  # the title: the model itself
     file = report.model_file(r.remarks[row]["file"])
-    assert [os.path.normcase(p) for p in opened] == [os.path.normcase(str(appmod.Path(file).parent)),
-                                                     os.path.normcase(file)]
+    import ntpath
+
+    assert [local(p).lower() for p in opened] == [local(ntpath.dirname(file)).lower(), local(file).lower()]

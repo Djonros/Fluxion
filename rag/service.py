@@ -6,6 +6,7 @@ on first use so the CLI starts instantly.
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,7 +67,7 @@ DOCUMENT_SUFFIXES = (".pdf", ".docx", ".xlsx", ".pptx", ".csv")
 
 def citation_label(r) -> str:
     """"Договор.pdf, стр. 3" for a fragment of a document; "" for code."""
-    name = Path(r.file_path).name
+    name = ntpath.basename(r.file_path)  # a Windows path, also where CI runs on Linux
     if not name.lower().endswith(DOCUMENT_SUFFIXES):
         return ""
     return f"{name}, {r.name}" if r.name else name

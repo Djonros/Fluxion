@@ -15,6 +15,7 @@ quantities down the tree.
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 import re
 from collections import OrderedDict
@@ -418,7 +419,7 @@ def report_links(report: "Report", path=None, limit: int = 12) -> list[dict]:
     components of the warnings ({"file", "label"})."""
     links = []
     if path:
-        links.append({"file": str(path), "label": f"Отчёт: {Path(path).name}"})
+        links.append({"file": str(path), "label": f"Отчёт: {ntpath.basename(str(path))}"})
     if report.top.file:
         links.append({"file": model_file(report.top.file), "label": f"Изделие: {report.top.title}"})
     seen = {l["file"].lower() for l in links}

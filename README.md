@@ -10,8 +10,8 @@
 
 **Локальный AI-помощник для кода, текстов и документов.**
 
-> ⬇️ **Скачать** программу, модели и пресеты обучения — [djonros.github.io/fluxion](https://djonros.github.io/fluxion/)
-> 📘 **Документация** — [djonros.github.io/fluxion/docs](https://djonros.github.io/fluxion/docs/), руководство пользователя — [USER_GUIDE.md](USER_GUIDE.md)
+> ⬇️ **Скачать** программу, модели и пресеты обучения — [djonros.github.io/Fluxion](https://djonros.github.io/Fluxion/)
+> 📘 **Документация** — [djonros.github.io/Fluxion/docs](https://djonros.github.io/Fluxion/docs/), руководство пользователя — [USER_GUIDE.md](USER_GUIDE.md)
 > 🛠 **Владельцу** (сборка, выпуск, лицензии, сервер, сайт) — [OWNER_GUIDE.md](OWNER_GUIDE.md)
 
 Fluxion — чат, агент, поиск по проекту и документам и дообучение модели в
@@ -40,7 +40,7 @@ GGUF можно скачать по ссылке.
 | Детали в КОМПАС-3D по описанию (бета): простые и гнутые листовые по шаблонам, материал и масса, развёртка в DXF для лазера | ✅ | ✅ |
 
 Pro стоит **1 990 ₽ разово** (обновления — год, продление 990 ₽ в год по
-желанию); как купить — на [сайте](https://djonros.github.io/fluxion/#pro).
+желанию); как купить — на [сайте](https://djonros.github.io/Fluxion/#pro).
 Лицензия Pro активируется в программе: **Помощь → Лицензия…** — файлом ключа
 или вставкой ключа. Подробнее — [docs/guides/licensing.md](docs/guides/licensing.md).
 
@@ -48,7 +48,7 @@ Pro стоит **1 990 ₽ разово** (обновления — год, пр
 
 ### Готовая программа
 
-1. Скачайте Fluxion Lite на [странице загрузки](https://djonros.github.io/fluxion/)
+1. Скачайте Fluxion Lite на [странице загрузки](https://djonros.github.io/Fluxion/)
    и распакуйте архив `.7z`.
 2. Запустите `FluxionBrowserLite.exe`.
 3. Мастер первичной настройки предложит скачать модель (около 4,7 ГБ, с

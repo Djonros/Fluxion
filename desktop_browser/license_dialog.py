@@ -25,7 +25,7 @@ from licensing.store import (
     load_activation,
 )
 
-PRO_PAGE_URL = "https://djonros.github.io/fluxion/#pro"
+PRO_PAGE_URL = "https://djonros.github.io/Fluxion/#pro"
 
 
 class LicenseDialog(QDialog):

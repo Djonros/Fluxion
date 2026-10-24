@@ -1007,7 +1007,9 @@ class ReportWarningsDialog(QDialog):
 
                 subprocess.Popen(["explorer", "/select,", str(Path(file))])
             else:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(file).parent)))
+                import ntpath
+
+                QDesktopServices.openUrl(QUrl.fromLocalFile(ntpath.dirname(file)))
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(file))
         return file

@@ -350,9 +350,9 @@ GitHub не принимает файлы релиза больше 2 ГБ: Full
 (`.github/workflows/pages.yml`) при каждой отправке в `main`, если изменились
 сайт, документация, пресеты или каталог моделей:
 
-- `https://djonros.github.io/fluxion/` — страница загрузки: программа, модели,
+- `https://djonros.github.io/Fluxion/` — страница загрузки: программа, модели,
   пресеты обучения (`website/`, собирается `scripts/build_site.py`);
-- `https://djonros.github.io/fluxion/docs/` — документация (MkDocs).
+- `https://djonros.github.io/Fluxion/docs/` — документация (MkDocs).
 
 **Один раз:** на GitHub **Settings → Pages → Build and deployment → Source:
 GitHub Actions**. Если раньше документация публиковалась через

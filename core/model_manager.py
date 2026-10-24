@@ -60,7 +60,7 @@ class ModelInfo:
 # on the website (data/catalog.json), where the app picks up new models
 # without a release (fetch_remote_catalog).
 CATALOG_FILE = Path(__file__).with_name("model_catalog.json")
-DEFAULT_CATALOG_URL = "https://djonros.github.io/fluxion/data/catalog.json"
+DEFAULT_CATALOG_URL = "https://djonros.github.io/Fluxion/data/catalog.json"
 REMOTE_CACHE_NAME = "catalog-remote.json"
 
 _REPO_RE = re.compile(r"[\w.-]+/[\w.-]+")
