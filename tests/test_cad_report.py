@@ -203,6 +203,18 @@ def test_warnings_dialog_is_blocked_until_every_place_is_marked(tmp_path):
     deck_row = next(i for i, x in enumerate(r.remarks) if x["purchased"] is not None)
     dialog.table.item(deck_row, 1).setCheckState(Qt.Unchecked)
     assert dialog.marks()[r.remarks[deck_row]["id"]] == {"checked": True, "purchased": False}
+    # a double click opens the model of the row
+    import desktop_browser.app as appmod
+
+    opened = []
+    real = appmod.QDesktopServices.openUrl
+    appmod.QDesktopServices.openUrl = lambda url: opened.append(url.toLocalFile())
+    try:
+        dialog.table.cellDoubleClicked.emit(deck_row, 4)
+    finally:
+        appmod.QDesktopServices.openUrl = real
+    assert opened == [report.model_file(r.remarks[deck_row]["file"]).replace("\\", "/")]
+    assert dialog.table.item(deck_row, 4).toolTip().startswith("Открыть:")
 
 
 def test_remarks():
@@ -234,6 +246,24 @@ def test_xlsx(tmp_path):
     rows = list(wb["Металлоёмкость"].iter_rows(values_only=True))
     assert any(row[0] == "Изделие по КОМПАС-3D" for row in rows)
     assert any(row[0] and row[0].startswith("Масса, заданная у сборочных единиц") for row in rows)
+    # every object is a link to its model: a local part opens its assembly
+    assert ws["C5"].hyperlink.target == r"C:\m\100.000.a3d"
+    details = {row[0].value: row[0].hyperlink for row in wb["Детали"].iter_rows(min_row=5) if row[0].value}
+    assert details["100.001"].target == r"C:\m\100.001.m3d"
+    tyre = next(row for row in wb["Прочие изделия"].iter_rows(min_row=5) if row[1].value == "Шина")
+    assert tyre[1].hyperlink.target == r"C:\m\100.000.a3d"
+    warn = next(row for row in wb["Предупреждения"].iter_rows(min_row=5) if row[2].value == "NONE")
+    assert warn[2].hyperlink.target == r"C:\m\NONE.m3d"
+
+
+def test_links_for_the_chat():
+    r = report.build(product())
+    links = report.report_links(r, r"C:\out\r.xlsx")
+    assert links[0] == {"file": r"C:\out\r.xlsx", "label": "Отчёт: r.xlsx"}
+    assert links[1]["file"] == r"C:\m\100.000.a3d" and links[1]["label"].startswith("Изделие: 100.000")
+    files = [l["file"] for l in links]
+    assert r"C:\m\NONE.m3d" in files and len(files) == len(set(files))  # each model once
+    assert report.model_file(r"C:\m\a.a3d>a>Деталь (локальная) 1.m3d") == r"C:\m\a.a3d"
 
 
 def test_default_path_never_overwrites(tmp_path):
@@ -311,6 +341,60 @@ def test_read_never_closes_a_document_the_designer_has_open(fake_kompas):
     assert not app.Documents.opened and mine.closed is None
 
 
+class FakeSpecObject:
+    def __init__(self, section, marking, name):
+        self.Section = section
+        self.Columns = types.SimpleNamespace(Column=lambda kind, number, block: types.SimpleNamespace(
+            Text=types.SimpleNamespace(Str={4: marking, 5: name}[kind])))
+
+
+def fake_spec(*objects):
+    desc = types.SimpleNamespace(BaseObjects=[FakeSpecObject(*o) for o in objects])
+    return types.SimpleNamespace(Count=1, Item=lambda i: desc)
+
+
+def test_read_takes_the_section_from_the_specification_of_the_assembly(fake_kompas):
+    """The property of the component is empty, its specification object is in «Прочие
+    изделия» (30): it is bought, and a subassembly is read with its own specification."""
+    app, path = fake_kompas
+    app.Documents.top.Parts[3].Parts.append(FakePart("Р-1", "Клапан"))
+    app.Documents.Count = 1
+    sub_doc = FakeDoc("", None)
+    sub_doc.SpecificationDescriptions = fake_spec((30, "Р-1", "Клапан"), (20, "1.101", "Ребро"))
+    unit = app.Documents.top.Parts[3]
+    unit.GetOpenDocumentParam = lambda: types.SimpleNamespace(Visible=True, ReadOnly=False)
+
+    def open_source(param):
+        assert (param.Visible, param.ReadOnly) == (False, True)
+        app.Documents.Count = 2
+        return sub_doc
+
+    unit.OpenSourceDocument = open_source
+    real_open = app.Documents.Open
+
+    def open_top(path_, visible, read_only):
+        doc = real_open(path_, visible, read_only)
+        doc.SpecificationDescriptions = fake_spec((20, "1.001", "Пластина"), (15, "1.100", "Узел"))
+        return doc
+
+    app.Documents.Open = open_top
+    top = assembly.read(path, log=lambda line: None)
+    unit_c = top.children[3]
+    assert top.children[0].section == "Детали" and unit_c.section == "Сборочные единицы"
+    kinds = {c.name: (c.kind, c.section) for c in unit_c.children}
+    assert kinds["Клапан"] == (OTHER, "Прочие изделия") and kinds["Ребро"][1] == "Детали"
+    assert sub_doc.closed == 0  # the source of the subassembly is closed unsaved
+
+
+def test_spec_sections_by_name_when_the_designation_differs():
+    s = assembly.SpecSections({("A-1", "Кран"): "Прочие изделия", ("", "Болт"): "Стандартные изделия",
+                               ("1", "Ось"): "Детали", ("2", "Ось"): "Сборочные единицы"})
+    assert s.get("A-1 ", "Кран") == "Прочие изделия"
+    assert s.get("A-1 Изм.1", "Кран") == "Прочие изделия"  # by the name, it is unique
+    assert s.get("3", "Ось") == ""  # the name is ambiguous
+    assert s.get("A-1-01", "Кран") == ""  # another execution: its own specification object or none
+
+
 def test_read_errors(tmp_path):
     with pytest.raises(assembly.AssemblyError, match="не найден"):
         assembly.read(tmp_path / "nope.a3d")
@@ -358,6 +442,8 @@ def test_window_report(tmp_path, monkeypatch):
         time.sleep(0.01)
     text = window.messages.toPlainText()
     assert "100.000 Изделие" in text and "Сверка массы" in text
+    assert "Ссылки:" in text and "Изделие: 100.000 Изделие" in text  # links to the report and the models
+    assert "file:///" in window.messages.toHtml()
     assert (tmp_path / "r.xlsx").is_file() and opened == [str(tmp_path / "r.xlsx").replace("\\", "/")]
     assert asked and asked[0].remarks  # the warnings came first, every one marked
     marks = report.load_decisions(asked[0].top.file)
@@ -393,3 +479,64 @@ def test_window_report_cancelled_at_the_warnings(tmp_path, monkeypatch):
     assert not (tmp_path / "r.xlsx").exists()
     assert "Отчёт не сформирован" in window.messages.toPlainText()
     window.close()
+
+
+def borrowed_product():
+    """A product in «…/Архив/792720/Рабочка/Модель» with its own parts, a valve from another
+    project, a lamp from the shared «Покупные» and a subassembly borrowed from another project."""
+    root = r"C:\Архив\792720\Рабочка\Модель"
+    valve = Component(OTHER, "35160200010", "Кран быстрого растормаживания", "", 900, 0,
+                      r"C:\КБ\Сибирь Трейлер 2016-2020\733322\Кран.m3d", section="Прочие изделия")
+    lamp = Component(OTHER, "А.3731.007", "Фонарь габаритный", "", 200, 0,
+                     r"C:\Диск\Изделия\Покупные\Атланта\Фонарь.m3d", section="Прочие изделия")
+    borrowed = asm("723095.2720022", "Фиксатор", [det("723095.2720023", "Пластина", file=r"C:\Архив\723095\П.m3d")],
+                   file=r"C:\Архив\723095\Фиксатор.a3d")
+    pneumatics = asm("792720.3500001", "Установка пневматики", [valve, lamp, valve], file=root + r"\Пневматика.a3d")
+    own = det("792720.2801001", "Лонжерон", file=r"C:\Архив\792720\Изм2\Лонжерон.m3d")
+    bolt = Component(STANDARD, "", "Болт М10", "", 50, 0,
+                     r"C:\Program Files\ASCON\KOMPAS-3D v24\Libs\PolynomLib\Болт.m3d")
+    return asm("792720.0000010", "Трейлер", [pneumatics, borrowed, own, bolt],
+               file=root + r"\792720.0000010 - Терминальный трейлер.a3d")
+
+
+def test_models_from_outside_the_product_are_warned_about():
+    top = borrowed_product()
+    assert report.product_folder(top) == r"C:\Архив\792720"
+    r = report.build(top)
+    out = {x["title"]: x for x in r.remarks if x["problem"] in (report.OTHER_PROJECT, report.SHARED_LIBRARY)}
+    assert set(out) == {"35160200010 Кран быстрого растормаживания", "А.3731.007 Фонарь габаритный",
+                        "723095.2720022 Фиксатор"}  # not the insides of the borrowed one, not a KOMPAS bolt
+    valve = out["35160200010 Кран быстрого растормаживания"]
+    assert valve["problem"] == report.OTHER_PROJECT and valve["qty"] == 2
+    assert valve["where"] == "792720.3500001 Установка пневматики"
+    assert r"C:\КБ\Сибирь Трейлер 2016-2020\733322\Кран.m3d" in valve["message"]
+    assert out["А.3731.007 Фонарь габаритный"]["problem"] == report.SHARED_LIBRARY
+    # marked once — remembered for the product
+    report.save_decisions(top.file, {valve["id"]: {"checked": True}})
+    again = report.build(borrowed_product(), report.load_decisions(top.file))
+    assert next(x for x in again.remarks if x["id"] == valve["id"])["checked"]
+
+
+def test_borrowed_model_path_shows_the_file_in_its_folder(tmp_path, monkeypatch):
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("FLUXION_DISABLE_WEBENGINE", "1")
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        import desktop_browser.app as appmod
+    except ImportError as exc:
+        pytest.skip(f"PySide6 unavailable: {exc}")
+    QApplication.instance() or QApplication([])
+    r = report.build(borrowed_product())
+    dialog = appmod.ReportWarningsDialog(r)
+    row = next(i for i, x in enumerate(r.remarks) if x["problem"] == report.OTHER_PROJECT)
+    assert dialog.table.item(row, 6).toolTip().startswith("Показать в папке: ")
+    opened = []
+    monkeypatch.setattr(appmod.QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()))
+    dialog.open_model(row, 6)  # the file does not exist here: its folder opens
+    dialog.open_model(row, 4)  # the title: the model itself
+    file = report.model_file(r.remarks[row]["file"])
+    assert [os.path.normcase(p) for p in opened] == [os.path.normcase(str(appmod.Path(file).parent)),
+                                                     os.path.normcase(file)]

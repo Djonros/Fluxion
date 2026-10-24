@@ -16,6 +16,10 @@ ASSEMBLY, DETAIL, STANDARD, OTHER = "assembly", "detail", "standard", "other"
 KIND_TITLES = {ASSEMBLY: "Сборочная единица", DETAIL: "Деталь", STANDARD: "Стандартное изделие",
                OTHER: "Прочее изделие"}
 OTHER_SECTION = "Прочие изделия"  # bought units: not made, so not in the metal report or the remarks
+# the sections of a KOMPAS specification by their numbers (ГОСТ 2.106, the style of GRAPHIC.LYT)
+SPC_SECTIONS = {5: "Документация", 10: "Комплексы", 15: "Сборочные единицы", 20: "Детали",
+                25: "Стандартные изделия", 30: "Прочие изделия", 35: "Материалы", 40: "Комплекты"}
+SPC_MARKING, SPC_NAME = 4, 5  # column types of the specification: designation, name
 
 # bought units a designer often leaves in "Детали" or "Сборочные единицы": the name
 # starts with what it is (a grating deck ordered outside by its drawing, a lamp, a
@@ -194,6 +198,79 @@ class _Properties:
         return out
 
 
+class SpecSections:
+    """The sections of the components as the specification of an assembly keeps them:
+    what is printed. The property "Раздел спецификации" of a component is often empty
+    while its specification object is in «Прочие изделия»."""
+
+    def __init__(self, by_key: dict[tuple[str, str], str]):
+        self.by_key = by_key
+        self.by_name: dict[str, list[tuple[str, str]]] = {}
+        for (marking, name), section in by_key.items():
+            self.by_name.setdefault(name, []).append((marking, section))
+
+    def get(self, marking: str, name: str) -> str:
+        """By the designation and the name; else by the name when the designations agree
+        ("А-1" and "А-1 Изм.1", or one of them empty): "А.3776.005" is not "А.3776.005-01"."""
+        marking, name = marking.strip(), name.strip()
+        if (marking, name) in self.by_key:
+            return self.by_key[(marking, name)]
+        sections = {section for spc_marking, section in self.by_name.get(name, [])
+                    if not spc_marking or not marking
+                    or marking.startswith(spc_marking + " ") or spc_marking.startswith(marking + " ")}
+        return sections.pop() if len(sections) == 1 else ""
+
+
+def spec_sections(doc, cast) -> SpecSections | None:
+    """The specification of an assembly document; None when it has none."""
+    try:
+        raw = cast(doc, "IKompasDocument3D").SpecificationDescriptions
+        if raw is None:
+            return None
+        descs = cast(raw, "ISpecificationDescriptions")
+        out: dict[tuple[str, str], str] = {}
+        for i in range(int(descs.Count)):
+            desc = cast(descs.Item(i), "ISpecificationDescription")
+            for obj in desc.BaseObjects or []:
+                obj = cast(obj, "ISpecificationBaseObject")
+                section = SPC_SECTIONS.get(int(obj.Section))
+                if not section:
+                    continue
+                columns = cast(obj.Columns, "ISpecificationColumns")
+                texts = []
+                for column_type in (SPC_MARKING, SPC_NAME):
+                    column = columns.Column(column_type, 1, 0)
+                    texts.append(str(cast(column, "ISpecificationColumn").Text.Str or "").strip()
+                                 if column is not None else "")
+                out.setdefault((texts[0], texts[1]), section)
+        return SpecSections(out) if out else None
+    except Exception:  # no specification or an older KOMPAS: the properties are read instead
+        return None
+
+
+def source_sections(app, part, cast) -> SpecSections | None:
+    """The specification of a subassembly (a local one too): its source document is
+    opened invisible and read-only and closed unsaved; a document that was already
+    open (the designer's) is read and left open."""
+    try:
+        before = int(app.Documents.Count)
+        param = part.GetOpenDocumentParam()
+        param.Visible, param.ReadOnly = False, True
+        doc = part.OpenSourceDocument(param)
+    except Exception:
+        return None
+    if doc is None:
+        return None
+    try:
+        return spec_sections(doc, cast)
+    finally:
+        try:
+            if int(app.Documents.Count) > before:  # opened here: close it unsaved
+                doc.Close(0)
+        except Exception:
+            pass
+
+
 # what every model has before the designer starts: not work
 _DEFAULT_FEATURES = re.compile(r"^(плоскость\s+(xy|zx|zy)|ось\s+[xyz]|начало\s+координат)$", re.IGNORECASE)
 
@@ -216,11 +293,14 @@ def features_of(part, cast) -> list[str]:
     return out
 
 
-def _component(part, cast, with_area: bool, properties=None, features=None) -> Component:
+def _component(part, cast, with_area: bool, properties=None, features=None, sections=None) -> Component:
     standard = bool(_get(part, "Standard", False))
     detail = bool(_get(part, "Detail", False))
     props = properties(part) if properties is not None else {}
     spec_section = props.get("Раздел спецификации", "")
+    if sections is not None:  # the specification of its assembly: what is printed
+        spec_section = sections.get(str(_get(part, "Marking", "") or ""),
+                                    str(_get(part, "Name", "") or "")) or spec_section
     if standard:
         kind = STANDARD
     elif spec_section == OTHER_SECTION:
@@ -247,15 +327,17 @@ def _component(part, cast, with_area: bool, properties=None, features=None) -> C
     )
 
 
-def _walk(part, cast, with_area: bool, properties=None, features=None) -> list[Component]:
+def _walk(part, cast, with_area: bool, properties=None, features=None, sections=None,
+          sections_of=None) -> list[Component]:
     out = []
     for child in _get(part, "Parts", None) or []:
         child = cast(child, "IPart7")
         if bool(_get(child, "Excluded", False)):
             continue  # excluded from the calculation in KOMPAS
-        component = _component(child, cast, with_area, properties, features)
+        component = _component(child, cast, with_area, properties, features, sections)
         if component.kind == ASSEMBLY:  # a bought unit (OTHER) is one item: its insides are not read
-            component.children = _walk(child, cast, with_area, properties, features)
+            own = sections_of(child) if sections_of is not None else None
+            component.children = _walk(child, cast, with_area, properties, features, own, sections_of)
         out.append(component)
     return out
 
@@ -294,7 +376,19 @@ def read(path: str | Path, with_area: bool = True, log=print) -> Component:
                     seen[key] = names
                 return names
 
-            top.children = _walk(top_part, CastTo, with_area, _Properties(app, doc, CastTo), features)
+            specs: dict[str, SpecSections | None] = {}
+
+            def sections_of(part) -> SpecSections | None:  # read once per subassembly file
+                key = str(_get(part, "FileName", "") or "").lower()
+                if key and ">" not in key and key in specs:
+                    return specs[key]
+                found = source_sections(app, part, CastTo)
+                if key and ">" not in key:
+                    specs[key] = found
+                return found
+
+            top.children = _walk(top_part, CastTo, with_area, _Properties(app, doc, CastTo), features,
+                                 spec_sections(doc, CastTo), sections_of)
             if with_area:
                 try:
                     top.area_cm2 = float(CastTo(top_part, "IMassInertiaParam7").Area)

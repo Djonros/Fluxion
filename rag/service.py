@@ -61,6 +61,17 @@ class RAGConfig:
         )
 
 
+DOCUMENT_SUFFIXES = (".pdf", ".docx", ".xlsx", ".pptx", ".csv")
+
+
+def citation_label(r) -> str:
+    """"Договор.pdf, стр. 3" for a fragment of a document; "" for code."""
+    name = Path(r.file_path).name
+    if not name.lower().endswith(DOCUMENT_SUFFIXES):
+        return ""
+    return f"{name}, {r.name}" if r.name else name
+
+
 class RAGService:
     """Lazy facade over the full RAG pipeline."""
 
@@ -230,7 +241,13 @@ class RAGService:
         if not results:
             return ""
         snippets: list[str] = []
+        documents = False
         for i, r in enumerate(results[:max_chunks], 1):
+            label = citation_label(r)
+            if label:
+                documents = True
+                snippets.append(f"[{i}] {label}\n{r.content}")
+                continue
             loc = r.file_path
             if r.name:
                 loc = f"{loc}::{r.name}"
@@ -240,4 +257,11 @@ class RAGService:
             "Here are relevant code snippets from the indexed codebase. "
             "Use them to ground your answer:\n"
         )
+        if documents:
+            header = (
+                "Here are fragments of the user's documents and code. Answer from them. After every fact "
+                "taken from a fragment put its number in square brackets, like [2], and for a document say "
+                "where it is: the file and the page (or sheet, slide), as given in the fragment's title. "
+                "If the fragments do not hold the answer, say so instead of guessing:\n"
+            )
         return header + "\n\n---\n\n".join(snippets) + "\n\n---\n"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,6 +44,25 @@ class Chunk:
     name: str = ""
     language: str = "python"
     metadata: dict = field(default_factory=dict)
+
+
+_PLACE_RE = re.compile(r"\[(Страница|Лист|Слайд) ([^\]\n]+)\]")
+_PLACE_SHORT = {"Страница": "стр.", "Лист": "лист", "Слайд": "слайд"}
+
+
+def place_label(marks: list[tuple[int, str, str]], start: int, end: int) -> str:
+    """Where a piece [start, end) of a document is: "стр. 3", "стр. 3–4", "лист Смета"."""
+    before = [m for m in marks if m[0] <= start]
+    inside = [m for m in marks if start < m[0] < end]
+    places = ([before[-1]] if before else []) + inside
+    if not places:
+        return ""
+    kind = places[0][1]
+    first, last = places[0][2], places[-1][2]
+    short = _PLACE_SHORT[kind]
+    if first == last or kind != places[-1][1]:
+        return f"{short} {first}"
+    return f"{short} {first}–{last}"
 
 
 class TreeSitterChunker:
@@ -139,6 +159,9 @@ class TreeSitterChunker:
         results: list[Chunk] = []
         cursor = 0  # pieces come in order: search forward, not from the start (big documents)
         line = 1
+        # a document keeps "[Страница 3]", "[Лист Смета]", "[Слайд 5]" (rag/documents.py):
+        # every chunk gets the place it comes from, so an answer can cite it
+        marks = [(m.start(), m.group(1), m.group(2)) for m in _PLACE_RE.finditer(source)] if language == "document" else []
         for piece in self._split_by_size(source, self.max_chars, self.overlap):
             pos = source.find(piece, cursor)
             if pos >= 0:
@@ -154,7 +177,7 @@ class TreeSitterChunker:
                     start_line=start_line,
                     end_line=start_line + piece.count("\n"),
                     node_type="text",
-                    name="",
+                    name=place_label(marks, pos, pos + len(piece)) if marks and pos >= 0 else "",
                     language=language,
                 )
             )

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -197,7 +198,8 @@ def build(top: Component, decisions: dict | None = None) -> Report:
             assigned.append((section, own))
     return Report(top, list(sections.values()), list(details.values()), list(standard.values()),
                   list(other.values()), _metal(details.values()),
-                  _remarks(sections.values(), details.values(), other.values(), where, decisions), assigned,
+                  _remarks(sections.values(), details.values(), other.values(), where, decisions, _outside(top)),
+                  assigned,
                   decisions=decisions)
 
 
@@ -219,23 +221,81 @@ def _metal(details) -> list[dict]:
 
 
 ATTENTION, CHECK = "Внимание", "Проверьте"
+OTHER_PROJECT, SHARED_LIBRARY = "Модель из другого проекта", "Модель из общей библиотеки"
+# folders of shared models: bought units, borrowed parts ("…\Изделия\Покупные\…")
+LIBRARY_FOLDER_RE = re.compile(r"^(покупн|библиотек|стандартн|изделия$|library|libs?$)", re.IGNORECASE)
+# KOMPAS-3D's own libraries (standard items of the vault): where they are meant to be
+KOMPAS_FOLDER_RE = re.compile(r"\\(ascon|program files[^\\]*)\\", re.IGNORECASE)
 
 
-def _remarks(sections, details, other, where, decisions=None) -> list[dict]:
+def _folders(file: str) -> list[str]:
+    return [p for p in file.replace("/", "\\").split("\\")[:-1] if p]
+
+
+def product_folder(top: Component) -> str:
+    """The folder of the product's files: up from its assembly to the folder named by its
+    number («…/792720/Рабочка/Модель/792720.0000010 ….a3d» -> «…/792720»), else its own folder."""
+    folders = _folders(model_file(top.file))
+    number = re.match(r"\s*([^.\s]+)", top.marking or "")
+    if number:
+        for i in range(len(folders) - 1, 0, -1):
+            if re.match(re.escape(number.group(1)) + r"(?!\d)", folders[i], re.IGNORECASE):
+                return "\\".join(folders[: i + 1])
+    return "\\".join(folders)
+
+
+def outside(file: str, root: str) -> str:
+    """Where a component's model is from, if not from the product's folder: OTHER_PROJECT,
+    SHARED_LIBRARY or "" (its own, a local part, a KOMPAS library)."""
+    file = model_file(file).replace("/", "\\")
+    if not file or not root:
+        return ""
+    if file.lower().startswith(root.replace("/", "\\").lower().rstrip("\\") + "\\"):
+        return ""
+    if KOMPAS_FOLDER_RE.search(file):
+        return ""
+    if any(LIBRARY_FOLDER_RE.match(p) for p in _folders(file)):
+        return SHARED_LIBRARY
+    return OTHER_PROJECT
+
+
+def _outside(top: Component) -> list[tuple[Component, int, str, str]]:
+    """Components whose models lie outside the product's folder: (component, qty on the
+    product, assembly it is in, OTHER_PROJECT | SHARED_LIBRARY). A borrowed subassembly
+    is one: its insides come with it. Standard items are library items by nature."""
+    root = product_folder(top)
+    out: list[tuple[Component, int, str, str]] = []
+
+    def walk(assembly: Component, mult: int) -> None:
+        for child, n in _grouped(assembly.children):
+            if child.kind == STANDARD:
+                continue
+            source = outside(child.file, root)
+            if source:
+                out.append((child, n * mult, assembly.title, source))
+            elif child.kind == ASSEMBLY:
+                walk(child, n * mult)
+
+    walk(top, 1)
+    return out
+
+
+def _remarks(sections, details, other, where, decisions=None, borrowed=()) -> list[dict]:
     """Warnings for the designer, shown before the report is made: what will look
     wrong in the specification or spoil the calculation. Each has to be marked."""
     out = []
     decisions = decisions or {}
 
-    def add(c: Component, level: str, problem: str, message: str, qty: int, purchased=None) -> None:
-        rid = remark_id(problem, c.title, where.get(c.key, ""))
+    def add(c: Component, level: str, problem: str, message: str, qty: int, purchased=None, place=None) -> None:
+        place = where.get(c.key, "") if place is None else place
+        rid = remark_id(problem, c.title, place)
         n = 2
         while any(r["id"] == rid for r in out):  # the same name twice in one assembly (other file or mass)
-            rid = remark_id(problem, c.title, where.get(c.key, "")) + f"#{n}"
+            rid = remark_id(problem, c.title, place) + f"#{n}"
             n += 1
         mark = decisions.get(rid, {})
         out.append({"id": rid, "level": level, "problem": problem, "message": message, "kind": KIND_TITLES[c.kind],
-                    "title": c.title, "where": where.get(c.key, ""), "qty": qty, "file": c.file,
+                    "title": c.title, "where": place, "qty": qty, "file": c.file,
                     "checked": bool(mark.get("checked")), "purchased": purchased})
 
     for line in other:
@@ -266,6 +326,16 @@ def _remarks(sections, details, other, where, decisions=None) -> list[dict]:
             add(c, CHECK, "Деталь без обозначения", "В спецификации строка будет без обозначения.", line.qty_product)
         if c.mass_g <= 0:
             add(c, CHECK, "Нулевая масса", "Проверьте тело детали и плотность материала.", line.qty_product)
+    for c, qty, place, source in borrowed:
+        file = model_file(c.file)
+        if source == OTHER_PROJECT:
+            message = (f"Файл модели — в другом проекте: {file}. Если там её изменят, изменится и это изделие, "
+                       "а в архив изделия она не попадёт. Скопируйте модель в папку изделия "
+                       "или отметьте, если так и задумано.")
+        else:
+            message = (f"Файл модели — в общей библиотеке: {file}. Её правка изменит все изделия, где она стоит, "
+                       "а в архив изделия она не попадёт. Отметьте, если так и задумано.")
+        add(c, CHECK, source, message, qty, place=place)
     order = {ATTENTION: 0, CHECK: 1}
     return sorted(out, key=lambda r: order[r["level"]])
 
@@ -337,6 +407,29 @@ def warnings_text(report: "Report", limit: int = 12) -> str:
     return "\n".join(lines)
 
 
+def model_file(file: str) -> str:
+    """The file that opens a component: a local part ("Сборка.a3d>Деталь (локальная) 3.m3d")
+    lives in its assembly, so the assembly file."""
+    return file.split(">", 1)[0] if file else ""
+
+
+def report_links(report: "Report", path=None, limit: int = 12) -> list[dict]:
+    """Links for the chat under the report: the workbook, the product and the
+    components of the warnings ({"file", "label"})."""
+    links = []
+    if path:
+        links.append({"file": str(path), "label": f"Отчёт: {Path(path).name}"})
+    if report.top.file:
+        links.append({"file": model_file(report.top.file), "label": f"Изделие: {report.top.title}"})
+    seen = {l["file"].lower() for l in links}
+    for r in report.remarks:
+        file = model_file(r["file"])
+        if file and file.lower() not in seen and len(links) < limit + 2:
+            seen.add(file.lower())
+            links.append({"file": file, "label": f"{r['title']} — {r['problem'].lower()}"})
+    return links
+
+
 # ── Excel ────────────────────────────────────────────────────────────────────
 
 
@@ -367,6 +460,14 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
     top = report.top
 
     wb = Workbook()
+    link_font = Font(color="0563C1", underline="single")
+
+    def link(cell, component: Component) -> None:
+        """The cell opens the file of the component (a click in Excel)."""
+        file = model_file(component.file)
+        if file and cell.value not in (None, ""):
+            cell.hyperlink = file
+            cell.font = Font(bold=cell.font.bold, color="0563C1", underline="single")
 
     def sheet(title: str, headers: list[str], widths: list[int], first: bool = False):
         ws = wb.active if first else wb.create_sheet()
@@ -405,6 +506,7 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
         if c.kind == ASSEMBLY:
             for cell in ws[r]:
                 cell.font, cell.fill = bold, section_fill
+        link(ws.cell(row=r, column=3 if c.marking else 4), c)
     for row in ws.iter_rows(min_row=5):
         row[8].number_format = row[9].number_format = kg
         row[5].alignment = wrap
@@ -416,6 +518,7 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
         c = line.component
         ws.append([c.marking, c.name, material_text(c.material), line.qty_product, c.mass_kg,
                    c.mass_kg * line.qty_product, c.area_m2, c.area_m2 * line.qty_product])
+        link(ws.cell(row=ws.max_row, column=1 if c.marking else 2), c)
     ws.append([])
     ws.append(["", "Итого деталей", "", sum(l.qty_product for l in report.details), "", report.details_mass_kg, "",
                sum(l.component.area_m2 * l.qty_product for l in report.details)])
@@ -458,11 +561,12 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
         c = line.component
         ws.append([c.marking, c.name, line.qty_product, c.mass_kg, c.mass_kg * line.qty_product,
                    report_where(report, c)])
+        link(ws.cell(row=ws.max_row, column=1 if c.marking else 2), c)
     for row in ws.iter_rows(min_row=5):
         row[3].number_format = row[4].number_format = kg
 
     if report.welds:
-        _weld_sheet(sheet, report, bold, head_fill, section_fill, kg)
+        _weld_sheet(sheet, report, bold, head_fill, section_fill, kg, link)
     _paint_sheet(sheet, report, bold, head_fill)
     _work_sheet(sheet, report, bold, head_fill, section_fill)
 
@@ -471,6 +575,11 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
     for r in report.remarks:
         ws.append([r["level"], r["problem"], r["title"], r["message"], r["where"], r["qty"],
                    "да" if r["checked"] else "нет", r["file"]])
+        file = model_file(r["file"])
+        if file:
+            for col in (3, 8):
+                ws.cell(row=ws.max_row, column=col).hyperlink = file
+                ws.cell(row=ws.max_row, column=col).font = link_font
         if r["level"] == ATTENTION:
             ws.cell(row=ws.max_row, column=1).font = Font(bold=True, color="B45309")
         for cell in ws[ws.max_row][2:5]:
@@ -486,7 +595,7 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
     return path
 
 
-def _weld_sheet(sheet, report: Report, bold, head_fill, section_fill, kg) -> None:
+def _weld_sheet(sheet, report: Report, bold, head_fill, section_fill, kg, link=None) -> None:
     from .welds import WELD_FACTOR
 
     ws = sheet("Сварка", ["Сборочная единица / соединяемые детали", "Кол. сборок на изделие", "Катет, мм",
@@ -498,6 +607,8 @@ def _weld_sheet(sheet, report: Report, bold, head_fill, section_fill, kg) -> Non
                    w.length_mm * w.qty_product / 1000, w.mass_g * w.qty_product / 1000])
         for cell in ws[ws.max_row]:
             cell.font, cell.fill = bold, section_fill
+        if link is not None:
+            link(ws.cell(row=ws.max_row, column=1), w.assembly)
         if w.note:
             ws.append([f"   {w.note}"])
         for j in w.joints:

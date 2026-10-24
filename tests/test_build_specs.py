@@ -91,3 +91,13 @@ def test_lite_ships_every_cad_module():
     hidden = set(_spec_list("hiddenimports"))
     modules = {f"cad.{p.stem}" for p in (ROOT / "cad").glob("*.py") if p.stem not in ("__init__", "__main__")}
     assert modules <= hidden, sorted(modules - hidden)
+
+
+def test_lite_ships_the_dxfka_core():
+    """«Пакет на лазер» imports the core of DXFka lazily: every module must be listed."""
+    hidden = set(_spec_list("hiddenimports"))
+    modules = {
+        ".".join(p.relative_to(ROOT).with_suffix("").parts).replace(".__init__", "")
+        for p in (ROOT / "dxfka").rglob("*.py")
+    }
+    assert modules <= hidden, sorted(modules - hidden)

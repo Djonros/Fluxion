@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QSettings, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut, QTextDocument
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QShortcut, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -800,9 +800,10 @@ class AssemblyReportWorker(QThread):
     ready = Signal(object)  # cad.report.Report: the window shows the warnings, then saves it
     failed = Signal(str)
 
-    def __init__(self, path: str, parent=None):
+    def __init__(self, path: str, parent=None, fixes=None):
         super().__init__(parent)
         self.path = path
+        self.fixes = fixes or []  # cad.fix.SectionFix the designer agreed to: made first
 
     def run(self) -> None:
         from cad import assembly, report
@@ -814,6 +815,8 @@ class AssemblyReportWorker(QThread):
         except ImportError:  # not Windows: assembly.read explains that pywin32 is missing
             pythoncom = None
         try:
+            if self.fixes:
+                self._fix()
             top = assembly.read(self.path, log=self.progress.emit)
             self.progress.emit("Считаю ведомость и металлоёмкость…")
             result = report.build(top, report.load_decisions(top.file))
@@ -828,6 +831,26 @@ class AssemblyReportWorker(QThread):
             if pythoncom is not None:
                 pythoncom.CoUninitialize()
         self.ready.emit(result)
+
+    def _fix(self) -> None:
+        """Backups first, then the fixes; the report is read again from the fixed model."""
+        from cad import fix
+
+        files = list(dict.fromkeys([self.path] + [f.file or self.path for f in self.fixes]))
+        stamp = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+        for file in files:
+            self.progress.emit(f"Резервная копия: {fix.backup(file, stamp)}")
+        sections = [f for f in self.fixes if isinstance(f, fix.SectionFix)]
+        if sections:
+            for line in fix.apply_section_fixes(self.path, sections, log=lambda _line: None):
+                self.progress.emit(line)
+        materials: dict[tuple, list] = {}
+        for f in self.fixes:
+            if isinstance(f, fix.MaterialFix):
+                materials.setdefault((f.material, f.density), []).append(f)
+        for (material, density), group in materials.items():
+            for line in fix.apply_material_fixes(self.path, group, material, density, log=lambda _line: None):
+                self.progress.emit(line)
 
 
 class ReportWarningsDialog(QDialog):
@@ -846,7 +869,8 @@ class ReportWarningsDialog(QDialog):
         intro = QLabel(
             f"<b>{html.escape(result.top.title)}</b>: спорных мест — {len(result.remarks)}. "
             "Отметьте каждое: отчёт формируется, только когда отмечено всё. "
-            "У покупных снимите «Покупное», если это ваше изготовление. Отметки запоминаются для этого изделия."
+            "У покупных снимите «Покупное», если это ваше изготовление. Отметки запоминаются для этого изделия. "
+            "Двойной щелчок по строке открывает модель в КОМПАС, по пути к файлу — его папку."
         )
         intro.setWordWrap(True)
         intro.setTextFormat(Qt.RichText)
@@ -873,6 +897,15 @@ class ReportWarningsDialog(QDialog):
             for col, text in enumerate((r["level"], r["problem"], r["title"], r["where"], r["message"]), 2):
                 item = QTableWidgetItem(text)
                 item.setFlags(Qt.ItemIsEnabled)
+                if (col == 4 or col == 6 and self._borrowed(r)) and r.get("file"):  # links: the model, its folder
+                    from cad.report import model_file
+
+                    item.setToolTip(f"Открыть: {model_file(r['file'])}" if col == 4
+                                    else f"Показать в папке: {model_file(r['file'])}")
+                    item.setForeground(QColor("#0563C1"))
+                    font = item.font()
+                    font.setUnderline(True)
+                    item.setFont(font)
                 self.table.setItem(row, col, item)
         header = self.table.horizontalHeader()
         for col in (0, 1, 2):
@@ -882,10 +915,26 @@ class ReportWarningsDialog(QDialog):
         header.setStretchLastSection(True)
         self.table.resizeRowsToContents()  # after the widths: rows as high as their text
         self.table.itemChanged.connect(self._update)
+        self.table.cellDoubleClicked.connect(self.open_model)
         box.addWidget(self.table, 1)
         buttons = QHBoxLayout()
         self.counter = QLabel()
         buttons.addWidget(self.counter, 1)
+        from cad.fix import material_fixes, section_fixes
+
+        self.fixes = section_fixes(result.top)
+        self.material_fixes = material_fixes(result.top)
+        self.fix_requested = False
+        if self.fixes:
+            fix_button = QPushButton(f"Исправить в модели ({len(self.fixes)})…")
+            fix_button.setToolTip("Перенести покупные в «Прочие изделия» спецификации их сборок")
+            fix_button.clicked.connect(self._ask_fix)
+            buttons.addWidget(fix_button)
+        if self.material_fixes:
+            material_button = QPushButton(f"Задать материал ({len(self.material_fixes)})…")
+            material_button.setToolTip("Выбрать материал в справочнике «Материалы» КОМПАС-3D для деталей без материала")
+            material_button.clicked.connect(self._ask_material)
+            buttons.addWidget(material_button)
         cancel = QPushButton("Отмена — исправлю модель")
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
@@ -895,6 +944,71 @@ class ReportWarningsDialog(QDialog):
         buttons.addWidget(self.make_button)
         box.addLayout(buttons)
         self._update()
+
+    def fix_text(self) -> str:
+        """What will change, for the designer's consent."""
+        from cad.fix import OTHER_SECTION
+
+        files = list(dict.fromkeys(f.file or self.result.top.file for f in self.fixes))
+        lines = [f"• {f.text}" for f in self.fixes[:25]]
+        if len(self.fixes) > 25:
+            lines.append(f"…и ещё {len(self.fixes) - 25}")
+        return ("Fluxion перенесёт покупные изделия в раздел «" + OTHER_SECTION + "» спецификации их сборок: "
+                "изменит раздел объекта спецификации, а где его нет — создаст (сборке без спецификации — "
+                "и саму спецификацию). Файлы самих изделий "
+                "(и библиотеки покупных) не меняются.\n\n" + "\n".join(lines)
+                + "\n\nИзменятся файлы (перед этим — резервная копия в папке «Резервные копии Fluxion» рядом):\n"
+                + "\n".join(files)
+                + "\n\nСборка должна быть закрыта в КОМПАС-3D. После исправления отчёт составится заново.")
+
+    def _ask_fix(self) -> None:
+        marks = self.marks()
+        made_here = {r["title"] for r in self.result.remarks  # "Покупное" taken off: not moved
+                     if r["purchased"] is not None and not marks[r["id"]].get("purchased", True)}
+        self.fixes = [f for f in self.fixes if f.component.title not in made_here]
+        if not self.fixes:
+            QMessageBox.information(self, "Исправить в модели", "Исправлять нечего: всё отмечено как своё изготовление.")
+            return
+        answer = QMessageBox.question(self, "Исправить в модели", self.fix_text(),
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            self.fix_requested = True
+            self.done(QDialog.Rejected)
+
+    def _ask_material(self) -> None:
+        dialog = MaterialFixDialog(self.material_fixes, self.result.top.file, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.fixes = dialog.chosen()
+        self.fix_requested = True
+        self.done(QDialog.Rejected)
+
+    @staticmethod
+    def _borrowed(r: dict) -> bool:
+        """A model from another project or a shared library: the message has its path."""
+        from cad.report import OTHER_PROJECT, SHARED_LIBRARY
+
+        return r.get("problem") in (OTHER_PROJECT, SHARED_LIBRARY)
+
+    def open_model(self, row: int, col: int = 0) -> str:
+        """The model of the row in KOMPAS (a local part: its assembly); for a borrowed
+        model a double click on its path shows the file in its folder."""
+        from cad.report import model_file
+
+        r = self.result.remarks[row]
+        file = model_file(r.get("file", ""))
+        if not file:
+            return file
+        if col == 6 and self._borrowed(r):
+            if sys.platform == "win32" and Path(file).exists():
+                import subprocess
+
+                subprocess.Popen(["explorer", "/select,", str(Path(file))])
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(file).parent)))
+        else:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(file))
+        return file
 
     def marks(self) -> dict:
         out = {}
@@ -911,6 +1025,104 @@ class ReportWarningsDialog(QDialog):
         total = len(marks)
         self.counter.setText(f"Отмечено {done} из {total}")
         self.make_button.setEnabled(done == total)  # blocked until every place is marked
+
+
+class MaterialFixDialog(QDialog):
+    """Details without a material: the designer ticks them, chooses the material in the
+    «Материалы» library of KOMPAS-3D and agrees to the change of the files listed."""
+
+    def __init__(self, fixes, product_file: str, parent=None):
+        super().__init__(parent)
+        self.fixes, self.product_file = fixes, product_file
+        self.material: tuple[str, float] | None = None
+        self.setWindowTitle("Задать материал")
+        self.resize(820, 520)
+        box = QVBoxLayout(self)
+        intro = QLabel("Отметьте детали и выберите материал в справочнике «Материалы» КОМПАС-3D. "
+                       "Материал записывается в файл детали (у локальной — в файл сборки); перед этим "
+                       "Fluxion сделает резервную копию каждого файла.")
+        intro.setWordWrap(True)
+        box.addWidget(intro)
+        self.list = QListWidget()
+        for f in fixes:
+            item = QListWidgetItem(f"{f.text} — {f.file or product_file}")
+            item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            item.setCheckState(Qt.Checked)
+            self.list.addItem(item)
+        self.list.itemChanged.connect(self._update)
+        box.addWidget(self.list, 1)
+        row = QHBoxLayout()
+        self.material_label = QLabel("Материал не выбран")
+        self.material_label.setWordWrap(True)
+        row.addWidget(self.material_label, 1)
+        choose = QPushButton("Выбрать в справочнике КОМПАС…")
+        choose.clicked.connect(self._choose)
+        row.addWidget(choose)
+        box.addLayout(row)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("Отмена")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        self.apply_button = QPushButton("Задать материал")
+        self.apply_button.setObjectName("sendButton")
+        self.apply_button.clicked.connect(self._confirm)
+        buttons.addWidget(self.apply_button)
+        box.addLayout(buttons)
+        self._update()
+
+    def checked(self) -> list:
+        return [f for i, f in enumerate(self.fixes) if self.list.item(i).checkState() == Qt.Checked]
+
+    def chosen(self) -> list:
+        material, density = self.material
+        for f in self.checked():
+            f.material, f.density = material, density
+        return self.checked()
+
+    def set_material(self, material: str, density: float) -> None:
+        from cad.assembly import material_text
+
+        self.material = (material, density)
+        self.material_label.setText(f"Материал: <b>{html.escape(material_text(material))}</b>, "
+                                    f"плотность {density:g} г/см³")
+        self._update()
+
+    def _choose(self) -> None:
+        from cad.fix import choose_kompas_material
+
+        try:
+            got = choose_kompas_material(int(self.winId()))
+        except Exception as exc:  # no KOMPAS or no library
+            QMessageBox.warning(self, "Справочник «Материалы»", str(exc))
+            return
+        if got:
+            self.set_material(*got)
+
+    def confirm_text(self) -> str:
+        from cad.assembly import material_text
+
+        fixes = self.checked()
+        files = list(dict.fromkeys(f.file or self.product_file for f in fixes))
+        product_dir = str(Path(self.product_file).parent).lower() if self.product_file else ""
+        shared = [f for f in files if product_dir and not f.lower().startswith(product_dir)]
+        lines = [f"• {f.text}" for f in fixes[:25]] + ([f"…и ещё {len(fixes) - 25}"] if len(fixes) > 25 else [])
+        text = (f"Задать материал «{material_text(self.material[0])}» ({self.material[1]:g} г/см³):\n\n"
+                + "\n".join(lines) + "\n\nИзменятся файлы (перед этим — резервная копия в папке "
+                "«Резервные копии Fluxion» рядом):\n" + "\n".join(files))
+        if shared:
+            text += ("\n\nВнимание: эти файлы лежат вне папки изделия — возможно, общие для других "
+                     "изделий, материал поменяется и там:\n" + "\n".join(shared))
+        return text + "\n\nСборка и детали должны быть закрыты в КОМПАС-3D. После этого отчёт составится заново."
+
+    def _confirm(self) -> None:
+        answer = QMessageBox.question(self, "Задать материал", self.confirm_text(),
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            self.accept()
+
+    def _update(self, *_args) -> None:
+        self.apply_button.setEnabled(self.material is not None and bool(self.checked()))
 
 
 class MaterialsDialog(QDialog):
@@ -1938,6 +2150,10 @@ class FluxionWindow(QMainWindow):
         act_report.setToolTip("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel")
         act_report.triggered.connect(self._open_assembly_report)
         m_tools.addAction(act_report)
+        act_laser = QAction("Пакет на лазер (DXFka)…", self)
+        act_laser.setToolTip("DXF всех листовых деталей сборки по папкам толщин (Pro)")
+        act_laser.triggered.connect(self._open_laser_package)
+        m_tools.addAction(act_laser)
         m_tools.addSeparator()
         act_acad = QAction("Нормоконтроль чертежа AutoCAD…", self)
         act_acad.setToolTip("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel")
@@ -2039,6 +2255,9 @@ class FluxionWindow(QMainWindow):
             return
         if target.startswith(SPEAK_URL):
             self._toggle_speak_answer(target[len(SPEAK_URL):])
+            return
+        if target.startswith("file:"):  # a source of the answer: the document itself
+            QDesktopServices.openUrl(QUrl(target))
             return
         self._open_in_browser(target)
 
@@ -4445,6 +4664,139 @@ class FluxionWindow(QMainWindow):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
+    # ── «Пакет на лазер»: DXF of the sheet details by thickness (core of DXFka) ──
+
+    def _open_laser_package(self) -> None:
+        """Menu Инструменты → Пакет на лазер: pick an .a3d and the DXF folder."""
+        from PySide6.QtWidgets import QFileDialog
+
+        from cad.laser import PRO_FEATURE, default_out_dir
+        from licensing import feature_enabled
+
+        if self.generating or self.agent_running or getattr(self, "laser_job", None) is not None:
+            return
+        if not feature_enabled(PRO_FEATURE):
+            QMessageBox.information(
+                self, "Пакет на лазер",
+                "«Пакет на лазер» — функция Pro: DXF развёрток всех листовых деталей сборки, "
+                "разложенные по папкам толщин.\nАктивировать: меню «Помощь» → «Лицензия…».")
+            return
+        start = str(self.qsettings.value("report_dir", "") or "")
+        path, _ = QFileDialog.getOpenFileName(self, "Сборка КОМПАС-3D", start, "Сборки КОМПАС-3D (*.a3d)")
+        if not path:
+            return
+        self.qsettings.setValue("report_dir", str(Path(path).parent))
+        out = QFileDialog.getExistingDirectory(self, "Папка для DXF (подпапки по толщинам создаются сами)",
+                                               str(default_out_dir(path).parent))
+        if not out:
+            return
+        self.start_laser_package(path, str(Path(out) / Path(path).stem))  # one subfolder per assembly
+
+    def start_laser_package(self, assembly: str, out_dir: str, auto: bool = True) -> None:
+        from cad.laser import LaserJob
+
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", f"Пакет на лазер: {Path(assembly).name}")
+        self._append_message("assistant", "Обхожу сборку…")
+        self._laser_entry = self._messages[-1]
+        self._laser_entry["meta"] = "[КОМПАС-3D | DXFka | автоматический режим]" if auto else "[КОМПАС-3D | DXFka]"
+        self._set_generating(True)
+        job = LaserJob(assembly, out_dir, auto=auto)
+        self.laser_job = job
+        self._laser_lines: list[str] = []
+        self._laser_timer = QTimer(self)
+        self._laser_timer.setInterval(150)
+        self._laser_timer.timeout.connect(self._poll_laser)
+        self._laser_timer.start()
+        job.start()
+
+    def _laser_say(self, text: str, replace_last: bool = False) -> None:
+        if replace_last and self._laser_lines:
+            self._laser_lines[-1] = text
+        else:
+            self._laser_lines.append(text)
+        self._laser_entry["text"] = "\n".join(self._laser_lines[-40:])
+        self._render_messages()
+
+    def _poll_laser(self) -> None:
+        """Messages of the DXFka worker: progress into the chat, questions as dialogs."""
+        import queue as queue_module
+
+        job = getattr(self, "laser_job", None)
+        if job is None:
+            return
+        while True:
+            try:
+                msg = job.queue.get_nowait()
+            except queue_module.Empty:
+                break
+            kind = msg.get("type")
+            if kind == "LOG" and msg.get("level") in ("warning", "error"):
+                self._laser_say(("⚠ " if msg["level"] == "warning" else "✖ ") + msg["text"])
+            elif kind == "PROGRESS" and msg.get("total"):
+                line = f"Деталь {msg['done']} из {msg['total']}"
+                self._laser_say(line, replace_last=bool(self._laser_lines) and self._laser_lines[-1].startswith("Деталь "))
+            elif kind == "TRAVERSAL_DONE":
+                count = job.export(msg.get("parts") or [])
+                self._laser_say(f"В сборке деталей: {len(job.parts) + len(job.left_out)}; на лазер (из листа): "
+                                f"{count}; остальные пропущены.")
+                if not count:
+                    self._finish_laser("Листовых деталей в сборке нет — DXF не нужен.")
+                    return
+            elif kind == "PAUSE":
+                self._laser_pause(msg.get("title", ""), msg.get("instruction", ""))
+            elif kind == "ASK_THICKNESS":
+                value, ok = QInputDialog.getText(
+                    self, "Толщина детали", f"{msg.get('part', '')}\nТолщина, мм (пусто — пропустить деталь):",
+                    text=msg.get("default", ""))
+                job.answer_thickness(value if ok else None)
+            elif kind == "DONE":
+                self._finish_laser(msg.get("text", "Экспорт завершён."))
+                return
+            elif kind == "FATAL":
+                self._finish_laser("✖ " + msg.get("text", "Ошибка DXFka."))
+                return
+
+    def _laser_pause(self, title: str, instruction: str) -> None:
+        """Manual step of DXFka: the designer checks the view in KOMPAS, then goes on."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Пакет на лазер")
+        box.setText(title)
+        box.setInformativeText(instruction)
+        go = box.addButton("Продолжить", QMessageBox.AcceptRole)
+        skip = box.addButton("Пропустить деталь", QMessageBox.RejectRole)
+        box.addButton("Остановить", QMessageBox.DestructiveRole)
+        box.exec()
+        clicked = box.clickedButton()
+        job = self.laser_job
+        if clicked is go:
+            job.resume()
+        elif clicked is skip:
+            job.skip()
+        else:
+            job.cancel()
+
+    def _finish_laser(self, text: str) -> None:
+        from cad.laser import thickness_summary
+
+        job = self.laser_job
+        self._laser_timer.stop()
+        summary = thickness_summary(job.out_dir)
+        lines = [text]
+        if summary:
+            lines.append("По толщинам: " + "; ".join(f"{name} мм — {count} DXF" for name, count in summary) + ".")
+            lines.append(f"Папка: {job.out_dir}")
+        self._laser_lines.append("\n".join(lines))
+        self._laser_entry["text"] = "\n".join(self._laser_lines[-40:])
+        if summary:
+            self._laser_entry["sources"] = [{"file": job.out_dir, "label": "Открыть папку с DXF"}]
+            self._laser_entry["sources_title"] = "Ссылки"
+        self.laser_job = None
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
+        self._notify_answer(lines[0])
+
     def _open_assembly_report(self) -> None:
         """Menu Инструменты → Ведомость и металлоёмкость сборки: pick an .a3d, report in Excel."""
         from PySide6.QtWidgets import QFileDialog
@@ -4467,8 +4819,8 @@ class FluxionWindow(QMainWindow):
         self._set_generating(True)
         self._run_report_worker(path)
 
-    def _run_report_worker(self, path: str) -> None:
-        worker = AssemblyReportWorker(path, self)
+    def _run_report_worker(self, path: str, fixes=None) -> None:
+        worker = AssemblyReportWorker(path, self, fixes)
         self.report_worker = worker
         worker.progress.connect(self._on_report_progress)
         worker.ready.connect(self._on_report_ready)
@@ -4485,6 +4837,7 @@ class FluxionWindow(QMainWindow):
         """The disputed places, each to be marked: (made, the marks)."""
         dialog = ReportWarningsDialog(result, self)
         made = dialog.exec() == QDialog.Accepted
+        self._pending_fixes = dialog.fixes if dialog.fix_requested else None
         return made, dialog.marks()
 
     def _on_report_ready(self, result) -> None:
@@ -4495,11 +4848,19 @@ class FluxionWindow(QMainWindow):
             made, marks = self._mark_warnings(result)
             if result.top.file:  # marked once, not asked again
                 report.save_decisions(result.top.file, report.decisions_from_marks(result, marks))
+            fixes, self._pending_fixes = getattr(self, "_pending_fixes", None), None
+            if fixes and result.top.file:  # the designer agreed: fix the model, then the report again
+                self._report_entry["text"] = "Исправляю модель…"
+                self._render_messages()
+                self._run_report_worker(result.top.file, fixes)
+                return
             if not made:
                 left = sum(1 for m in marks.values() if not m["checked"])
                 self._report_entry["text"] = (
                     f"Отчёт не сформирован: не отмечено {left} из {len(marks)} спорных мест. Отметки сохранены.\n"
                     + report.warnings_text(result))
+                self._report_entry["sources"] = report.report_links(result)
+                self._report_entry["sources_title"] = "Модели"
                 self._set_generating(False)
                 self._render_messages()
                 return
@@ -4518,6 +4879,8 @@ class FluxionWindow(QMainWindow):
             return
         summary = report.summary_text(result)
         self._report_entry["text"] = summary + f"\nОтчёт: {path}"
+        self._report_entry["sources"] = report.report_links(result, path)
+        self._report_entry["sources_title"] = "Ссылки"
         self._set_generating(False)
         self._render_messages()
         self._save_memory()
@@ -4951,6 +5314,8 @@ class FluxionWindow(QMainWindow):
 
     def stop_generation(self) -> None:
         self._stop_speaking()
+        if getattr(self, "laser_job", None) is not None:
+            self.laser_job.cancel()  # DXFka stops after the current step
         if self.generating:
             self._stop_requested = True
         if self.worker is not None and self.generating:
@@ -5154,6 +5519,9 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
 
     def _on_meta(self, result) -> None:
+        citations = getattr(result, "citations", None) or []
+        if citations and self._messages:
+            self._messages[-1]["sources"] = list(citations)  # shown under the answer
         parts = []
         strategy = getattr(getattr(result, "strategy", None), "name", "")
         if strategy:
@@ -5237,6 +5605,14 @@ class FluxionWindow(QMainWindow):
 
                 body = render_chat_html(entry["text"]) or "…"
                 parts.append(f"<div>{body}</div>")
+                if entry.get("sources") and not (index == len(self._messages) - 1 and self.generating):
+                    links = "<br>".join(
+                        (f'[{s["n"]}] ' if "n" in s else "• ")
+                        + f'<a href="{QUrl.fromLocalFile(s["file"]).toString()}">{html.escape(s["label"])}</a>'
+                        for s in entry["sources"]
+                    )
+                    title = html.escape(entry.get("sources_title", "Источники"))
+                    parts.append(f"<p><small><b>{title}:</b><br>{links}</small></p>")
                 last = index == len(self._messages) - 1
                 if entry["role"] != "user" and entry["text"].strip() and not (last and self.generating):
                     if index == self._speaking_index:
@@ -5483,6 +5859,10 @@ class FluxionWindow(QMainWindow):
             self.report_worker.wait(120000)  # KOMPAS reads a big assembly for a while
         if getattr(self, "acad_worker", None) is not None:
             self.acad_worker.wait(120000)  # AutoCAD starts and saves the DXF
+        if getattr(self, "laser_job", None) is not None:
+            self.laser_job.cancel()
+            if self.laser_job.worker is not None:
+                self.laser_job.worker.join(60)
         self._stop_speaking()
         self._hands_free = False
         self._hands_free_timer.stop()

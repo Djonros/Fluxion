@@ -28,6 +28,8 @@ class AskResult:
     signals: QuerySignals
     rag_used: bool = False
     rag_sources: list[str] = field(default_factory=list)
+    # documents behind the answer: [{"n": 1, "file": path, "label": "Договор.pdf, стр. 3"}]
+    citations: list[dict] = field(default_factory=list)
     web_used: bool = False
     web_sources: list[str] = field(default_factory=list)
     messages: list[dict[str, str]] = field(default_factory=list)
@@ -133,6 +135,12 @@ class Assistant:
             result.rag_used = True
             result.rag_sources = [
                 f"{r.file_path}::{r.name or r.node_type}" for r in results
+            ]
+            from rag.service import citation_label
+
+            result.citations = [
+                {"n": i, "file": r.file_path, "label": citation_label(r)}
+                for i, r in enumerate(results[:5], 1) if citation_label(r)
             ]
         self._last_rag_results = results
 
