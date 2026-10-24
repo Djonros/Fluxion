@@ -37,6 +37,7 @@ class PromptContext:
     web_snippets: list[tuple[str, str]] = field(default_factory=list)
     history: list[dict[str, str]] = field(default_factory=list)
     query: str = ""
+    style: str = ""  # «Мой стиль»: the user's manner of writing (orchestrator/writing_style.py)
 
 
 class PromptBuilder:
@@ -54,9 +55,12 @@ class PromptBuilder:
         self.budget = num_ctx - max_predict
 
     def build(self, ctx: PromptContext) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = [{"role": "system", "content": self.system_prompt}]
+        system = self.system_prompt
+        if ctx.style:
+            system = f"{system}\n\n{ctx.style}"
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
 
-        used = count_tokens(self.system_prompt)
+        used = count_tokens(system)
 
         # ── RAG context ──
         if ctx.rag_snippets:

@@ -659,6 +659,7 @@ class ChatWorker(QThread):
         self.query = query
         self.history = history
         self.target = ""
+        self.style = ""  # «Мой стиль»: the user's manner of writing for the system prompt
         self._stop = False
 
     def stop(self) -> None:
@@ -668,7 +669,8 @@ class ChatWorker(QThread):
         query = self.query
         for attempt in (1, 2):
             try:
-                result, stream = self.assistant.ask_stream(query=query, history=self.history)
+                extra = {"style": self.style} if self.style else {}
+                result, stream = self.assistant.ask_stream(query=query, history=self.history, **extra)
             except Exception as exc:
                 self.failed.emit(f"Ошибка генерации: {exc}")
                 return
@@ -2160,6 +2162,10 @@ class FluxionWindow(QMainWindow):
         act_acad.triggered.connect(self._open_acad_check)
         m_tools.addAction(act_acad)
         m_tools.addSeparator()
+        act_style = QAction("Мой стиль письма…", self)
+        act_style.setToolTip("Служебки, пояснительные записки и письма заказчикам вашим стилем (Pro)")
+        act_style.triggered.connect(self._open_writing_style)
+        m_tools.addAction(act_style)
         act_notes = QAction("Памятка…", self)
         act_notes.setToolTip("Короткие инструкции по возможностям Fluxion")
         act_notes.triggered.connect(self._open_notes)
@@ -2413,6 +2419,13 @@ class FluxionWindow(QMainWindow):
             "под ответом появится «Выполнить план»"
         )
         modes.addWidget(self.chat_plan)
+        self.chat_style = QCheckBox("✍ Мой стиль")
+        self.chat_style.setObjectName("modeChip")
+        self.chat_style.setCursor(Qt.PointingHandCursor)
+        self.chat_style.setToolTip("Писать служебки, пояснительные записки и письма заказчикам вашим стилем (Pro). "
+                                   "Образцы — Инструменты → «Мой стиль письма…»")
+        self.chat_style.toggled.connect(self._on_chat_style_toggled)
+        modes.addWidget(self.chat_style)
         modes.addStretch()
         hint = QLabel("Ctrl+Enter — агенту")
         hint.setObjectName("modeHint")
@@ -4661,6 +4674,7 @@ class FluxionWindow(QMainWindow):
         self._set_generating(True)
         self.worker = ChatWorker(self.assistant, text, history, self)
         self.worker.target = resolve_target(getattr(self.settings, "language", "auto"), text)
+        self.worker.style = self._writing_style_block(text)
         self.worker.token.connect(self._on_token)
         self.worker.meta.connect(self._on_meta)
         self.worker.failed.connect(self._on_failed)
@@ -4902,6 +4916,57 @@ class FluxionWindow(QMainWindow):
         if getattr(self, "report_worker", None) is worker:
             self.report_worker = None
         worker.deleteLater()
+
+    # ── «Мой стиль»: memos, explanatory notes and letters in the user's manner ──
+
+    def _style_dir(self) -> str:
+        """Where «Мой стиль» keeps the profile: the data folder of the settings."""
+        paths = getattr(self.settings, "paths", None)
+        return getattr(paths, "data_dir", None) or "data"
+
+    def _writing_style_pro(self) -> bool:
+        from licensing import feature_enabled
+        from orchestrator.writing_style import PRO_FEATURE
+
+        if feature_enabled(PRO_FEATURE):
+            return True
+        QMessageBox.information(
+            self, "Мой стиль письма",
+            "«Мой стиль» — функция Pro: служебные и пояснительные записки, письма заказчикам "
+            "в вашей манере по вашим образцам.\nАктивировать: меню «Помощь» → «Лицензия…».")
+        return False
+
+    def _open_writing_style(self) -> bool:
+        """Menu Инструменты → Мой стиль письма: the samples and the profile. True when saved."""
+        if not self._writing_style_pro():
+            return False
+        from .writing_style_dialog import WritingStyleDialog
+
+        return WritingStyleDialog(self.backend, self._style_dir(), self).exec() == QDialog.Accepted
+
+    def _on_chat_style_toggled(self, checked: bool) -> None:
+        if not checked:
+            return
+        from orchestrator import writing_style
+
+        ready = self._writing_style_pro() and (
+            writing_style.load(self._style_dir()).ready or self._open_writing_style())
+        if not ready or not writing_style.load(self._style_dir()).ready:
+            self.chat_style.blockSignals(True)
+            self.chat_style.setChecked(False)
+            self.chat_style.blockSignals(False)
+
+    def _writing_style_block(self, query: str) -> str:
+        """The user's manner for the system prompt while «✍ Мой стиль» is on ("" otherwise)."""
+        chip = getattr(self, "chat_style", None)
+        if chip is None or not chip.isChecked():
+            return ""
+        from licensing import feature_enabled
+        from orchestrator import writing_style
+
+        if not feature_enabled(writing_style.PRO_FEATURE):
+            return ""
+        return writing_style.prompt_block(writing_style.load(self._style_dir()), query)
 
     def _open_notes(self) -> None:
         """Menu Инструменты → Памятка: the topics of desktop_browser/notes."""

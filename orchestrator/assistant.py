@@ -82,10 +82,12 @@ class Assistant:
         history: list[dict[str, str]] | None = None,
         gen: GenerationSettings | None = None,
         force_strategy: Strategy | None = None,
+        style: str = "",
     ) -> tuple[AskResult, Iterator[str]]:
-        """Like ask() but also returns AskResult metadata before streaming."""
+        """Like ask() but also returns AskResult metadata before streaming.
+        *style*: the user's manner of writing («Мой стиль»), added to the system prompt."""
         result = self._prepare(query, force_strategy)
-        result.messages = self._build_messages(query, result, history)
+        result.messages = self._build_messages(query, result, history, style)
         return result, self.backend.stream(result.messages, gen=gen)
 
     def classify(self, query: str) -> QuerySignals:
@@ -165,6 +167,7 @@ class Assistant:
         query: str,
         result: AskResult,
         history: list[dict[str, str]] | None,
+        style: str = "",
     ) -> list[dict[str, str]]:
         rag_snippets: list[tuple[str, str]] = []
         web_snippets: list[tuple[str, str]] = []
@@ -185,5 +188,6 @@ class Assistant:
                 web_snippets=web_snippets,
                 history=history or self.history,
                 query=query,
+                style=style,
             )
         )
