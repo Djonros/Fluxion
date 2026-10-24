@@ -2732,6 +2732,11 @@ class FluxionWindow(QMainWindow):
         self.training_pick_button.setObjectName("iconButton")
         self.training_pick_button.clicked.connect(self._pick_dataset_file)
         dataset_row.addWidget(self.training_pick_button)
+        self.training_docs_button = QPushButton("Из документов…")
+        self.training_docs_button.setObjectName("iconButton")
+        self.training_docs_button.setToolTip("Составить датасет «вопрос — ответ» по вашим документам")
+        self.training_docs_button.clicked.connect(self._make_dataset_from_docs)
+        dataset_row.addWidget(self.training_docs_button)
         self.dataset_chip = QLabel("датасет: не выбран")
         self.dataset_chip.setObjectName("statusChip")
         dataset_row.addWidget(self.dataset_chip)
@@ -3654,6 +3659,13 @@ class FluxionWindow(QMainWindow):
         )
         if path:
             self.training_dataset.setText(path)
+
+    def _make_dataset_from_docs(self) -> None:
+        from .doc_dataset_dialog import DocDatasetDialog
+
+        dialog = DocDatasetDialog(self.backend, self.settings.paths.data_dir, self)
+        if dialog.exec() == QDialog.Accepted and dialog.saved_path:
+            self.training_dataset.setText(dialog.saved_path)
 
     def _validate_dataset(self, path: str) -> None:
         chip = getattr(self, "dataset_chip", None)

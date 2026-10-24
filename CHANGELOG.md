@@ -5,6 +5,11 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- «Из документов…» on the «Обучение» page (`finetune/doc_dataset.py`): a training dataset from your own documents — PDF, Word, Excel, PowerPoint, txt and md, files or a whole folder. The chat model reads them in fragments of about 3000 characters and writes question–answer pairs on each (JSON schema; a failed call is skipped, repeated questions are dropped). The pairs are reviewed in a table — an answer is edited in place, a bad pair unticked, the source (file, fragment) shown, the review kept as a draft when the window is closed — and the ticked ones are saved as ChatML JSONL in `data/datasets` and put into the dataset field. It runs without a graphics card (slowly on the CPU, fast with a cloud model); the training itself still needs an NVIDIA card.
+
 ## [0.17.0] — 2026-10-23
 
 ### Added
