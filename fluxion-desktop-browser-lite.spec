@@ -48,6 +48,7 @@ a = Analysis(
         ("config", "config"),
         ("core/model_catalog.json", "core"),  # catalog of the "Модели" page
         ("cad/materials.json", "cad"),  # materials of "Деталь в КОМПАС" (cad/materials.py)
+        ("desktop_browser/notes", "desktop_browser/notes"),  # «Памятка» (desktop_browser/notes.py)
         ("finetune", "finetune"),
         ("licensing", "licensing"),
         # plain sources for the training env's own interpreter (PYTHONPATH)
@@ -159,6 +160,7 @@ a = Analysis(
         "cad.acad",
         "cad.acad_check",
         "desktop_browser.acad_check_dialog",
+        "desktop_browser.notes",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window
         "dxfka",

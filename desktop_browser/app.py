@@ -2159,6 +2159,11 @@ class FluxionWindow(QMainWindow):
         act_acad.setToolTip("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel")
         act_acad.triggered.connect(self._open_acad_check)
         m_tools.addAction(act_acad)
+        m_tools.addSeparator()
+        act_notes = QAction("Памятка…", self)
+        act_notes.setToolTip("Короткие инструкции по возможностям Fluxion")
+        act_notes.triggered.connect(self._open_notes)
+        m_tools.addAction(act_notes)
 
         # Помощь
         m_help = bar.addMenu("&Помощь")
@@ -4897,6 +4902,12 @@ class FluxionWindow(QMainWindow):
         if getattr(self, "report_worker", None) is worker:
             self.report_worker = None
         worker.deleteLater()
+
+    def _open_notes(self) -> None:
+        """Menu Инструменты → Памятка: the topics of desktop_browser/notes."""
+        from .notes import NotesDialog
+
+        NotesDialog(self).exec()
 
     def _open_acad_check(self) -> None:
         """Menu Инструменты → Нормоконтроль чертежа AutoCAD: pick a DWG/DXF, remarks, report in Excel."""
