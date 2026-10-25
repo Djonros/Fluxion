@@ -24,6 +24,7 @@ from .drawing import MODEL, Drawing, Entity
 from .report import ATTENTION, CHECK, remark_id
 
 # ГОСТ 2.304: sizes of the font (height of a capital), mm
+PRO_FEATURE = "acad_check"  # the norm control of a drawing: Fluxion Pro
 FONT_SIZES = (1.8, 2.5, 3.5, 5.0, 7.0, 10.0, 14.0, 20.0, 28.0, 40.0)
 # fonts of ГОСТ 2.304 / ISO 3098 as AutoCAD names them (shx files and TrueType families)
 GOST_FONT_RE = re.compile(r"gost|гост|iso3098|isocp|isoct|isocteur|isocpeur|isocp2|isoct2|isoct3|isocp3|"

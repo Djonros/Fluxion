@@ -109,6 +109,9 @@ def test_window_fixes_the_model_then_makes_the_report_again(tmp_path, monkeypatc
 
     app = QApplication.instance() or QApplication([])
     reads, applied, backups = [], [], []
+    import licensing
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)  # Pro
     monkeypatch.setattr(assembly, "read", lambda path, with_area=True, log=print: reads.append(path) or product())
     monkeypatch.setattr(report, "default_path", lambda top, folder=None: tmp_path / "r.xlsx")
     monkeypatch.setattr(report, "add_welds", lambda result, log=print: None)

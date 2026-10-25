@@ -70,8 +70,21 @@ def _ask_until_built(description: str, backend, ask: bool) -> dict | None:
             message = "по умолчанию"
 
 
+def _pro(feature: str, text: str) -> bool:
+    """Is *feature* of Fluxion Pro on? If not, say so on the console."""
+    from licensing import feature_enabled
+
+    if feature_enabled(feature):
+        return True
+    print(text + " Активировать: в программе меню «Помощь» → «Лицензия…».")
+    return False
+
+
 def _report(path: str, out: str | None, check_only: bool = False, accept: bool = False) -> int:
     from . import assembly, report
+
+    if not _pro(report.PRO_FEATURE, "«Ведомость и металлоёмкость сборки» — функция Pro: сводная ведомость, металлоёмкость, сварка, покраска и трудоёмкость сборки КОМПАС-3D в Excel, нормоконтроль перед отчётом, «Исправить в модели» и «Задать материал»."):
+        return 2
 
     try:
         top = assembly.read(path)
@@ -95,6 +108,9 @@ def _report(path: str, out: str | None, check_only: bool = False, accept: bool =
 
 def _acad(path: str, out: str | None, norm: str | None, check_only: bool = False, accept: bool = False) -> int:
     from . import acad, acad_check, report
+
+    if not _pro(acad_check.PRO_FEATURE, "«Нормоконтроль чертежа AutoCAD» — функция Pro: штамп, масштабы, шрифты, слои и размеры чертежа DWG/DXF по ЕСКД и СПДС, замечания в Excel."):
+        return 2
     from .drawing import DrawingError
 
     try:

@@ -5,6 +5,11 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- The reports on a KOMPAS-3D assembly (statement, metal, welds, paint, workload), their norm control with «Исправить в модели» and «Задать материал», and the norm control of AutoCAD drawings are features of Fluxion Pro now (`assembly_report`, `acad_check`): the menu items say «(Pro)», without a licence the window explains how to activate it, `python -m cad --report/--acad` and `fluxion-acad.bat` stop with exit code 2. Building parts in KOMPAS-3D by a description stays free.
+
 ## [0.18.1] — 2026-10-24
 
 ### Fixed

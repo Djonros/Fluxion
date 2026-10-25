@@ -255,3 +255,35 @@ def test_frame_block_with_labels_and_values_over_it(tmp_path):
     problems = _problems(result)
     assert "Масштаб в штампе не совпадает" not in problems
     assert "Не заполнено «Пров.»" in problems
+
+
+def test_acad_norm_control_is_pro(tmp_path, monkeypatch):
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("FLUXION_DISABLE_WEBENGINE", "1")
+    import licensing
+
+    assert acad_check.PRO_FEATURE in licensing.PRO_FEATURES
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
+    opened = []
+    monkeypatch.setattr(acad, "open_drawing", lambda path: opened.append(path))
+    from cad.__main__ import main
+
+    assert main(["--acad", str(tmp_path / "a.dxf")]) == 2 and not opened
+    try:
+        from PySide6.QtCore import QSettings
+        from PySide6.QtWidgets import QApplication
+
+        import desktop_browser.app as appmod
+    except ImportError as exc:
+        pytest.skip(f"PySide6 unavailable: {exc}")
+    QApplication.instance() or QApplication([])
+    told = []
+    monkeypatch.setattr(appmod.QMessageBox, "information", lambda parent, title, text: told.append(text))
+    window = appmod.FluxionWindow(qsettings=QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat))
+    window.prompt.setText(f"/автокад {tmp_path / 'a.dxf'}")
+    window.send_message()
+    assert not window.generating and getattr(window, "acad_worker", None) is None and not opened
+    assert told and "функция Pro" in told[0]
+    window.close()

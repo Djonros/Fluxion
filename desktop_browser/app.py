@@ -2150,7 +2150,7 @@ class FluxionWindow(QMainWindow):
         act_materials.triggered.connect(self._open_materials_dialog)
         m_tools.addAction(act_materials)
         m_tools.addSeparator()
-        act_report = QAction("Ведомость и металлоёмкость сборки…", self)
+        act_report = QAction("Ведомость и металлоёмкость сборки (Pro)…", self)
         act_report.setToolTip("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel")
         act_report.triggered.connect(self._open_assembly_report)
         m_tools.addAction(act_report)
@@ -2159,7 +2159,7 @@ class FluxionWindow(QMainWindow):
         act_laser.triggered.connect(self._open_laser_package)
         m_tools.addAction(act_laser)
         m_tools.addSeparator()
-        act_acad = QAction("Нормоконтроль чертежа AutoCAD…", self)
+        act_acad = QAction("Нормоконтроль чертежа AutoCAD (Pro)…", self)
         act_acad.setToolTip("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel")
         act_acad.triggered.connect(self._open_acad_check)
         m_tools.addAction(act_acad)
@@ -4818,11 +4818,32 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
         self._notify_answer(lines[0])
 
+    def _pro_feature(self, feature: str, title: str, text: str) -> bool:
+        """Is *feature* of Fluxion Pro on? If not, say what it is and how to activate it."""
+        from licensing import feature_enabled
+
+        if feature_enabled(feature):
+            return True
+        QMessageBox.information(self, title, text + "\nАктивировать: меню «Помощь» → «Лицензия…».")
+        return False
+
+    def _report_pro(self) -> bool:
+        from cad.report import PRO_FEATURE
+
+        return self._pro_feature(PRO_FEATURE, "Ведомость и металлоёмкость", "«Ведомость и металлоёмкость сборки» — функция Pro: сводная ведомость, металлоёмкость, сварка, покраска и трудоёмкость сборки КОМПАС-3D в Excel, нормоконтроль перед отчётом, «Исправить в модели» и «Задать материал».")
+
+    def _acad_pro(self) -> bool:
+        from cad.acad_check import PRO_FEATURE
+
+        return self._pro_feature(PRO_FEATURE, "Нормоконтроль AutoCAD", "«Нормоконтроль чертежа AutoCAD» — функция Pro: штамп, масштабы, шрифты, слои и размеры чертежа DWG/DXF по ЕСКД и СПДС, замечания в Excel.")
+
     def _open_assembly_report(self) -> None:
         """Menu Инструменты → Ведомость и металлоёмкость сборки: pick an .a3d, report in Excel."""
         from PySide6.QtWidgets import QFileDialog
 
         if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
+            return
+        if not self._report_pro():
             return
         start = str(self.qsettings.value("report_dir", "") or "")
         path, _ = QFileDialog.getOpenFileName(self, "Сборка КОМПАС-3D", start, "Сборки КОМПАС-3D (*.a3d)")
@@ -4831,6 +4852,8 @@ class FluxionWindow(QMainWindow):
             self.start_assembly_report(path)
 
     def start_assembly_report(self, path: str) -> None:
+        if not self._report_pro():
+            return
         self.pages.setCurrentIndex(PAGE_CHAT)
         self._append_message("user", f"Ведомость и металлоёмкость: {Path(path).name}")
         self._append_message("assistant", "")
@@ -4984,6 +5007,8 @@ class FluxionWindow(QMainWindow):
 
         if self.generating or self.agent_running or getattr(self, "acad_worker", None) is not None:
             return
+        if not self._acad_pro():
+            return
         start = str(self.qsettings.value("acad_dir", "") or "")
         path, _ = QFileDialog.getOpenFileName(self, "Чертёж AutoCAD", start, ACAD_FILTER)
         if path:
@@ -4993,6 +5018,8 @@ class FluxionWindow(QMainWindow):
         from .acad_check_dialog import AcadCheckWorker
 
         if self.generating or self.agent_running or getattr(self, "acad_worker", None) is not None:
+            return
+        if not self._acad_pro():
             return
         self.qsettings.setValue("acad_dir", str(Path(path).parent))
         self.pages.setCurrentIndex(PAGE_CHAT)

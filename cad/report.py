@@ -26,6 +26,7 @@ from pathlib import Path
 from .assembly import (ASSEMBLY, DETAIL, KIND_TITLES, OTHER, STANDARD, Component, material_text, no_material,
                        purchased_by_name)
 
+PRO_FEATURE = "assembly_report"  # the report, its warnings and the fixes in the model: Fluxion Pro
 NO_MATERIAL = "Материал не указан"
 # order of the sections of a KOMPAS specification (ГОСТ 2.106)
 SECTION_ORDER = ("Документация", "Комплексы", "Сборочные единицы", "Детали", "Стандартные изделия",

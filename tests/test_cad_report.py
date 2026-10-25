@@ -422,6 +422,9 @@ def test_window_report(tmp_path, monkeypatch):
         pytest.skip(f"PySide6 unavailable: {exc}")
     app = QApplication.instance() or QApplication([])
     opened = []
+    import licensing
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)  # Pro
     monkeypatch.setattr(assembly, "read", lambda path, with_area=True, log=print: product())
     monkeypatch.setattr(report, "default_path", lambda top, folder=None: tmp_path / "r.xlsx")
     monkeypatch.setattr(report, "add_welds", lambda result, log=print: None)  # no KOMPAS in tests
@@ -465,6 +468,9 @@ def test_window_report_cancelled_at_the_warnings(tmp_path, monkeypatch):
     except ImportError as exc:
         pytest.skip(f"PySide6 unavailable: {exc}")
     app = QApplication.instance() or QApplication([])
+    import licensing
+
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)  # Pro
     monkeypatch.setattr(assembly, "read", lambda path, with_area=True, log=print: product())
     monkeypatch.setattr(report, "default_path", lambda top, folder=None: tmp_path / "r.xlsx")
     monkeypatch.setattr(report, "add_welds", lambda result, log=print: None)
@@ -547,3 +553,34 @@ def test_borrowed_model_path_shows_the_file_in_its_folder(tmp_path, monkeypatch)
     import ntpath
 
     assert [local(p).lower() for p in opened] == [local(ntpath.dirname(file)).lower(), local(file).lower()]
+
+
+def test_report_and_its_norm_control_are_pro(tmp_path, monkeypatch):
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("FLUXION_DISABLE_WEBENGINE", "1")
+    import licensing
+
+    assert report.PRO_FEATURE in licensing.PRO_FEATURES
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: False)
+    read = []
+    monkeypatch.setattr(assembly, "read", lambda *a, **k: read.append(a) or product())
+    from cad.__main__ import main
+
+    assert main(["--report", str(tmp_path / "100.000.a3d")]) == 2 and not read
+    try:
+        from PySide6.QtCore import QSettings
+        from PySide6.QtWidgets import QApplication
+
+        import desktop_browser.app as appmod
+    except ImportError as exc:
+        pytest.skip(f"PySide6 unavailable: {exc}")
+    QApplication.instance() or QApplication([])
+    told = []
+    monkeypatch.setattr(appmod.QMessageBox, "information", lambda parent, title, text: told.append(text))
+    window = appmod.FluxionWindow(qsettings=QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat))
+    window.start_assembly_report(str(tmp_path / "100.000.a3d"))
+    assert not window.generating and getattr(window, "report_worker", None) is None and not read
+    assert told and "функция Pro" in told[0] and "Лицензия" in told[0]
+    window.close()
