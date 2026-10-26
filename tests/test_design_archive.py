@@ -306,3 +306,58 @@ def test_copies_of_a_file_are_one_hit_and_years_are_not_words(tmp_path):
     assert len([n for n in names if n.startswith("714094.2801094 - Боковой")]) == 1
     assert "2022" not in match_query("лист после 2022", parse_filters("лист после 2022", set()))
     index.close()
+
+
+def test_dxf_drawing_texts_and_title_block(tmp_path):
+    ezdxf = pytest.importorskip("ezdxf")
+    from rag import legacy_files
+
+    doc = ezdxf.new("R2013")
+    msp = doc.modelspace()
+    msp.add_text("Полка верхняя", dxfattribs={"height": 5})
+    msp.add_mtext(r"ПУ-О-16 ГОСТ 19903-74\P325-09Г2С ГОСТ 19281-89")  # \P: a new paragraph of MTEXT
+    msp.add_text("1250")  # a number alone (a dimension) says nothing
+    stamp = doc.blocks.new("STAMP")
+    stamp.add_attdef("AUTHOR", text="")
+    msp.add_blockref("STAMP", (0, 0)).add_attrib("AUTHOR", "Шаяхметов")
+    path = tmp_path / "733630.2801025 - Полка верхняя.dxf"
+    doc.saveas(path)
+    text, year = legacy_files.dxf_text(path)
+    assert text.startswith("Чертёж DXF: 733630.2801025 - Полка верхняя")
+    assert "325-09Г2С ГОСТ 19281-89" in text and "Шаяхметов" in text and "1250" not in text
+    assert year >= 2024  # the header keeps when the drawing was made
+
+
+def test_old_word_and_excel_files_and_dwg_without_oda(tmp_path, monkeypatch):
+    from rag import legacy_files
+
+    doc = tmp_path / "714097.0000010 РЭ.doc"
+    doc.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64
+                    + "Руководство по эксплуатации полуприцепа".encode("utf-16-le") + b"\x00\x00"
+                    + "Root Entry".encode("utf-16-le") + b"\x00" * 8 + "Calibri Light".encode("cp1251"))
+    text = legacy_files.old_office_text(doc)
+    assert "Руководство по эксплуатации полуприцепа" in text
+    assert "Root Entry" not in text and "Calibri" not in text
+    not_ole = tmp_path / "new.xls"
+    not_ole.write_bytes(b"PK zip")
+    with pytest.raises(legacy_files.LegacyFileError):
+        legacy_files.old_office_text(not_ole)
+    import cad.acad
+
+    monkeypatch.setattr(cad.acad, "oda_converter", lambda: None)
+    dwg = tmp_path / "a.dwg"
+    dwg.write_bytes(b"AC1027")
+    with pytest.raises(legacy_files.LegacyFileError, match="ODA File Converter"):
+        legacy_files.dwg_text(dwg)
+
+
+def test_the_archive_reads_documents_of_all_kinds(tmp_path):
+    root = archive_tree(tmp_path / "Архив")
+    (root / "714097").mkdir()
+    (root / "714097" / "РЭ.doc").write_bytes(b"\xd0\xcf\x11\xe0" + b"\x00" * 16
+                                             + "Стояночная тормозная система".encode("utf-16-le"))
+    index = ArchiveIndex(tmp_path / "data", [str(root)], ocr=False)
+    assert index.update().indexed == 4
+    hits = index.search("стояночная тормозная система")
+    assert hits and hits[0].kind == "Документ Word" and hits[0].product == "714097"
+    index.close()

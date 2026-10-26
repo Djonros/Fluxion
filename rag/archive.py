@@ -1,6 +1,9 @@
 """«Архив КД»: a search index over a big design archive (thousands of KOMPAS files,
 drawings in PDF, documents), kept apart from the index of the project.
 
+AutoCAD drawings (DXF; DWG through the ODA File Converter) and old .doc/.xls are
+read by rag/legacy_files.py, scans by the OCR of Windows (rag/ocr.py).
+
 The archive is searched by words, not by meaning: designations, materials and
 names are exact words and numbers, and a full-text index (SQLite FTS5, part of
 Python) reads tens of thousands of files in minutes on any computer, with no
@@ -27,20 +30,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .documents import DOCUMENT_EXTENSIONS, DocumentError, extract_text
-from .kompas_files import KIND_TITLES, KOMPAS_EXTENSIONS, KompasFileError, read as read_kompas
-from .ocr import IMAGE_EXTENSIONS, OcrError
+from .documents import DOCUMENT_EXTENSIONS, extract_text
+from .kompas_files import KIND_TITLES, KOMPAS_EXTENSIONS, read as read_kompas
+from .legacy_files import LEGACY_EXTENSIONS, dwg_text, dxf_text, old_office_text
+from .ocr import IMAGE_EXTENSIONS
 
 PRO_FEATURE = "design_archive"
 DB_NAME = "design_archive.sqlite"
-ARCHIVE_EXTENSIONS = KOMPAS_EXTENSIONS | DOCUMENT_EXTENSIONS
+ARCHIVE_EXTENSIONS = KOMPAS_EXTENSIONS | DOCUMENT_EXTENSIONS | LEGACY_EXTENSIONS
 # copies and leftovers: "Деталь.m3d.bak", "Чертёж.cdw~", "~$Отчёт.docx", "Сборка.spw.bak.spw"
 _SKIP_NAME_RE = re.compile(r"(\.bak\b|~$|^~\$|\.\$\$\$$)", re.IGNORECASE)
 SKIP_DIRS = {"резервные копии fluxion", "$recycle.bin", "__pycache__", ".git"}
 COMMIT_EVERY = 50  # files between commits: a stopped run loses at most this much work
 CHUNK_CHARS = 1500
 KIND_BY_EXT = {**KIND_TITLES, ".pdf": "PDF", ".docx": "Документ Word", ".xlsx": "Таблица Excel",
-               ".pptx": "Презентация", **{ext: "Скан" for ext in IMAGE_EXTENSIONS}}
+               ".pptx": "Презентация", ".dxf": "Чертёж DXF", ".dwg": "Чертёж DWG", ".doc": "Документ Word",
+               ".xls": "Таблица Excel", **{ext: "Скан" for ext in IMAGE_EXTENSIONS}}
 # words of a question that say nothing about what to find
 STOP_WORDS = set("""а без в во где да для до же за и из или как какая какие какой каком каких ко когда кто
 ли мы на над не нет ни но о об от по под при про с со так там то того тоже у уже что чтобы это этот эта
@@ -197,8 +202,9 @@ def _pdf_year(path: Path) -> int:
 
 def read_file(path: Path, ocr: bool = False) -> tuple[str, int]:
     """(text, year made) of an archive file; with *ocr* the scans (pictures, PDF pages
-    without text) are read by the OCR of Windows (rag/ocr.py). Raises DocumentError,
-    KompasFileError or OcrError."""
+    without text) are read by the OCR of Windows (rag/ocr.py); AutoCAD drawings and old
+    .doc/.xls by rag/legacy_files.py. Raises DocumentError, KompasFileError, OcrError or
+    LegacyFileError."""
     from . import ocr as windows_ocr
 
     suffix = path.suffix.lower()
@@ -207,6 +213,12 @@ def read_file(path: Path, ocr: bool = False) -> tuple[str, int]:
         return card.text, card.year
     if suffix in IMAGE_EXTENSIONS:
         return windows_ocr.text_of_image(path), 0
+    if suffix == ".dxf":
+        return dxf_text(path)
+    if suffix == ".dwg":
+        return dwg_text(path)
+    if suffix in (".doc", ".xls"):
+        return old_office_text(path), 0
     text = extract_text(path)
     if suffix == ".pdf":
         if ocr:
@@ -220,13 +232,13 @@ def pieces(text: str, path: Path) -> list[tuple[str, str]]:
     (a big specification) by size, every piece of a card headed by its first line."""
     from .chunker import TreeSitterChunker
 
-    language = "document" if path.suffix.lower() in DOCUMENT_EXTENSIONS else "kompas"
+    language = "document" if path.suffix.lower() in DOCUMENT_EXTENSIONS else "card"
     chunks = TreeSitterChunker(max_chars=CHUNK_CHARS, overlap=150).chunk_text(text, str(path), language=language)
     header = text.split("\n", 1)[0].strip()
     out = []
     for i, chunk in enumerate(c for c in chunks if c.content.strip()):
         content = chunk.content
-        if i and language == "kompas" and header and not content.startswith(header):
+        if i and language == "card" and header and not content.startswith(header):
             content = f"{header} (продолжение)\n{content}"
         out.append((content, chunk.name))
     return out
@@ -307,7 +319,7 @@ class ArchiveIndex:
         self._forget(key)
         try:
             text, year = read_file(path, ocr=ocr)
-        except (DocumentError, KompasFileError, OcrError, OSError, ValueError) as exc:
+        except Exception as exc:  # whatever goes wrong with one file, the archive goes on
             # remembered with its size and time: not read again until the file changes
             self.db.execute("INSERT INTO files VALUES (?,?,?,?,?,?,?,?,?)",
                             (key, str(root), product_of(path, root), 0, "", stat.st_size, int(stat.st_mtime), 0,
@@ -354,7 +366,7 @@ class ArchiveIndex:
             try:
                 stats.chunks += self._index_one(root, path, stat, ocr)
                 stats.indexed += 1
-            except (DocumentError, KompasFileError, OcrError, OSError, ValueError) as exc:
+            except Exception as exc:
                 stats.failed.append(f"{path.name}: {exc}")
             if done % COMMIT_EVERY == 0:
                 self.db.commit()

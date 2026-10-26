@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 MAX_SIDE = 4000  # px: enough for text of a scan, inside the 10000 px limit of the OCR
+MAX_SCAN_PIXELS = 300_000_000  # an A0 sheet at 400 dpi; a bigger picture is skipped
 MIN_PAGE_CHARS = 40  # a PDF page with less text is taken for a scan
 BATCH = 40  # images per PowerShell process
 TIMEOUT_PER_IMAGE = 30  # s
@@ -127,9 +128,16 @@ def image_pages(path: Path, folder: Path) -> list[Path]:
     from PIL import Image, ImageSequence
 
     pages = []
-    with Image.open(path) as image:
-        for i, frame in enumerate(ImageSequence.Iterator(image), 1):
-            pages.append(_prepared(frame.copy(), folder, f"p{i}"))
+    limit, Image.MAX_IMAGE_PIXELS = Image.MAX_IMAGE_PIXELS, MAX_SCAN_PIXELS  # an A0 scan is big, not a bomb
+    try:
+        with Image.open(path) as image:
+            image.draft("L", (MAX_SIDE, MAX_SIDE))  # a JPEG is decoded already scaled down
+            for i, frame in enumerate(ImageSequence.Iterator(image), 1):
+                pages.append(_prepared(frame.copy(), folder, f"p{i}"))
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise OcrError(f"{path.name}: картинка не открывается ({exc})") from exc
+    finally:
+        Image.MAX_IMAGE_PIXELS = limit
     return pages
 
 

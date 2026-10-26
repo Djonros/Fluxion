@@ -120,6 +120,7 @@ a = Analysis(
         "rag.archive",  # «Архив КД»: full-text index of a design archive
         "rag.kompas_files",
         "rag.ocr",
+        "rag.legacy_files",
         "chromadb",
         "chromadb.api",
         "chromadb.api.client",
