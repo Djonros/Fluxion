@@ -117,6 +117,9 @@ a = Analysis(
         "rag.indexer",
         "rag.retriever",
         "rag.store",
+        "rag.archive",  # «Архив КД»: full-text index of a design archive
+        "rag.kompas_files",
+        "rag.ocr",
         "chromadb",
         "chromadb.api",
         "chromadb.api.client",
@@ -163,6 +166,7 @@ a = Analysis(
         "cad.acad_check",
         "desktop_browser.acad_check_dialog",
         "desktop_browser.notes",
+        "desktop_browser.archive_dialog",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window
         "dxfka",

@@ -62,7 +62,8 @@ class RAGConfig:
         )
 
 
-DOCUMENT_SUFFIXES = (".pdf", ".docx", ".xlsx", ".pptx", ".csv")
+DOCUMENT_SUFFIXES = (".pdf", ".docx", ".xlsx", ".pptx", ".csv",
+                     ".cdw", ".spw", ".m3d", ".a3d", ".frw")  # and KOMPAS files of the design archive
 
 
 def citation_label(r) -> str:

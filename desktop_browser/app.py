@@ -660,6 +660,7 @@ class ChatWorker(QThread):
         self.history = history
         self.target = ""
         self.style = ""  # «Мой стиль»: the user's manner of writing for the system prompt
+        self.source = None  # «/архив»: the design archive instead of the project index (rag/archive.py)
         self._stop = False
 
     def stop(self) -> None:
@@ -670,6 +671,8 @@ class ChatWorker(QThread):
         for attempt in (1, 2):
             try:
                 extra = {"style": self.style} if self.style else {}
+                if self.source is not None:
+                    extra["source"] = self.source
                 result, stream = self.assistant.ask_stream(query=query, history=self.history, **extra)
             except Exception as exc:
                 self.failed.emit(f"Ошибка генерации: {exc}")
@@ -724,6 +727,17 @@ def cad_command(text: str) -> str | None:
 
 
 ACAD_PREFIXES = ("/автокад", "/autocad")
+ARCHIVE_PREFIXES = ("/архив", "/archive")
+
+
+def archive_command(text: str) -> str | None:
+    """The question of an "/архив …" chat message ("" — open the archive window); None for other messages."""
+    lowered = text.lower()
+    for prefix in ARCHIVE_PREFIXES:
+        rest = lowered[len(prefix):]
+        if lowered.startswith(prefix) and (not rest or rest[0].isspace()):
+            return text[len(prefix):].strip()
+    return None
 
 
 def acad_command(text: str) -> str | None:
@@ -2168,6 +2182,10 @@ class FluxionWindow(QMainWindow):
         act_style.setToolTip("Служебки, пояснительные записки и письма заказчикам вашим стилем (Pro)")
         act_style.triggered.connect(self._open_writing_style)
         m_tools.addAction(act_style)
+        act_archive = QAction("Архив КД (Pro)…", self)
+        act_archive.setToolTip("Поиск по архиву КД: КОМПАС-3D, PDF, документы. Вопросы в чате: /архив …")
+        act_archive.triggered.connect(self._open_archive)
+        m_tools.addAction(act_archive)
         act_notes = QAction("Памятка…", self)
         act_notes.setToolTip("Короткие инструкции по возможностям Fluxion")
         act_notes.triggered.connect(self._open_notes)
@@ -4635,7 +4653,17 @@ class FluxionWindow(QMainWindow):
         text = self.prompt.text().strip()
         if not text or self.generating or self.agent_running:
             return
-        drawing = acad_command(text)
+        source = None
+        question = archive_command(text)
+        if question is not None:
+            if not question:
+                self.prompt.clear()
+                self._open_archive()
+                return
+            source = self._archive_source()
+            if source is None:
+                return
+        drawing = acad_command(text) if source is None else None
         if drawing is not None:
             self.prompt.clear()
             if drawing:
@@ -4651,12 +4679,13 @@ class FluxionWindow(QMainWindow):
             self.prompt.clear()
             self._send_cad_message(description, shown=text)
             return
-        if self._cad_conversation is not None:
+        if self._cad_conversation is not None and source is None:
             # the answer to Fluxion's question about the part
             self.prompt.clear()
             self._send_cad_message(text, shown=text, answer=True)
             return
-        wants_agent = agent_once or self.chat_agent_files.isChecked() or self.chat_plan.isChecked()
+        wants_agent = source is None and (agent_once or self.chat_agent_files.isChecked()
+                                          or self.chat_plan.isChecked())
         if (self.agent_factory if wants_agent else self.assistant) is None:
             self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
             return
@@ -4674,9 +4703,10 @@ class FluxionWindow(QMainWindow):
         self._start_thinking()
 
         self._set_generating(True)
-        self.worker = ChatWorker(self.assistant, text, history, self)
+        self.worker = ChatWorker(self.assistant, question or text, history, self)
         self.worker.target = resolve_target(getattr(self.settings, "language", "auto"), text)
         self.worker.style = self._writing_style_block(text)
+        self.worker.source = source
         self.worker.token.connect(self._on_token)
         self.worker.meta.connect(self._on_meta)
         self.worker.failed.connect(self._on_failed)
@@ -4836,6 +4866,36 @@ class FluxionWindow(QMainWindow):
         from cad.acad_check import PRO_FEATURE
 
         return self._pro_feature(PRO_FEATURE, "Нормоконтроль AutoCAD", "«Нормоконтроль чертежа AutoCAD» — функция Pro: штамп, масштабы, шрифты, слои и размеры чертежа DWG/DXF по ЕСКД и СПДС, замечания в Excel.")
+
+    def _archive_pro(self) -> bool:
+        from rag.archive import PRO_FEATURE
+
+        return self._pro_feature(PRO_FEATURE, "Архив КД",
+                                 "«Архив КД» — функция Pro: поиск по архиву КД — чертежам, спецификациям и "
+                                 "моделям КОМПАС-3D, PDF и документам — с ответом и ссылками на файлы.")
+
+    def _open_archive(self) -> None:
+        """Menu Инструменты → Архив КД: the archive folders and the update of its index."""
+        if not self._archive_pro():
+            return
+        from .archive_dialog import ArchiveDialog
+
+        ArchiveDialog(self._style_dir(), self).exec()
+
+    def _archive_source(self):
+        """The archive index for an «/архив» question, or None (no Pro, nothing indexed yet)."""
+        if not self._archive_pro():
+            return None
+        from rag.archive import ArchiveIndex
+
+        index = ArchiveIndex(self._style_dir())
+        if not index.file_count:
+            index.close()
+            self.prompt.clear()
+            self._append_message("assistant", "Архив КД ещё не проиндексирован: Инструменты → «Архив КД (Pro)…», "
+                                              "добавьте папки архива и нажмите «Обновить индекс».")
+            return None
+        return index
 
     def _open_assembly_report(self) -> None:
         """Menu Инструменты → Ведомость и металлоёмкость сборки: pick an .a3d, report in Excel."""

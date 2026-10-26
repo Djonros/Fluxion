@@ -83,9 +83,17 @@ class Assistant:
         gen: GenerationSettings | None = None,
         force_strategy: Strategy | None = None,
         style: str = "",
+        source=None,
     ) -> tuple[AskResult, Iterator[str]]:
         """Like ask() but also returns AskResult metadata before streaming.
-        *style*: the user's manner of writing («Мой стиль»), added to the system prompt."""
+        *style*: the user's manner of writing («Мой стиль»), added to the system prompt.
+        *source*: where to look instead of the project index — anything with
+        ``search(query, top_k)``, e.g. the design archive (rag/archive.py); no web then."""
+        if source is not None:
+            result = AskResult(strategy=Strategy.RAG, signals=self.router.classify(query))
+            self._do_rag(query, result, source)
+            result.messages = self._build_messages(query, result, history, style)
+            return result, self.backend.stream(result.messages, gen=gen)
         result = self._prepare(query, force_strategy)
         result.messages = self._build_messages(query, result, history, style)
         return result, self.backend.stream(result.messages, gen=gen)
@@ -127,9 +135,9 @@ class Assistant:
 
         return result
 
-    def _do_rag(self, query: str, result: AskResult) -> None:
+    def _do_rag(self, query: str, result: AskResult, source=None) -> None:
         try:
-            results = self.rag_service.search(query, top_k=5)
+            results = (source or self.rag_service).search(query, top_k=5)
         except Exception:
             logger.warning("RAG retrieval failed", exc_info=True)
             results = []
