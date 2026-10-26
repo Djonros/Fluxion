@@ -106,6 +106,9 @@ class WritingStyleDialog(QDialog):
         box.addWidget(self.profile, 1)
 
         bottom = QHBoxLayout()
+        from .manual import help_button
+
+        bottom.addWidget(help_button(self, "moy-stil"))
         bottom.addStretch(1)
         close = QPushButton("Закрыть")
         close.clicked.connect(self.reject)

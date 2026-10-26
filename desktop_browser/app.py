@@ -934,6 +934,9 @@ class ReportWarningsDialog(QDialog):
         self.table.cellDoubleClicked.connect(self.open_model)
         box.addWidget(self.table, 1)
         buttons = QHBoxLayout()
+        from .manual import help_button
+
+        buttons.addWidget(help_button(self, "otchet-po-sborke"))
         self.counter = QLabel()
         buttons.addWidget(self.counter, 1)
         from cad.fix import material_fixes, section_fixes
@@ -1078,6 +1081,9 @@ class MaterialFixDialog(QDialog):
         row.addWidget(choose)
         box.addLayout(row)
         buttons = QHBoxLayout()
+        from .manual import help_button
+
+        buttons.addWidget(help_button(self, "ispravit-v-modeli"))
         buttons.addStretch(1)
         cancel = QPushButton("Отмена")
         cancel.clicked.connect(self.reject)
@@ -1158,6 +1164,9 @@ class MaterialsDialog(QDialog):
         self.list = QListWidget()
         layout.addWidget(self.list, 1)
         buttons = QHBoxLayout()
+        from .manual import help_button
+
+        buttons.addWidget(help_button(self, "katalog-materialov"))
         for title, slot in (("Открыть файл каталога", self._open_file),
                             ("Импорт из Excel/CSV…", self._import),
                             ("Обновить", self.refresh)):
@@ -2186,13 +2195,14 @@ class FluxionWindow(QMainWindow):
         act_archive.setToolTip("Поиск по архиву КД: КОМПАС-3D, PDF, документы. Вопросы в чате: /архив …")
         act_archive.triggered.connect(self._open_archive)
         m_tools.addAction(act_archive)
-        act_notes = QAction("Памятка…", self)
-        act_notes.setToolTip("Короткие инструкции по возможностям Fluxion")
-        act_notes.triggered.connect(self._open_notes)
-        m_tools.addAction(act_notes)
 
         # Помощь
         m_help = bar.addMenu("&Помощь")
+        act_manual = QAction("Инструкция по инструментам…", self)
+        act_manual.setShortcut("F1")
+        act_manual.setToolTip("Как пользоваться каждым инструментом Fluxion: пошагово, с примерами")
+        act_manual.triggered.connect(lambda: self.open_manual())
+        m_help.addAction(act_manual)
         act_update = QAction("Проверить обновления…", self)
         act_update.triggered.connect(self._check_updates)
         m_help.addAction(act_update)
@@ -5053,11 +5063,28 @@ class FluxionWindow(QMainWindow):
             return ""
         return writing_style.prompt_block(writing_style.load(self._style_dir()), query)
 
-    def _open_notes(self) -> None:
-        """Menu Инструменты → Памятка: the topics of desktop_browser/notes."""
-        from .notes import NotesDialog
+    def manual_tools(self) -> dict:
+        """The tools «Открыть инструмент» of the manual opens, by the names its pages use."""
+        return {
+            "models": lambda: self.pages.setCurrentIndex(PAGE_MODELS),
+            "license": self._open_license_dialog,
+            "project": lambda: self.pages.setCurrentIndex(PAGE_PROJECT),
+            "training": lambda: self.pages.setCurrentIndex(PAGE_TRAINING),
+            "dataset": self._make_dataset_from_docs,
+            "writing_style": self._open_writing_style,
+            "cad": self._open_cad_dialog,
+            "materials": self._open_materials_dialog,
+            "assembly_report": self._open_assembly_report,
+            "laser": self._open_laser_package,
+            "acad": self._open_acad_check,
+            "archive": self._open_archive,
+        }
 
-        NotesDialog(self).exec()
+    def open_manual(self, page: str = "") -> None:
+        """Menu Помощь → Инструкция по инструментам (F1): desktop_browser/manual."""
+        from .manual import open_manual
+
+        open_manual(self, page, self.manual_tools())
 
     def _open_acad_check(self) -> None:
         """Menu Инструменты → Нормоконтроль чертежа AutoCAD: pick a DWG/DXF, remarks, report in Excel."""

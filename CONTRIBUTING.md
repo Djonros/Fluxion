@@ -73,6 +73,30 @@ config/         YAML configuration
 tests/          Pytest suite; on Windows run it by groups with fluxion-test.bat
 ```
 
+## The in-app manual
+
+«Инструкция по инструментам» (Помощь → Инструкция, F1) is built from the Markdown
+files of `desktop_browser/manual/`, one page per tool; the file name prefix sets
+the order (`220-otchet-po-sborke.md`). A page is:
+
+```markdown
+# Ведомость и металлоёмкость сборки
+<!-- раздел: КОМПАС-3D | инструмент: assembly_report | pro -->
+
+## Для чего
+## Как запустить
+## Пошагово
+## Что получится
+## Если не получается
+```
+
+`раздел` is the group in the contents; `инструмент` is a key of
+`FluxionWindow.manual_tools()` that «Открыть инструмент» opens (`-` for none);
+`pro` marks a Fluxion Pro feature. A tool window links to its page with
+`desktop_browser.manual.help_button(self, "otchet-po-sborke")` — the key is the
+file name without the number. Check menu, button and folder names against the
+code before writing them in a page.
+
 ## Reporting Issues
 
 - **Questions & ideas** — start a thread in [GitHub Discussions](https://github.com/djonros/fluxion/discussions) (Q&A + feature requests).

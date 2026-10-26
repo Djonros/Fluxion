@@ -98,6 +98,9 @@ class AcadWarningsDialog(QDialog):
         self.table.cellDoubleClicked.connect(self.open_drawing)
         box.addWidget(self.table, 1)
         buttons = QHBoxLayout()
+        from .manual import help_button
+
+        buttons.addWidget(help_button(self, "normokontrol-autocad"))
         self.counter = QLabel()
         buttons.addWidget(self.counter, 1)
         cancel = QPushButton("Отмена — исправлю чертёж")

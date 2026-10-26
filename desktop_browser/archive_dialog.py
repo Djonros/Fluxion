@@ -105,6 +105,9 @@ class ArchiveDialog(QDialog):
         self.bar.setVisible(False)
         box.addWidget(self.bar)
         bottom = QHBoxLayout()
+        from .manual import help_button
+
+        bottom.addWidget(help_button(self, "arhiv-kd"))
         bottom.addStretch(1)
         self.stop_button = QPushButton("Стоп")
         self.stop_button.setEnabled(False)

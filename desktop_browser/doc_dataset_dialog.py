@@ -154,6 +154,9 @@ class DocDatasetDialog(QDialog):
         box.addWidget(self.table, 1)
 
         bottom = QHBoxLayout()
+        from .manual import help_button
+
+        bottom.addWidget(help_button(self, "dataset-iz-dokumentov"))
         self.counter = QLabel()
         bottom.addWidget(self.counter, 1)
         close = QPushButton("Закрыть")
