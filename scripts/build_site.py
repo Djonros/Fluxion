@@ -243,8 +243,6 @@ def build(out: Path) -> Path:
         "RELEASES_URL": html.escape(releases, quote=True),
         "LATEST_URL": html.escape(f"{releases}/latest", quote=True),
         "REPO_URL": html.escape(f"https://github.com/{repo}", quote=True),
-        "FULL_URL": html.escape(config.get("full_download_url", ""), quote=True),
-        "FULL_SIZE": html.escape(config.get("full_size_text", ""), quote=True),
         "DOCS_URL": html.escape(config.get("docs_url", "docs/"), quote=True),
         "APP_VERSION": html.escape(app_version()),
         "MODEL_ROWS": model_rows(catalog),

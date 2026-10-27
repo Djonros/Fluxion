@@ -152,7 +152,6 @@
  "Найди возможную ошибку": "Busca un posible error",
  "Предложи рефакторинг": "Propón una refactorización",
  "Напишите сообщение...": "Escriba un mensaje...",
- "Enter — отправить; Ctrl+Enter — разово выполнить агентом": "Enter — enviar; Ctrl+Enter — ejecutar una vez con el agente",
  "Голосовой ввод (Ctrl+Пробел): говорите, пауза или повторное нажатие — стоп": "Entrada de voz (Ctrl+Espacio): hable; una pausa o volver a pulsar detiene",
  "Голосом без рук (Ctrl+Shift+Пробел): Fluxion слушает, отправляет, читает ответ вслух и снова слушает. «Стоп» голосом или эта кнопка — выключить": "Voz manos libres (Ctrl+Mayús+Espacio): Fluxion escucha, envía, lee la respuesta en voz alta y vuelve a escuchar. Diga «stop» o pulse este botón para desactivarla",
  "Стоп": "Detener",
@@ -440,7 +439,6 @@
  "(остановлено пользователем)": "(detenido por el usuario)",
  "RAG: {value} источн.": "RAG: {value} fuentes",
  "web: {value} источн.": "web: {value} fuentes",
- "Lite-режим: страница в краткой выжимке. Полная — в Full-сборке.": "Modo Lite: la página en un breve resumen. La completa, en la versión Full.",
  "Обновления": "Actualizaciones",
  "Не удалось проверить обновления: нет соединения с GitHub.": "No se pudo buscar actualizaciones: no hay conexión con GitHub.",
  "У вас последняя версия — {current_version}.": "Tiene la última versión — {current_version}.",
@@ -765,5 +763,12 @@
  "Контрольная сумма установщика не совпала — файл повреждён или подменён. Обновление отменено.": "La suma de comprobación del instalador no coincide: el archivo está dañado o ha sido sustituido. Actualización cancelada.",
  "В выпуске нет контрольной суммы установщика — обновление отменено. Скачайте новую версию с сайта.": "La versión no incluye la suma de comprobación del instalador: actualización cancelada. Descargue la nueva versión del sitio web.",
  "Не удалось загрузить обновление: {error}": "No se pudo descargar la actualización: {error}",
- "Не удалось запустить установщик: {error}": "No se pudo iniciar el instalador: {error}"
+ "Не удалось запустить установщик: {error}": "No se pudo iniciar el instalador: {error}",
+ "Enter — отправить; Shift+Enter — новая строка; Ctrl+Enter — разово выполнить агентом": "Enter — enviar; Shift+Enter — nueva línea; Ctrl+Enter — ejecutar una vez con el agente",
+ "Веб-поиск: страницы показаны краткой выжимкой из результатов поиска.": "Búsqueda web: las páginas se muestran como extractos breves de los resultados de búsqueda.",
+ "Забыть проект": "Olvidar el proyecto",
+ "Новый чат без проекта: модель не ищет ответы в файлах проекта": "Un chat nuevo sin el proyecto: el modelo no busca respuestas en los archivos del proyecto",
+ "Проект забыт — агенту не в чем работать. Выберите папку проекта: меню «Проект» → «Выбрать папку…».": "El proyecto está olvidado: el agente no tiene dónde trabajar. Elija la carpeta del proyecto: menú «Proyecto» → «Elegir carpeta…».",
+ "Проект забыт. Новый чат: ответы — без файлов проекта и прошлых сообщений. Индекс на диске сохранён — чтобы вернуть проект, выберите папку: меню «Проект» → «Выбрать папку…».": "Proyecto olvidado. Chat nuevo: respuestas sin los archivos del proyecto ni los mensajes anteriores. El índice en el disco se conserva: para recuperar el proyecto, elija la carpeta: menú «Proyecto» → «Elegir carpeta…».",
+ "Проект забыт": "Proyecto olvidado"
 }

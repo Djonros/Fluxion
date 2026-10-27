@@ -56,6 +56,8 @@ class Assistant:
         )
         self.router = Router()
         self.history: list[dict[str, str]] = []
+        # False after «Забыть проект»: answers do not look into the project index
+        self.use_project = True
         self._last_rag_results: list = []
         self._last_web_contexts: list = []
 
@@ -116,7 +118,7 @@ class Assistant:
         strategy = result.strategy
 
         # ── RAG ──
-        if strategy in (Strategy.RAG, Strategy.RAG_THEN_WEB) and self.rag_service:
+        if strategy in (Strategy.RAG, Strategy.RAG_THEN_WEB) and self.rag_service and self.use_project:
             self._do_rag(query, result)
 
         # ── WEB (always, or fallback from weak RAG) ──

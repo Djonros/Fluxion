@@ -152,7 +152,6 @@
  "Найди возможную ошибку": "Find a possible bug",
  "Предложи рефакторинг": "Suggest a refactoring",
  "Напишите сообщение...": "Write a message...",
- "Enter — отправить; Ctrl+Enter — разово выполнить агентом": "Enter — send; Ctrl+Enter — run once with the agent",
  "Голосовой ввод (Ctrl+Пробел): говорите, пауза или повторное нажатие — стоп": "Voice input (Ctrl+Space): speak; a pause or another press stops",
  "Голосом без рук (Ctrl+Shift+Пробел): Fluxion слушает, отправляет, читает ответ вслух и снова слушает. «Стоп» голосом или эта кнопка — выключить": "Hands-free voice (Ctrl+Shift+Space): Fluxion listens, sends, reads the answer aloud and listens again. Say «stop» or press this button to turn it off",
  "Стоп": "Stop",
@@ -440,7 +439,6 @@
  "(остановлено пользователем)": "(stopped by the user)",
  "RAG: {value} источн.": "RAG: {value} sources",
  "web: {value} источн.": "web: {value} sources",
- "Lite-режим: страница в краткой выжимке. Полная — в Full-сборке.": "Lite mode: the page as a short summary. The full page is in the Full build.",
  "Обновления": "Updates",
  "Не удалось проверить обновления: нет соединения с GitHub.": "Could not check for updates: no connection to GitHub.",
  "У вас последняя версия — {current_version}.": "You have the latest version — {current_version}.",
@@ -765,5 +763,12 @@
  "Контрольная сумма установщика не совпала — файл повреждён или подменён. Обновление отменено.": "The installer checksum does not match: the file is damaged or has been replaced. The update is cancelled.",
  "В выпуске нет контрольной суммы установщика — обновление отменено. Скачайте новую версию с сайта.": "The release has no installer checksum, so the update is cancelled. Download the new version from the website.",
  "Не удалось загрузить обновление: {error}": "Could not download the update: {error}",
- "Не удалось запустить установщик: {error}": "Could not start the installer: {error}"
+ "Не удалось запустить установщик: {error}": "Could not start the installer: {error}",
+ "Enter — отправить; Shift+Enter — новая строка; Ctrl+Enter — разово выполнить агентом": "Enter — send; Shift+Enter — new line; Ctrl+Enter — run once with the agent",
+ "Веб-поиск: страницы показаны краткой выжимкой из результатов поиска.": "Web search: pages are shown as short extracts from the search results.",
+ "Забыть проект": "Forget project",
+ "Новый чат без проекта: модель не ищет ответы в файлах проекта": "A new chat without the project: the model does not look for answers in the project files",
+ "Проект забыт — агенту не в чем работать. Выберите папку проекта: меню «Проект» → «Выбрать папку…».": "The project is forgotten — the agent has nowhere to work. Choose the project folder: menu «Project» → «Choose folder…».",
+ "Проект забыт. Новый чат: ответы — без файлов проекта и прошлых сообщений. Индекс на диске сохранён — чтобы вернуть проект, выберите папку: меню «Проект» → «Выбрать папку…».": "Project forgotten. New chat: answers without the project files and past messages. The index on disk is kept — to bring the project back, choose the folder: menu «Project» → «Choose folder…».",
+ "Проект забыт": "Project forgotten"
 }

@@ -393,8 +393,7 @@ def install_training_environment(
         wheels = Path(offline_wheels)
         if not wheels.is_dir():
             raise TrainingError(
-                f"Офлайн-пак не найден: {wheels}. Переустановите Full-версию "
-                "или повторите установку с подключением к интернету."
+                f"Офлайн-пак не найден: {wheels}. Повторите установку с подключением к интернету."
             )
         offline_args = ["--no-index", "--find-links", str(wheels)]
         log(f"Офлайн-установка ML-стека из пака: {wheels}")

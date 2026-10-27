@@ -11,9 +11,8 @@
 
 | Файл | Что это |
 |------|---------|
-| **FluxionSetup-<версия>.exe** | Установщик Lite — рекомендуется. Рядом лежит `FluxionSetup-<версия>.exe.sha256` с контрольной суммой |
+| **FluxionSetup-<версия>.exe** | Установщик программы — рекомендуется. Рядом лежит `FluxionSetup-<версия>.exe.sha256` с контрольной суммой |
 | **FluxionBrowser-Lite-win64-<дата>.7z** | Та же программа без установки (портативная версия). Распакуйте и запустите `FluxionBrowserLite.exe` |
-| **FluxionBrowser-Full-win64-<дата>.7z** | Lite + офлайн-пакет обучения (`training_pack\wheels`: PyTorch с CUDA, unsloth). Окружение обучения ставится кнопкой на странице «Обучение» **без интернета** — нужен только Python 3.12 |
 
 Если Windows покажет предупреждение SmartScreen: «Подробнее» → «Выполнить в
 любом случае».
@@ -88,7 +87,7 @@ FluxionSetup-<версия>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 | `fluxion-vscode.bat` | Установка расширения VS Code |
 | `fluxion-test.bat` | Тесты по группам и проверка агента на вашей модели |
 | `fluxion-update.bat` | Для разработчика: обновление исходников из архива с резервной копией, откатом и пересборкой exe. Архив с той же или более старой версией отклоняется (`--force` — принять). Готовую программу обновляет `FluxionSetup.exe` |
-| `fluxion-build.bat` | Пересборка exe из текущего кода, без обновления (`--lite`, `--full`); если установлен Inno Setup (`winget install JRSoftware.InnoSetup --scope user`) — и установщик `dist\artifacts\FluxionSetup-<версия>.exe` с `.sha256` |
+| `fluxion-build.bat` | Пересборка exe из текущего кода, без обновления (`--lite`); если установлен Inno Setup (`winget install JRSoftware.InnoSetup --scope user`) — и установщик `dist\artifacts\FluxionSetup-<версия>.exe` с `.sha256` |
 | `fluxion-release.bat` | Выпуск новой версии на GitHub: тесты, коммит, тег, релиз со сборками (для владельца) |
 | `issue-key.bat` | Выпуск лицензионных ключей (для владельца) |
 

@@ -78,8 +78,7 @@
     const assets = Array.isArray(release.assets) ? release.assets : [];
     const version = String(release.tag_name || "").replace(/^v/i, "");
     const setup = newest(assets, "Setup");
-    const lite = newest(assets, "Lite");
-    const full = newest(assets, "Full");
+    const lite = newest(assets, "Lite");   // the portable .7z of the program
 
     if (lite) setBuild("Lite", lite.browser_download_url, size(lite.size));
     // the installer is the main download; a release without it falls back to the .7z
@@ -94,18 +93,6 @@
       }
     }
 
-    if (full) {
-      setBuild("Full", full.browser_download_url, size(full.size));
-    } else if (body.dataset.fullUrl) {
-      setBuild("Full", body.dataset.fullUrl, body.dataset.fullSize || "");
-    } else {
-      // Full is larger than GitHub's 2 GB limit and may be hosted elsewhere.
-      const button = document.querySelector('[data-asset="Full"]');
-      if (button) {
-        button.textContent = "Страница выпуска";
-        button.href = release.html_url || body.dataset.releases;
-      }
-    }
   };
 
   fetch(`https://api.github.com/repos/${repo}/releases/latest`, {

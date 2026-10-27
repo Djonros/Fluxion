@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;700&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body data-repo="{{REPO}}" data-full-url="{{FULL_URL}}" data-full-size="{{FULL_SIZE}}" data-releases="{{RELEASES_URL}}">
+<body data-repo="{{REPO}}" data-releases="{{RELEASES_URL}}">
   <a class="skip" href="#download">К загрузке</a>
 
   <header class="top">
@@ -87,28 +87,18 @@
 
     <section id="download" aria-labelledby="download-title">
       <h2 id="download-title">Скачать</h2>
-      <p class="section-lead">Две сборки. Если не собираетесь дообучать модель, берите Lite.</p>
+      <p class="section-lead">Одна программа со всеми инструментами. Pro включается ключом в ней же — ничего переустанавливать не нужно.</p>
 
       <div class="builds">
-        <div class="build" id="build-lite">
+        <div class="build" id="build-app">
           <div class="build-text">
-            <h3>Fluxion Lite</h3>
-            <p>Программа целиком: чат, агент, ответы по документам, веб-поиск, КОМПАС-3D и AutoCAD, загрузка моделей.</p>
+            <h3>Fluxion для Windows</h3>
+            <p>Программа целиком: чат, агент, ответы по документам, веб-поиск, КОМПАС-3D и AutoCAD, инженерный калькулятор, архив КД, загрузка моделей и дообучение (окружение для обучения программа скачает сама).</p>
             <p class="build-alt">Без установки: <a data-asset="Lite" href="{{LATEST_URL}}">портативная версия .7z</a> <span class="size" data-size-for="Lite"></span></p>
           </div>
           <div class="build-action">
             <span class="size" data-size-for="Setup"></span>
             <a class="button primary" data-asset="Setup" href="{{LATEST_URL}}">Скачать FluxionSetup.exe</a>
-          </div>
-        </div>
-        <div class="build" id="build-full">
-          <div class="build-text">
-            <h3>Fluxion Full</h3>
-            <p>Lite и офлайн-пакет для дообучения: окружение QLoRA ставится без интернета.</p>
-          </div>
-          <div class="build-action">
-            <span class="size" data-size-for="Full">{{FULL_SIZE}}</span>
-            <a class="button" data-asset="Full" href="{{LATEST_URL}}">Скачать Full</a>
           </div>
         </div>
       </div>

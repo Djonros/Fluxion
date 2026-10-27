@@ -151,3 +151,12 @@ def test_license_dialog_points_to_the_price_section():
     site_url = json.loads((ROOT / "website" / "site.json").read_text(encoding="utf-8"))["site_url"]
     assert url == site_url + "#pro"
 
+
+
+def test_one_program_to_download(site):
+    """One program: the installer and its portable .7z — no «Lite» or «Full» builds on the page."""
+    page = (site / "index.html").read_text(encoding="utf-8")
+    script = (site / "site.js").read_text(encoding="utf-8")
+    assert "Fluxion Lite" not in page and "Fluxion Full" not in page and 'data-asset="Full"' not in page
+    assert "Full" not in script and "data-full" not in page
+    assert 'data-asset="Setup"' in page

@@ -1883,7 +1883,10 @@ class FluxionWindow(QMainWindow):
         self._stop_requested = False
         self._web_opened_for_current = False
         web_cfg = getattr(settings, "web", None) if settings is not None else None
-        self._search_base = str(getattr(web_cfg, "searxng_url", "") or "")
+        # the address bar searches through SearXNG only when extended search is on:
+        # by default nothing is asked of localhost:8080 (DuckDuckGo instead)
+        self._searxng_url = str(getattr(web_cfg, "searxng_url", "") or "")
+        self._search_base = self._searxng_url if self._searxng_on() else ""
         saved_model = str(self.qsettings.value("model", "") or "")
         if (
             saved_model
@@ -2032,6 +2035,36 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
         self._refresh_chat_selector()
 
+    def _project_forgotten(self) -> bool:
+        return str(self.qsettings.value("project_forgotten", False)).lower() in ("1", "true")
+
+    def _set_project_forgotten(self, forgotten: bool) -> None:
+        self.qsettings.setValue("project_forgotten", bool(forgotten))
+        if self.assistant is not None:
+            self.assistant.use_project = not forgotten
+        self._refresh_index_chip()
+
+    def forget_project(self) -> None:
+        """Chat menu and «Проект» → «Забыть проект»: a new chat that refers to nothing.
+
+        The conversation starts over, the project folder is unselected and its
+        index is not searched for answers, «Мой стиль» is off.  Nothing is deleted
+        on disk: picking the folder again (or indexing) brings the project back."""
+        if self.generating or self.agent_running:
+            return
+        self.new_chat()
+        self.qsettings.setValue("project_path", "")
+        if hasattr(self, "project_path"):
+            self.project_path.setText("")
+        if hasattr(self, "chat_style") and self.chat_style.isChecked():
+            self.chat_style.setChecked(False)
+        self._set_project_forgotten(True)
+        self._refresh_git_button()
+        self._append_message("assistant", tr(
+            "Проект забыт. Новый чат: ответы — без файлов проекта и прошлых сообщений. Индекс на диске "
+            "сохранён — чтобы вернуть проект, выберите папку: меню «Проект» → «Выбрать папку…»."))
+        self.statusBar().showMessage(tr("Проект забыт"), 5000)
+
     def export_chat_md(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
@@ -2054,6 +2087,9 @@ class FluxionWindow(QMainWindow):
             return
         if self.rag_service is None:
             self.index_chip.setText("index: n/a")
+            self.index_chip.setProperty("state", "todo")
+        elif self._project_forgotten():
+            self.index_chip.setText("index: off")
             self.index_chip.setProperty("state", "todo")
         else:
             try:
@@ -2254,6 +2290,10 @@ class FluxionWindow(QMainWindow):
         act_index = QAction(tr("Проиндексировать"), self)
         act_index.triggered.connect(self._start_indexing)
         m_proj.addAction(act_index)
+        m_proj.addSeparator()
+        act_forget = QAction(tr("Забыть проект"), self)
+        act_forget.triggered.connect(self.forget_project)
+        m_proj.addAction(act_forget)
 
         # Модели: the catalog, the cloud model and training open from here
         m_models = bar.addMenu(tr("&Модели"))
@@ -2373,6 +2413,10 @@ class FluxionWindow(QMainWindow):
         provider = getattr(self.web_search, "provider", None)
         if hasattr(provider, "set_enabled"):
             provider.set_enabled(enabled)
+        self._search_base = getattr(self, "_searxng_url", "") if enabled else ""
+        panel = getattr(self, "web_panel", None)
+        if hasattr(panel, "set_search_base"):
+            panel.set_search_base(self._search_base)
 
     def _toggle_searxng(self, enabled: bool) -> None:
         """Menu Правка: switch SearXNG (Docker) on or off, remembered."""
@@ -2474,6 +2518,10 @@ class FluxionWindow(QMainWindow):
         act_new.triggered.connect(self.new_chat)
         act_export = kebab_menu.addAction(tr("Экспорт чата в .md…"))
         act_export.triggered.connect(self.export_chat_md)
+        kebab_menu.addSeparator()
+        act_forget = kebab_menu.addAction(tr("Забыть проект"))
+        act_forget.setToolTip(tr("Новый чат без проекта: модель не ищет ответы в файлах проекта"))
+        act_forget.triggered.connect(self.forget_project)
         self.chat_kebab.setMenu(kebab_menu)
         header.addWidget(self.chat_kebab)
         layout.addLayout(header)
@@ -2508,10 +2556,15 @@ class FluxionWindow(QMainWindow):
         composer_layout = QHBoxLayout(composer)
         composer_layout.setContentsMargins(12, 10, 10, 10)
         composer_layout.setSpacing(10)
-        self.prompt = QLineEdit()
+        from .chat_input import ChatInput
+
+        self.prompt = ChatInput()
         self.prompt.setPlaceholderText(tr("Напишите сообщение..."))
-        self.prompt.setToolTip(tr("Enter — отправить; Ctrl+Enter — разово выполнить агентом"))
+        self.prompt.setToolTip(
+            tr("Enter — отправить; Shift+Enter — новая строка; Ctrl+Enter — разово выполнить агентом")
+        )
         self.prompt.returnPressed.connect(self.send_message)
+        self.prompt.agentRequested.connect(self.send_agent_once)
         for keys in ("Ctrl+Return", "Ctrl+Enter"):
             shortcut = QShortcut(QKeySequence(keys), self.prompt)
             shortcut.setContext(Qt.WidgetShortcut)
@@ -2919,6 +2972,7 @@ class FluxionWindow(QMainWindow):
         if folder:
             self.project_path.setText(folder)
             self.qsettings.setValue("project_path", folder)
+            self._set_project_forgotten(False)
             self._refresh_git_button()
 
     def _start_indexing(self) -> None:
@@ -2954,6 +3008,7 @@ class FluxionWindow(QMainWindow):
 
     def _on_index_done(self, count: int) -> None:
         self._set_indexing_done()
+        self._set_project_forgotten(False)
         self.index_status.setText(self._chunks_label())
         self.project_view.append(tr("<p><b>Готово:</b> проиндексировано {count} чанков. Чат теперь будет сам искать ответы в коде и документах папки.</p>", count=count))
         self._refresh_index_chip()
@@ -4857,6 +4912,8 @@ class FluxionWindow(QMainWindow):
         self._start_thinking()
 
         self._set_generating(True)
+        if self.assistant is not None:
+            self.assistant.use_project = not self._project_forgotten()
         self.worker = ChatWorker(self.assistant, question or text, history, self)
         self.worker.target = resolve_target(getattr(self.settings, "language", "auto"), text)
         self.worker.style = self._writing_style_block(text)
@@ -5331,7 +5388,9 @@ class FluxionWindow(QMainWindow):
         if description is None:
             description = text
         if not description:
-            description, ok = QInputDialog.getMultiLineText(
+            from .text_dialog import ask_text
+
+            description, ok = ask_text(
                 self,
                 tr("Деталь в КОМПАС-3D"),
                 tr("Опишите деталь, размеры в мм и материал — модель выберет шаблон "
@@ -5794,6 +5853,11 @@ class FluxionWindow(QMainWindow):
         visible = shown if shown is not None else task
         self._last_query = visible
         self._web_opened_for_current = False
+        if self._project_forgotten():
+            self._append_message("user", visible)
+            self._append_message("assistant", tr("Проект забыт — агенту не в чем работать. Выберите папку проекта: "
+                                                 "меню «Проект» → «Выбрать папку…»."))
+            return
         self._append_message("user", visible)
         self.history.append({"role": "user", "content": visible})
         self._append_message("assistant", "")
@@ -5948,7 +6012,7 @@ class FluxionWindow(QMainWindow):
     def _maybe_show_fetch_notice(self) -> None:
         if getattr(self.web_search, "brief_mode", False):
             self.banners.show_warning(
-                tr("Lite-режим: страница в краткой выжимке. Полная — в Full-сборке."),
+                tr("Веб-поиск: страницы показаны краткой выжимкой из результатов поиска."),
                 key="fetch_lite",
             )
 
@@ -6270,6 +6334,19 @@ class FluxionWindow(QMainWindow):
         self.setStyleSheet(f"""
             QMainWindow, QWidget#page {{ background: {bg0}; color: {text1}; font-family: {ui_font}; font-size: 14px; }}
 
+            /* Диалоги: окна инструментов наследуют этот стиль, но не фон окна — без этого
+               светлые кнопки тёмной темы терялись на светлом системном фоне */
+            QDialog {{ background: {bg0}; color: {text1}; font-family: {ui_font}; }}
+            QDialog QLabel, QDialog QCheckBox, QDialog QRadioButton, QDialog QGroupBox {{ color: {text1}; }}
+            QDialog QPlainTextEdit, QDialog QListWidget, QDialog QTableWidget, QDialog QTreeWidget {{ background: {bg1}; color: {text1}; border: 1px solid {border}; border-radius: 6px; selection-background-color: {accent}; }}
+            QDialog QScrollArea, QDialog QScrollArea > QWidget > QWidget {{ background: transparent; }}
+            QDialog QTabWidget::pane {{ border: 1px solid {border}; background: {bg0}; }}
+            QDialog QTabBar::tab {{ background: {bg2}; color: {text2}; padding: 6px 14px; border: 1px solid {border}; }}
+            QDialog QTabBar::tab:selected {{ background: {bg0}; color: {text1}; }}
+            QDialog QPushButton {{ background: {bg2}; border: 1px solid {border}; }}
+            QDialog QPushButton:hover {{ border-color: {accent}; }}
+            QDialog QPushButton:disabled {{ color: {text2}; }}
+
             /* Сайдбар */
             QFrame#sidebar {{ background: {bg1}; border-right: 1px solid {border}; }}
             QLabel#brand {{ color: {accent}; font-size: 20px; font-weight: 700; font-family: {mono_font}; }}
@@ -6307,6 +6384,7 @@ class FluxionWindow(QMainWindow):
             QTextBrowser#messages pre {{ background: {bg2}; border-radius: 6px; padding: 10px; font-family: {mono_font}; font-size: 13px; }}
             QFrame#composer {{ background: {bg1}; border: 1px solid {border}; border-radius: 6px; }}
             QFrame#composer QLineEdit {{ background: transparent; border: none; padding: 6px; }}
+            QFrame#composer QPlainTextEdit {{ background: transparent; color: {text1}; border: none; padding: 2px 4px; font-family: {ui_font}; selection-background-color: {accent}; }}
             QToolButton#composerIcon {{ background: transparent; border: none; border-radius: 6px; padding: 5px; }}
             QToolButton#composerIcon:hover {{ background: {bg2}; }}
             QToolButton#composerIcon[recording="true"] {{ background: {bg2}; border: 1px solid {err}; }}

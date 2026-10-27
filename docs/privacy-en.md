@@ -35,7 +35,7 @@ of this is stored in the application folder instead.
 | Web search (built-in, default) | The search query text, to DuckDuckGo; your project code is not sent |
 | Advanced web search (if enabled) | The query, to your own SearXNG instance, which queries search engines |
 | Cloud API backend (optional, Pro) | Prompts go to the cloud provider you configure yourself |
-| Installing the training environment | Package downloads from PyPI / winget (the Full build installs offline) |
+| Installing the training environment | Package downloads from PyPI / winget |
 | Crash report | Nothing: "Send by email" opens a message in your own email program, and you decide whether to send it |
 
 Your conversations leave your computer only if you configure a cloud API

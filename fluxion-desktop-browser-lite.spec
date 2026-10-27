@@ -189,6 +189,8 @@ a = Analysis(
         "calc.report",
         "calc.chat",
         "desktop_browser.calc_dialog",
+        "desktop_browser.chat_input",
+        "desktop_browser.text_dialog",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window
         "dxfka",

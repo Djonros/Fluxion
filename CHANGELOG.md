@@ -5,6 +5,21 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- «Забыть проект» (chat menu ⋮ and the «Проект» menu): a new chat that refers to nothing — the conversation starts over, the project folder is unselected and its index is not searched for answers (`Assistant.use_project`), «Мой стиль» is off; the agent says there is no folder instead of working anywhere. Nothing is deleted: the index stays on disk, and picking the folder again (or indexing) brings the project back. Kept between runs.
+
+### Changed
+- The chat input has several lines (`desktop_browser/chat_input.py`): it grows with the text up to eight lines and then scrolls; Enter sends, Shift+Enter breaks the line, Ctrl+Enter still runs the message through the agent. The one-line field kept a long message out of sight and cut a pasted text at 32 767 characters.
+- «Деталь в КОМПАС» asks for the description in a window that wraps its explanation and fits the screen (`desktop_browser/text_dialog.py`); QInputDialog laid the explanation out on one line, wider and taller than the screen.
+- The dialogs of the tools follow the dark theme: they inherited its light buttons on the light system background.
+- One program on the site, in the README and the docs: the «Lite» and «Full» builds are gone from the download section, the FAQ, the installation and training pages and the user guide; the README describes 0.20–0.21 — the engineering calculator, «Архив КД», «Инструкция», the interface languages and the one-click update.
+- The note about web pages in brief says what it is («краткой выжимкой из результатов поиска») instead of sending to a Full build.
+
+### Fixed
+- The address bar of the built-in browser searched through `http://localhost:8080` (the SearXNG address) even with extended search off, and showed an error page without Docker; now it searches DuckDuckGo unless «Расширенный веб-поиск» is on, and follows the menu at once. The address stays in `config.yaml` (`web.searxng_url`).
+
 ## [0.21.0] — 2026-10-27
 
 ### Added
