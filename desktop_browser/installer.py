@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from core.proc import no_window
+from .i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def winget_install(package_id: str, on_line=None) -> tuple[bool, str]:
     """Silently install *package_id* via winget, streaming output lines."""
     winget = shutil.which("winget")
     if winget is None:
-        return False, "winget не найден в PATH"
+        return False, tr("winget не найден в PATH")
     cmd = [
         winget,
         "install",
@@ -62,7 +63,7 @@ def winget_install(package_id: str, on_line=None) -> tuple[bool, str]:
             **no_window(),
         )
     except OSError as exc:
-        return False, f"не удалось запустить winget: {exc}"
+        return False, tr("не удалось запустить winget: {exc}", exc=exc)
     chunks: list[str] = []
     assert proc.stdout is not None
     for raw in proc.stdout:
@@ -130,7 +131,7 @@ def ensure_docker(wait_secs: float = 120.0, on_status=None) -> bool:
         logger.warning("failed to launch Docker Desktop: %s", exc)
         return False
     if on_status is not None:
-        on_status("Ожидаем запуск движка Docker…")
+        on_status(tr("Ожидаем запуск движка Docker…"))
     deadline = time.monotonic() + wait_secs
     while time.monotonic() < deadline:
         time.sleep(3.0)

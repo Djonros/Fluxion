@@ -7,22 +7,23 @@ from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt, QThread, Signal, Slo
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from licensing import trial_consume, trial_remaining
+from .i18n import tr
 
-KIND_LABELS = {"write": "запись файла", "edit": "правка файла"}
+KIND_LABELS = {"write": tr("запись файла"), "edit": tr("правка файла")}
 
 
 def ask_trial_write(parent: QWidget | None, path: str, kind: str, remaining: int) -> bool:
     """Show the modal question about one trial edit; return True when it is allowed."""
     box = QMessageBox(parent)
-    box.setWindowTitle("Пробная правка (Pro)")
+    box.setWindowTitle(tr("Пробная правка (Pro)"))
     box.setIcon(QMessageBox.Question)
-    box.setText(f"Пробная запись: {path}. Разрешить? Осталось попыток: {remaining}")
+    box.setText(tr("Пробная запись: {path}. Разрешить? Осталось попыток: {remaining}", path=path, remaining=remaining))
     box.setInformativeText(
-        f"Агент просит разрешение: {KIND_LABELS.get(kind, kind)}. "
-        "Без лицензии Pro доступны несколько пробных правок."
+        tr("Агент просит разрешение: {value}. "
+        "Без лицензии Pro доступны несколько пробных правок.", value=KIND_LABELS.get(kind, kind))
     )
-    allow = box.addButton("Разрешить", QMessageBox.AcceptRole)
-    box.addButton("Отменить", QMessageBox.RejectRole)
+    allow = box.addButton(tr("Разрешить"), QMessageBox.AcceptRole)
+    box.addButton(tr("Отменить"), QMessageBox.RejectRole)
     box.exec()
     return box.clickedButton() is allow
 

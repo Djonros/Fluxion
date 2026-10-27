@@ -21,6 +21,10 @@ def _prepare_config() -> None:
 def main() -> int:
     _prepare_config()
 
+    from desktop_browser.i18n import load_saved_language
+
+    load_saved_language()  # before the window module: its texts are read on import
+
     from desktop_browser.app import main as run_app
 
     return run_app()

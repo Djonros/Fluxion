@@ -16,6 +16,7 @@ from pathlib import Path
 import httpx
 
 from core.proc import no_window
+from .i18n import tr
 
 OLLAMA_INSTALL_URL = "https://ollama.com/download"
 DOCKER_INSTALL_URL = "https://www.docker.com/products/docker-desktop/"
@@ -60,13 +61,13 @@ def check_ollama(host: str) -> DependencyStatus:
             return DependencyStatus("ollama", "Ollama", True, host.rstrip("/"))
         detail = f"HTTP {r.status_code}"
     except httpx.RequestError as exc:
-        detail = f"нет соединения ({exc.__class__.__name__})"
+        detail = tr("нет соединения ({name__})", name__=exc.__class__.__name__)
     return DependencyStatus(
         "ollama",
         "Ollama",
         False,
         detail,
-        f"Установите и запустите Ollama ({OLLAMA_INSTALL_URL}), затем нажмите «Перепроверить».",
+        tr("Установите и запустите Ollama ({OLLAMA_INSTALL_URL}), затем нажмите «Перепроверить».", OLLAMA_INSTALL_URL=OLLAMA_INSTALL_URL),
     )
 
 
@@ -79,22 +80,22 @@ def check_model(host: str, model: str) -> DependencyStatus:
     except Exception:
         return DependencyStatus(
             "model",
-            "Модель",
+            tr("Модель"),
             False,
             model,
-            "Ollama недоступна — сначала запустите Ollama.",
+            tr("Ollama недоступна — сначала запустите Ollama."),
         )
     base = model.split(":")[0]
     matches = [m for m in models if m == model or m.split(":")[0] == base]
     if matches:
-        return DependencyStatus("model", "Модель", True, matches[0])
-    others = ", ".join(models[:3]) or "нет скачанных моделей"
+        return DependencyStatus("model", tr("Модель"), True, matches[0])
+    others = ", ".join(models[:3]) or tr("нет скачанных моделей")
     return DependencyStatus(
         "model",
-        "Модель",
+        tr("Модель"),
         False,
-        f"{model} не скачана (доступно: {others})",
-        "Скачайте модель кнопкой ниже или в мастере настройки.",
+        tr("{model} не скачана (доступно: {others})", model=model, others=others),
+        tr("Скачайте модель кнопкой ниже или в мастере настройки."),
         fix="wizard",
     )
 
@@ -114,14 +115,14 @@ def check_llamacpp_engine() -> DependencyStatus:
     try:
         import llama_cpp  # noqa: F401
 
-        return DependencyStatus("llamacpp", "Движок llama.cpp", True, "встроен, готов")
+        return DependencyStatus("llamacpp", tr("Движок llama.cpp"), True, tr("встроен, готов"))
     except Exception:
         return DependencyStatus(
             "llamacpp",
-            "Движок llama.cpp",
+            tr("Движок llama.cpp"),
             False,
-            "пакет llama-cpp-python не установлен",
-            "Установите CPU/GPU-пак: pip install -r requirements-llamacpp.txt",
+            tr("пакет llama-cpp-python не установлен"),
+            tr("Установите CPU/GPU-пак: pip install -r requirements-llamacpp.txt"),
         )
 
 
@@ -135,25 +136,25 @@ def check_gguf_model(settings) -> DependencyStatus:
     path = resolve_gguf_path(settings) if str(getattr(settings, "gguf_path", "") or "").strip() else ""
     if path:
         if Path(path).is_file():
-            return DependencyStatus("model", "Модель", True, Path(path).name)
+            return DependencyStatus("model", tr("Модель"), True, Path(path).name)
         return DependencyStatus(
             "model",
-            "Модель",
+            tr("Модель"),
             False,
-            f"файл не найден: {path}",
-            "Скачайте модель заново на странице «Модели».",
+            tr("файл не найден: {path}", path=path),
+            tr("Скачайте модель заново на странице «Модели»."),
             fix="wizard",
         )
     if mm.is_installed("qwen2.5-coder-7b-q4km"):
         return DependencyStatus(
-            "model", "Модель", True, mm.path_for("qwen2.5-coder-7b-q4km")
+            "model", tr("Модель"), True, mm.path_for("qwen2.5-coder-7b-q4km")
         )
     return DependencyStatus(
         "model",
-        "Модель",
+        tr("Модель"),
         False,
-        "GGUF-модель не скачана",
-        "Скачайте модель кнопкой ниже или на странице «Модели».",
+        tr("GGUF-модель не скачана"),
+        tr("Скачайте модель кнопкой ниже или на странице «Модели»."),
         fix="wizard",
     )
 
@@ -162,21 +163,21 @@ def check_docker() -> DependencyStatus:
     """Docker is an optional enhancement (roadmap D1): only SearXNG needs it."""
     path = shutil.which("docker")
     if path and _docker_daemon_ok(path):
-        return DependencyStatus("docker", "Docker (опционально)", True, "демон отвечает")
+        return DependencyStatus("docker", tr("Docker (опционально)"), True, tr("демон отвечает"))
     if path:
         return DependencyStatus(
             "docker",
-            "Docker (опционально)",
+            tr("Docker (опционально)"),
             True,
-            "демон не запущен",
-            "Нужен только для SearXNG (расширенный поиск). Запустите Docker Desktop при желании.",
+            tr("демон не запущен"),
+            tr("Нужен только для SearXNG (расширенный поиск). Запустите Docker Desktop при желании."),
         )
     return DependencyStatus(
         "docker",
-        "Docker (опционально)",
+        tr("Docker (опционально)"),
         True,
-        "не установлен",
-        f"Необязательно: нужен только для SearXNG. Установить — {DOCKER_INSTALL_URL}.",
+        tr("не установлен"),
+        tr("Необязательно: нужен только для SearXNG. Установить — {DOCKER_INSTALL_URL}.", DOCKER_INSTALL_URL=DOCKER_INSTALL_URL),
     )
 
 
@@ -186,23 +187,23 @@ def check_searxng(web_search) -> DependencyStatus:
     url = getattr(client, "base_url", "")
     if tier == "enhanced":
         return DependencyStatus(
-            "searxng", "Веб-поиск (SearXNG)", True, f"{url} — расширенный режим"
+            "searxng", tr("Веб-поиск (SearXNG)"), True, tr("{url} — расширенный режим", url=url)
         )
     if client is None:
         return DependencyStatus(
             "searxng",
-            "Веб-поиск",
+            tr("Веб-поиск"),
             False,
-            "модуль недоступен",
-            "Веб-поиск недоступен в этой сборке.",
+            tr("модуль недоступен"),
+            tr("Веб-поиск недоступен в этой сборке."),
         )
     return DependencyStatus(
         "searxng",
-        "Веб-поиск (базовый режим)",
+        tr("Веб-поиск (базовый режим)"),
         True,
-        "встроенный, Docker не нужен",
-        "Расширенный поиск (SearXNG в Docker) включается в меню Правка "
-        "или кнопкой «Исправить».",
+        tr("встроенный, Docker не нужен"),
+        tr("Расширенный поиск (SearXNG в Docker) включается в меню Правка "
+        "или кнопкой «Исправить»."),
         fix="searxng" if url else "",
     )
 
@@ -211,23 +212,23 @@ def check_rag(rag_service) -> DependencyStatus:
     if rag_service is None:
         return DependencyStatus(
             "rag",
-            "Индекс проекта (RAG)",
+            tr("Индекс проекта (RAG)"),
             False,
-            "модуль недоступен",
-            "RAG недоступен в этой сборке.",
+            tr("модуль недоступен"),
+            tr("RAG недоступен в этой сборке."),
         )
     try:
         count = int(rag_service.count())
     except Exception:
         count = 0
     if count:
-        return DependencyStatus("rag", "Индекс проекта (RAG)", True, f"{count} чанков")
+        return DependencyStatus("rag", tr("Индекс проекта (RAG)"), True, tr("{count} чанков", count=count))
     return DependencyStatus(
         "rag",
-        "Индекс проекта (RAG)",
+        tr("Индекс проекта (RAG)"),
         False,
-        "индекс пуст",
-        "Откройте страницу «Проект», выберите папку и нажмите «Проиндексировать».",
+        tr("индекс пуст"),
+        tr("Откройте страницу «Проект», выберите папку и нажмите «Проиндексировать»."),
     )
 
 
@@ -256,4 +257,4 @@ def summary_line(statuses: list[DependencyStatus]) -> str:
     problems = [s.title for s in statuses if not s.available]
     if not problems:
         return ""
-    return "Недоступно: " + "; ".join(problems)
+    return tr("Недоступно: ") + "; ".join(problems)

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from rag import archive
+from .i18n import tr
 
 
 class ArchiveUpdateWorker(QThread):
@@ -45,7 +46,7 @@ class ArchiveUpdateWorker(QThread):
             finally:
                 index.close()
         except Exception as exc:
-            self.failed.emit(f"Ошибка: {exc}")
+            self.failed.emit(tr("Ошибка: {exc}", exc=exc))
             return
         self.done.emit(stats)
 
@@ -62,29 +63,29 @@ class ArchiveDialog(QDialog):
         ocr_on = index.ocr
         self._count, self._updated = index.file_count, index.updated
         index.close()
-        self.setWindowTitle("Архив КД")
+        self.setWindowTitle(tr("Архив КД"))
         self.resize(760, 520)
         box = QVBoxLayout(self)
         intro = QLabel(
-            "Fluxion читает файлы архива — КОМПАС-3D (чертежи, спецификации, модели), PDF, Word, Excel — "
+            tr("Fluxion читает файлы архива — КОМПАС-3D (чертежи, спецификации, модели), PDF, Word, Excel — "
             "и ищет по ним: обозначения, наименования, материалы, массы, состав. Файлы только читаются, "
             "КОМПАС не запускается. Обновление читает только новые и изменённые файлы; его можно "
             "остановить и продолжить позже.\nСпрашивайте в чате: «/архив материал бокового лонжерона 714094», "
-            "«/архив где применяли 09Г2С после 2020»."
+            "«/архив где применяли 09Г2С после 2020».")
         )
         intro.setWordWrap(True)
         intro.setObjectName("subtitle")
         box.addWidget(intro)
-        box.addWidget(QLabel("Папки архива:"))
+        box.addWidget(QLabel(tr("Папки архива:")))
         row = QHBoxLayout()
         self.folders = QListWidget()
         self.folders.addItems(roots)
         row.addWidget(self.folders, 1)
         buttons = QVBoxLayout()
-        add = QPushButton("Добавить папку…")
+        add = QPushButton(tr("Добавить папку…"))
         add.clicked.connect(self._add_folder)
         buttons.addWidget(add)
-        remove = QPushButton("Убрать")
+        remove = QPushButton(tr("Убрать"))
         remove.clicked.connect(self._remove_folder)
         buttons.addWidget(remove)
         buttons.addStretch(1)
@@ -92,11 +93,11 @@ class ArchiveDialog(QDialog):
         box.addLayout(row, 1)
         from rag.ocr import available
 
-        self.ocr = QCheckBox("Распознавать сканы (картинки и PDF без текста) — встроенным распознаванием Windows")
+        self.ocr = QCheckBox(tr("Распознавать сканы (картинки и PDF без текста) — встроенным распознаванием Windows"))
         self.ocr.setChecked(ocr_on and available())
         if not available():
             self.ocr.setEnabled(False)
-            self.ocr.setToolTip("Нужен русский языковой пакет Windows: Параметры → Время и язык → Язык")
+            self.ocr.setToolTip(tr("Нужен русский языковой пакет Windows: Параметры → Время и язык → Язык"))
         box.addWidget(self.ocr)
         self.state = QLabel()
         self.state.setWordWrap(True)
@@ -109,15 +110,15 @@ class ArchiveDialog(QDialog):
 
         bottom.addWidget(help_button(self, "arhiv-kd"))
         bottom.addStretch(1)
-        self.stop_button = QPushButton("Стоп")
+        self.stop_button = QPushButton(tr("Стоп"))
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self._stop)
         bottom.addWidget(self.stop_button)
-        self.update_button = QPushButton("Обновить индекс")
+        self.update_button = QPushButton(tr("Обновить индекс"))
         self.update_button.setObjectName("sendButton")
         self.update_button.clicked.connect(self.start_update)
         bottom.addWidget(self.update_button)
-        close = QPushButton("Закрыть")
+        close = QPushButton(tr("Закрыть"))
         close.clicked.connect(self.reject)
         bottom.addWidget(close)
         box.addLayout(bottom)
@@ -127,12 +128,12 @@ class ArchiveDialog(QDialog):
         return [self.folders.item(i).text() for i in range(self.folders.count())]
 
     def _show_state(self, extra: str = "") -> None:
-        text = (f"В индексе файлов: {self._count}. Обновлён: {self._updated}." if self._updated
-                else "Индекс ещё не создан: добавьте папки архива и нажмите «Обновить индекс».")
+        text = (tr("В индексе файлов: {count}. Обновлён: {updated}.", count=self._count, updated=self._updated) if self._updated
+                else tr("Индекс ещё не создан: добавьте папки архива и нажмите «Обновить индекс»."))
         self.state.setText(text + (f"\n{extra}" if extra else ""))
 
     def _add_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Папка архива", str(Path.home()))
+        path = QFileDialog.getExistingDirectory(self, tr("Папка архива"), str(Path.home()))
         if path and path not in self.roots():
             self.folders.addItem(path)
 
@@ -156,24 +157,24 @@ class ArchiveDialog(QDialog):
         self.stop_button.setEnabled(True)
         self.bar.setVisible(True)
         self.bar.setRange(0, 0)
-        self.state.setText("Ищу новые и изменённые файлы…")
+        self.state.setText(tr("Ищу новые и изменённые файлы…"))
         self.worker.start()
 
     def _progress(self, done: int, total: int, name: str) -> None:
         self.bar.setRange(0, total)
         self.bar.setValue(done)
-        self.state.setText(f"Читаю {done} из {total}: {name}")
+        self.state.setText(tr("Читаю {done} из {total}: {name}", done=done, total=total, name=name))
 
     def _done(self, stats) -> None:
         index = archive.ArchiveIndex(self.data_dir)
         self._count, self._updated = index.file_count, index.updated
         index.close()
-        lines = [f"Прочитано файлов: {stats.indexed}, без изменений: {stats.unchanged}, "
-                 f"убрано из индекса: {stats.removed}. Время: {stats.seconds / 60:.1f} мин."]
+        lines = [tr("Прочитано файлов: {indexed}, без изменений: {unchanged}, "
+                 "убрано из индекса: {removed}. Время: {value:.1f} мин.", indexed=stats.indexed, unchanged=stats.unchanged, removed=stats.removed, value=stats.seconds / 60)]
         if stats.stopped:
-            lines.append("Остановлено: «Обновить индекс» продолжит с этого места.")
+            lines.append(tr("Остановлено: «Обновить индекс» продолжит с этого места."))
         if stats.failed:
-            lines.append(f"Не прочитано: {len(stats.failed)} (например, {stats.failed[0]}).")
+            lines.append(tr("Не прочитано: {n_failed} (например, {value}).", n_failed=len(stats.failed), value=stats.failed[0]))
         self._show_state("\n".join(lines))
 
     def _failed(self, message: str) -> None:
@@ -189,7 +190,7 @@ class ArchiveDialog(QDialog):
         if self.worker is not None:
             self.worker.stop()
             self.stop_button.setEnabled(False)
-            self.state.setText("Останавливаю…")
+            self.state.setText(tr("Останавливаю…"))
 
     def reject(self) -> None:
         if self.worker is not None:  # the work so far is kept: the next update goes on from there

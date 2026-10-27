@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from .i18n import tr
 
 TEMP_RUN_MARKERS = ("rar$", "\\temp\\", "$recyble", "$recycle")
 TEMP_RUN_WARNING = (
-    "Программа запущена из временной папки (архив не распакован). "
+    tr("Программа запущена из временной папки (архив не распакован). "
     "Распакуйте Fluxion в папку на диске: иначе данные, окружение обучения "
-    "и модели будут потеряны."
+    "и модели будут потеряны.")
 )
 
 

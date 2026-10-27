@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from .i18n import tr
 
 try:  # pragma: no cover - exercised implicitly via WEBENGINE_AVAILABLE
     from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
@@ -97,7 +98,7 @@ class BrowserPanel(QWidget):
 
         self.address = QLineEdit()
         self.address.setObjectName("webAddress")
-        self.address.setPlaceholderText("URL или поисковый запрос, затем Enter")
+        self.address.setPlaceholderText(tr("URL или поисковый запрос, затем Enter"))
         self.address.setClearButtonEnabled(True)
         self.address.returnPressed.connect(self._on_address)
         layout.addWidget(self.address)
@@ -175,20 +176,20 @@ class FallbackBrowserPanel(QWidget):
 
         self.address = QLineEdit()
         self.address.setObjectName("webAddress")
-        self.address.setPlaceholderText("URL или поисковый запрос, затем Enter")
+        self.address.setPlaceholderText(tr("URL или поисковый запрос, затем Enter"))
         self.address.setClearButtonEnabled(True)
         self.address.setMinimumWidth(320)
         self.address.returnPressed.connect(self._on_address)
         layout.addWidget(self.address)
 
-        header = QLabel("Браузер (упрощённый режим: QtWebEngine недоступен)")
+        header = QLabel(tr("Браузер (упрощённый режим: QtWebEngine недоступен)"))
         header.setObjectName("webPanelHeader")
         header.setWordWrap(True)
         layout.addWidget(header)
 
         self.view = QTextBrowser()
         self.view.setOpenExternalLinks(False)
-        self.view.setHtml("<p>Введите запрос в чате или откройте ссылку из ответа.</p>")
+        self.view.setHtml(tr("<p>Введите запрос в чате или откройте ссылку из ответа.</p>"))
         layout.addWidget(self.view, 1)
 
     def set_search_base(self, url: str) -> None:
@@ -209,7 +210,7 @@ class FallbackBrowserPanel(QWidget):
     def open_url(self, url: str) -> None:
         safe = html.escape(url, quote=True)
         self.view.setHtml(
-            f"<p>Ссылка открыта во внешнем браузере:</p><p><a href=\"{safe}\">{safe}</a></p>"
+            tr("<p>Ссылка открыта во внешнем браузере:</p><p><a href=\"{safe}\">{safe}</a></p>", safe=safe)
         )
         if os.environ.get("QT_QPA_PLATFORM") not in ("offscreen", "minimal"):
             from PySide6.QtGui import QDesktopServices
@@ -220,21 +221,21 @@ class FallbackBrowserPanel(QWidget):
         if self.web_search is None:
             ddg = _DUCKDUCKGO + quote_plus(query)
             self.view.setHtml(
-                f"<p><b>Запрос:</b> {html.escape(query)}</p>"
-                f"<p>Веб-поиск не настроен. Встроенный движок недоступен.</p>"
-                f'<p><a href="{html.escape(ddg, quote=True)}">Искать «{html.escape(query)}» в DuckDuckGo</a></p>'
+                tr("<p><b>Запрос:</b> {value}</p>"
+                "<p>Веб-поиск не настроен. Встроенный движок недоступен.</p>"
+                '<p><a href="{value2}">Искать «{value}» в DuckDuckGo</a></p>', value=html.escape(query), value2=html.escape(ddg, quote=True))
             )
             return
         try:
             contexts = self.web_search.run(query)
         except Exception as exc:
             self.view.setHtml(
-                f"<p><b>Запрос:</b> {html.escape(query)}</p><p>Ошибка поиска: {html.escape(str(exc))}</p>"
+                tr("<p><b>Запрос:</b> {value}</p><p>Ошибка поиска: {value2}</p>", value=html.escape(query), value2=html.escape(str(exc)))
             )
             return
-        parts = [f"<p><b>Запрос:</b> {html.escape(query)}</p>"]
+        parts = [tr("<p><b>Запрос:</b> {value}</p>", value=html.escape(query))]
         if not contexts:
-            parts.append("<p>Ничего не найдено.</p>")
+            parts.append(tr("<p>Ничего не найдено.</p>"))
         for ctx in contexts:
             url = getattr(ctx, "url", "")
             title = getattr(ctx, "title", "") or url

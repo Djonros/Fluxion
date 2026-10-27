@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import APP_VERSION
+from .i18n import tr
 
 REPORT_EMAIL = "djonros@gmail.com"
 
@@ -103,20 +104,20 @@ def show_crash_dialog(log_path: Path, parent=None) -> None:
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        text = "(отчёт недоступен)"
+        text = tr("(отчёт недоступен)")
 
     box = QMessageBox(parent)
-    box.setWindowTitle("Fluxion — неожиданная ошибка")
+    box.setWindowTitle(tr("Fluxion — неожиданная ошибка"))
     box.setIcon(QMessageBox.Critical)
     box.setText(
-        "Произошла ошибка. Отчёт сохранён локально:\n"
-        f"{log_path}\n\n"
-        "Отправка отчёта — только по вашему действию."
+        tr("Произошла ошибка. Отчёт сохранён локально:\n"
+        "{log_path}\n\n"
+        "Отправка отчёта — только по вашему действию.", log_path=log_path)
     )
-    copy_btn = box.addButton("Копировать отчёт", QMessageBox.ActionRole)
-    mail_btn = box.addButton("Отправить по email", QMessageBox.ActionRole)
-    folder_btn = box.addButton("Открыть папку логов", QMessageBox.ActionRole)
-    box.addButton("Закрыть", QMessageBox.RejectRole)
+    copy_btn = box.addButton(tr("Копировать отчёт"), QMessageBox.ActionRole)
+    mail_btn = box.addButton(tr("Отправить по email"), QMessageBox.ActionRole)
+    folder_btn = box.addButton(tr("Открыть папку логов"), QMessageBox.ActionRole)
+    box.addButton(tr("Закрыть"), QMessageBox.RejectRole)
     box.exec()
 
     clicked = box.clickedButton()

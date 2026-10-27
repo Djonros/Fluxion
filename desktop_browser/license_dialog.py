@@ -24,6 +24,7 @@ from licensing.store import (
     find_key_files,
     load_activation,
 )
+from .i18n import tr
 
 PRO_PAGE_URL = "https://djonros.github.io/Fluxion/#pro"
 
@@ -37,7 +38,7 @@ class LicenseDialog(QDialog):
 
     def __init__(self, parent=None, *, search_dirs=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Лицензия Fluxion")
+        self.setWindowTitle(tr("Лицензия Fluxion"))
         self.setMinimumWidth(460)
         self.setAcceptDrops(True)
         self._search_dirs = search_dirs
@@ -56,9 +57,9 @@ class LicenseDialog(QDialog):
         layout.addWidget(self.expires_label)
 
         plan_info = QLabel(
-            "<b>FREE:</b> чат, агент (чтение файлов), веб-поиск, RAG-индекс, мастер настройки<br>"
+            tr("<b>FREE:</b> чат, агент (чтение файлов), веб-поиск, RAG-индекс, мастер настройки<br>"
             "<b>PRO:</b> запись файлов агентом, QLoRA-обучение, облачные API-бэкенды, "
-            "расширенный каталог моделей (7B Q8_0, 14B, 32B)"
+            "расширенный каталог моделей (7B Q8_0, 14B, 32B)")
         )
         plan_info.setObjectName("licenseMessage")
         plan_info.setWordWrap(True)
@@ -71,27 +72,27 @@ class LicenseDialog(QDialog):
         layout.addWidget(self.found_button)
 
         self.key_input = QLineEdit()
-        self.key_input.setPlaceholderText("Вставьте ключ или перетащите в окно файл .key")
+        self.key_input.setPlaceholderText(tr("Вставьте ключ или перетащите в окно файл .key"))
         self.key_input.returnPressed.connect(self._activate)
         layout.addWidget(self.key_input)
 
-        self.file_button = QPushButton("Загрузить файл ключа…")
+        self.file_button = QPushButton(tr("Загрузить файл ключа…"))
         self.file_button.setObjectName("themeButton")
         self.file_button.clicked.connect(self._pick_key_file)
         layout.addWidget(self.file_button)
 
         buttons = QHBoxLayout()
-        self.activate_button = QPushButton("Активировать")
+        self.activate_button = QPushButton(tr("Активировать"))
         self.activate_button.setObjectName("sendButton")
         self.activate_button.clicked.connect(self._activate)
-        self.deactivate_button = QPushButton("Деактивировать")
+        self.deactivate_button = QPushButton(tr("Деактивировать"))
         self.deactivate_button.setObjectName("stopButton")
         self.deactivate_button.clicked.connect(self._deactivate)
-        self.buy_button = QPushButton("Купить Pro…")
+        self.buy_button = QPushButton(tr("Купить Pro…"))
         self.buy_button.setObjectName("themeButton")
-        self.buy_button.setToolTip("Цены и порядок покупки на сайте Fluxion")
+        self.buy_button.setToolTip(tr("Цены и порядок покупки на сайте Fluxion"))
         self.buy_button.clicked.connect(self._open_pro_page)
-        close_button = QPushButton("Закрыть")
+        close_button = QPushButton(tr("Закрыть"))
         close_button.setObjectName("themeButton")
         close_button.clicked.connect(self.accept)
         buttons.addWidget(self.activate_button)
@@ -112,31 +113,31 @@ class LicenseDialog(QDialog):
     def _refresh(self) -> None:
         lic = load_activation()
         if lic is None:
-            self.status_label.setText("Текущий план: FREE")
-            self.email_label.setText("Почта: —")
-            self.expires_label.setText("Срок: —")
+            self.status_label.setText(tr("Текущий план: FREE"))
+            self.email_label.setText(tr("Почта: —"))
+            self.expires_label.setText(tr("Срок: —"))
             self.deactivate_button.setEnabled(False)
         else:
             if lic.is_pro:
                 plan = "PRO"
             elif lic.updates_lapsed and not lic.is_expired:
-                plan = f"{lic.plan.upper()} (обновления закончились)"
+                plan = tr("{value} (обновления закончились)", value=lic.plan.upper())
             else:
-                plan = f"{lic.plan.upper()} (истекла)"
-            self.status_label.setText(f"Текущий план: {plan}")
-            self.email_label.setText(f"Почта: {lic.email}")
-            expires = lic.expires_at.strftime("%Y-%m-%d") if lic.expires_at else "бессрочная"
+                plan = tr("{value} (истекла)", value=lic.plan.upper())
+            self.status_label.setText(tr("Текущий план: {plan}", plan=plan))
+            self.email_label.setText(tr("Почта: {email}", email=lic.email))
+            expires = lic.expires_at.strftime("%Y-%m-%d") if lic.expires_at else tr("бессрочная")
             updates = lic.updates_until
-            covered = f" · обновления до {updates:%Y-%m-%d}" if updates is not None else ""
-            self.expires_label.setText(f"Срок: {expires}{covered}")
+            covered = tr(" · обновления до {updates:%Y-%m-%d}", updates=updates) if updates is not None else ""
+            self.expires_label.setText(tr("Срок: {expires}{covered}", expires=expires, covered=covered))
             if lic.updates_lapsed and not lic.is_expired:
                 self.message_label.setText(
-                    f"Ключ покрывает версии, выпущенные до {updates:%Y-%m-%d}; эта версия вышла "
+                    tr("Ключ покрывает версии, выпущенные до {updates:%Y-%m-%d}; эта версия вышла "
                     "позже. В тех версиях Pro работает как прежде. Чтобы включить Pro здесь, "
-                    "продлите обновления — кнопка «Купить Pro…»."
+                    "продлите обновления — кнопка «Купить Pro…».", updates=updates)
                 )
-            device = "привязка к этому ПК" if lic.device else "без привязки"
-            self.expires_label.setToolTip(f"Ключ: {device}")
+            device = tr("привязка к этому ПК") if lic.device else tr("без привязки")
+            self.expires_label.setToolTip(tr("Ключ: {device}", device=device))
             self.deactivate_button.setEnabled(True)
         self.buy_button.setVisible(lic is None or not lic.is_pro)
         self.status_label.setProperty("plan", "pro" if lic is not None and lic.is_pro else "free")
@@ -151,13 +152,13 @@ class LicenseDialog(QDialog):
         text = self.key_input.text().strip()
         if not text:
             self.message_label.setText(
-                "Вставьте ключ, загрузите файл ключа или перетащите его в это окно."
+                tr("Вставьте ключ, загрузите файл ключа или перетащите его в это окно.")
             )
             return
         try:
             lic = activate_text(text)
         except LicenseError as exc:
-            self.message_label.setText(f"Ошибка активации: {exc}")
+            self.message_label.setText(tr("Ошибка активации: {exc}", exc=exc))
             return
         self.key_input.clear()
         self._activated(lic)
@@ -166,13 +167,13 @@ class LicenseDialog(QDialog):
         try:
             lic = activate_file(path)
         except LicenseError as exc:
-            self.message_label.setText(f"Ошибка активации ({Path(path).name}): {exc}")
+            self.message_label.setText(tr("Ошибка активации ({value}): {exc}", value=Path(path).name, exc=exc))
             return False
         self._activated(lic)
         return True
 
     def _activated(self, lic) -> None:
-        self.message_label.setText(f"Активирована лицензия {lic.plan.upper()} для {lic.email}.")
+        self.message_label.setText(tr("Активирована лицензия {value} для {email}.", value=lic.plan.upper(), email=lic.email))
         self.found_button.setVisible(False)
         self._found_key = None
         self._refresh()
@@ -184,8 +185,8 @@ class LicenseDialog(QDialog):
     def _pick_key_file(self) -> None:
         start = str(Path.home() / "Downloads")
         path, _ = QFileDialog.getOpenFileName(
-            self, "Файл лицензионного ключа", start,
-            "Ключ Fluxion (*.key *.txt *.lic);;Все файлы (*.*)",
+            self, tr("Файл лицензионного ключа"), start,
+            tr("Ключ Fluxion (*.key *.txt *.lic);;Все файлы (*.*)"),
         )
         if path:
             self._activate_path(path)
@@ -200,7 +201,7 @@ class LicenseDialog(QDialog):
             found = []
         if found:
             self._found_key = found[0]
-            self.found_button.setText(f"Активировать ключ из файла {found[0].name}")
+            self.found_button.setText(tr("Активировать ключ из файла {value}", value=found[0].name))
             self.found_button.setToolTip(str(found[0]))
             self.found_button.setVisible(True)
 
@@ -227,7 +228,7 @@ class LicenseDialog(QDialog):
 
     def _deactivate(self) -> None:
         if clear_activation():
-            self.message_label.setText("Лицензия деактивирована (план FREE).")
+            self.message_label.setText(tr("Лицензия деактивирована (план FREE)."))
         else:
-            self.message_label.setText("Активной лицензии нет.")
+            self.message_label.setText(tr("Активной лицензии нет."))
         self._refresh()

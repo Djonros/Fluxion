@@ -9,8 +9,9 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from .i18n import tr
 
-ACAD_FILTER = "Чертежи AutoCAD (*.dwg *.dxf)"
+ACAD_FILTER = tr("Чертежи AutoCAD (*.dwg *.dxf)")
 
 
 class AcadCheckWorker(QThread):
@@ -36,13 +37,13 @@ class AcadCheckWorker(QThread):
             pythoncom = None
         try:
             drawing = acad.open_drawing(self.path, log=self.progress.emit)
-            self.progress.emit("Проверяю штамп, шрифты, слои, размеры и масштабы…")
+            self.progress.emit(tr("Проверяю штамп, шрифты, слои, размеры и масштабы…"))
             result = acad_check.check(drawing, report.load_decisions(drawing.file))
         except DrawingError as exc:
             self.failed.emit(str(exc))
             return
         except Exception as exc:  # COM errors carry the AutoCAD message
-            self.failed.emit(f"Не получилось проверить чертёж: {exc}")
+            self.failed.emit(tr("Не получилось проверить чертёж: {exc}", exc=exc))
             return
         finally:
             if pythoncom is not None:
@@ -59,18 +60,18 @@ class AcadWarningsDialog(QDialog):
         from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
 
         self.result = result
-        self.setWindowTitle("Нормоконтроль чертежа")
+        self.setWindowTitle(tr("Нормоконтроль чертежа"))
         self.resize(1100, 560)
         box = QVBoxLayout(self)
         intro = QLabel(
-            f"<b>{html.escape(result.title)}</b> ({result.norm}): замечаний — {len(result.remarks)}. "
+            tr("<b>{value}</b> ({norm}): замечаний — {n_remarks}. "
             "Отметьте каждое: отчёт формируется, только когда отмечено всё. "
-            "Отметки запоминаются для этого чертежа. Двойной щелчок по строке открывает чертёж."
+            "Отметки запоминаются для этого чертежа. Двойной щелчок по строке открывает чертёж.", value=html.escape(result.title), norm=result.norm, n_remarks=len(result.remarks))
         )
         intro.setWordWrap(True)
         intro.setTextFormat(Qt.RichText)
         box.addWidget(intro)
-        headers = ["Проверено", "Уровень", "Замечание", "Что", "Где", "Что будет и что сделать"]
+        headers = [tr("Проверено"), tr("Уровень"), tr("Замечание"), tr("Что"), tr("Где"), tr("Что будет и что сделать")]
         self.table = QTableWidget(len(result.remarks), len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.verticalHeader().setVisible(False)
@@ -103,10 +104,10 @@ class AcadWarningsDialog(QDialog):
         buttons.addWidget(help_button(self, "normokontrol-autocad"))
         self.counter = QLabel()
         buttons.addWidget(self.counter, 1)
-        cancel = QPushButton("Отмена — исправлю чертёж")
+        cancel = QPushButton(tr("Отмена — исправлю чертёж"))
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
-        self.make_button = QPushButton("Сформировать отчёт")
+        self.make_button = QPushButton(tr("Сформировать отчёт"))
         self.make_button.setObjectName("sendButton")
         self.make_button.clicked.connect(self.accept)
         buttons.addWidget(self.make_button)
@@ -126,7 +127,7 @@ class AcadWarningsDialog(QDialog):
     def _update(self, *_args) -> None:
         marks = self.marks()
         done = sum(1 for m in marks.values() if m["checked"])
-        self.counter.setText(f"Отмечено {done} из {len(marks)}")
+        self.counter.setText(tr("Отмечено {done} из {n_marks}", done=done, n_marks=len(marks)))
         self.make_button.setEnabled(done == len(marks))
 
 
@@ -134,7 +135,7 @@ def report_links(result, path=None) -> list[dict]:
     """Links for the chat under the report: the workbook and the drawing."""
     links = []
     if path:
-        links.append({"file": str(path), "label": f"Отчёт: {Path(path).name}"})
+        links.append({"file": str(path), "label": tr("Отчёт: {value}", value=Path(path).name)})
     if result.drawing.file:
-        links.append({"file": result.drawing.file, "label": f"Чертёж: {result.title}"})
+        links.append({"file": result.drawing.file, "label": tr("Чертёж: {title}", title=result.title)})
     return links
