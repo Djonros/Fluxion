@@ -38,7 +38,9 @@ def test_iss_never_ships_or_removes_user_data():
 
 def test_build_step_and_release_know_the_installer():
     ps1 = ROOT / "scripts" / "build_installer.ps1"
-    assert ps1.read_bytes().startswith(b"\xef\xbb\xbf"), "PowerShell 5.1 needs a BOM for Cyrillic"
+    raw = ps1.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf"), "PowerShell 5.1 needs a BOM for Cyrillic"
+    assert not raw.startswith(b"\xef\xbb\xbf" * 2), "a second BOM breaks the first line"
     script = ps1.read_text(encoding="utf-8-sig")
     assert "installer\\fluxion.iss" in script and "SHA256" in script
     assert "winget install JRSoftware.InnoSetup" in script

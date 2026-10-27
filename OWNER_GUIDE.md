@@ -326,7 +326,10 @@ python -c "from licensing.verifier import verify_license; print(verify_license('
    `RELEASE_NOTES_RU.md` — «Fluxion X.Y.Z — что нового» (это текст релиза).
    Тест `tests/test_release.py` не даст выпустить версию без этих правок.
 2. **Сборка.** `fluxion-build.bat` — Lite (и при желании Full); без вопроса — `fluxion-build.bat --lite` или `--full`.
-   Архивы появятся в `dist\artifacts`.
+   Архивы появятся в `dist\artifacts`, с Inno Setup
+   (`winget install JRSoftware.InnoSetup --scope user`) — и установщик
+   `FluxionSetup-<версия>.exe` с `.sha256`. Без `.sha256` в релизе обновление
+   одним кликом в программе откажется ставить установщик.
 3. **Проверка без изменений:** `fluxion-release.bat --check` — репозиторий,
    свободен ли тег, тесты.
 4. **Выпуск:** `fluxion-release.bat` — покажет изменения, спросит про ваши
@@ -343,6 +346,30 @@ GitHub не принимает файлы релиза больше 2 ГБ: Full
 
 Если папка проекта скачана архивом (без `.git`), батник предложит подключить
 её к репозиторию: файлы не меняются, git только сравнит их с версией на GitHub.
+
+### Подпись кода (необязательно)
+
+Без подписи Windows SmartScreen предупреждает «Неизвестный издатель». Подпись
+включается переменными окружения перед `fluxion-build.bat`; без них сборка
+идёт как обычно, без подписи. Подписываются `FluxionBrowserLite.exe` (до
+упаковки `.7z`), установщик и его деинсталлятор (через `SignTool` Inno Setup).
+
+| Переменная | Что это |
+|------------|---------|
+| `FLUXION_SIGN_THUMBPRINT` | SHA1-отпечаток сертификата подписи кода в хранилище пользователя или на токене: подписывает `signtool` |
+| `FLUXION_SIGNTOOL_CMD` | Своя команда подписи (облачная подпись Certum SimplySign, SSL.com eSigner и т. п.); `{file}` заменяется путём к файлу |
+| `FLUXION_SIGN_TIMESTAMP` | Сервер метки времени, по умолчанию `http://timestamp.digicert.com` |
+| `SIGNTOOL` | Путь к `signtool.exe`, если его нет в PATH и в Windows Kits (`winget install Microsoft.WindowsSDK.10.0.26100`) |
+
+```
+set FLUXION_SIGN_THUMBPRINT=0123456789ABCDEF0123456789ABCDEF01234567
+fluxion-build.bat --lite
+```
+
+Проверить подпись: свойства файла → «Цифровые подписи», или
+`powershell Get-AuthenticodeSignature dist\artifacts\FluxionSetup-*.exe`.
+Сертификат с подписью ещё не убирает предупреждение сразу: SmartScreen
+доверяет издателю, когда у него накопится репутация.
 
 ## 7. Сайт: загрузки и документация
 

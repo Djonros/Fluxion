@@ -373,6 +373,39 @@ class UpdateWorker(QThread):
         self.done.emit(check_for_updates(self._version))
 
 
+class InstallerDownloadWorker(QThread):
+    """One-click update: downloads FluxionSetup.exe of the release and checks its SHA256."""
+
+    progress = Signal(int, int)  # done_bytes, total_bytes (0 = unknown)
+    failed = Signal(str)  # UpdateError.kind; "network:<message>" for a network error
+    done = Signal(str)  # the checked installer
+
+    def __init__(self, info, parent=None):
+        super().__init__(parent)
+        self.info = info
+        self._cancel = False
+
+    def cancel(self) -> None:
+        self._cancel = True
+
+    def run(self) -> None:
+        import tempfile
+
+        from core.update import UpdateError, download_installer
+
+        try:
+            path = download_installer(
+                self.info,
+                Path(tempfile.gettempdir()) / "FluxionUpdate",
+                on_progress=lambda done, total: self.progress.emit(done, total),
+                cancelled=lambda: self._cancel,
+            )
+        except UpdateError as exc:
+            self.failed.emit(f"network:{exc}" if exc.kind == "network" else exc.kind)
+            return
+        self.done.emit(str(path))
+
+
 class ModelDownloadWorker(QThread):
     """Downloads a catalog GGUF model with progress/resume (roadmap 18.2)."""
 
@@ -2280,7 +2313,7 @@ class FluxionWindow(QMainWindow):
         act_manual.triggered.connect(lambda: self.open_manual())
         m_help.addAction(act_manual)
         act_update = QAction(tr("Проверить обновления…"), self)
-        act_update.triggered.connect(self._check_updates)
+        act_update.triggered.connect(lambda: self._check_updates())
         m_help.addAction(act_update)
         self.act_license = QAction(tr("Лицензия…"), self)
         self.act_license.triggered.connect(self._open_license_dialog)
@@ -6029,41 +6062,155 @@ class FluxionWindow(QMainWindow):
 
     # ── updates ──────────────────────────────────────────────────────────
 
-    def _check_updates(self) -> None:
-        self.statusBar().showMessage(tr("Проверка обновлений…"))
+    UPDATES_AUTO_KEY = "updates/auto"  # the automatic check at start, on by default
+    UPDATES_LAST_KEY = "updates/last_check"  # time.time() of the last automatic check
+    UPDATES_SKIP_KEY = "updates/skip_version"  # «Пропустить эту версию»
+
+    def _check_updates(self, auto: bool = False) -> None:
+        """Menu Помощь → Проверить обновления; *auto*: the background check at start, silent
+        without an update, without a connection and for a skipped version."""
+        if not auto:
+            self.statusBar().showMessage(tr("Проверка обновлений…"))
         self._update_worker = UpdateWorker(APP_VERSION)
-        self._update_worker.done.connect(self._on_update_result)
+        self._update_worker.done.connect(lambda info: self._on_update_result(info, auto=auto))
         self._update_worker.finished.connect(self._update_worker.deleteLater)
         self._update_worker.start()
 
-    def _on_update_result(self, info) -> None:
-        self.statusBar().showMessage(tr("Готово"), 3000)
+    def _auto_updates_enabled(self) -> bool:
+        return str(self.qsettings.value(self.UPDATES_AUTO_KEY, True)).lower() not in ("false", "0")
+
+    def auto_check_updates(self) -> bool:
+        """At start (main): the background check, at most once a day. Returns whether it started."""
+        from core.update import should_auto_check
+
+        if os.environ.get("FLUXION_NO_UPDATE_CHECK") == "1":
+            return False
+        if not should_auto_check(self.qsettings.value(self.UPDATES_LAST_KEY, 0), enabled=self._auto_updates_enabled()):
+            return False
+        self.qsettings.setValue(self.UPDATES_LAST_KEY, time.time())
+        self._check_updates(auto=True)
+        return True
+
+    def _on_update_result(self, info, auto: bool = False) -> None:
+        if not auto:
+            self.statusBar().showMessage(tr("Готово"), 3000)
         if info is None:
-            QMessageBox.warning(
-                self, tr("Обновления"), tr("Не удалось проверить обновления: нет соединения с GitHub.")
-            )
+            if not auto:
+                QMessageBox.warning(
+                    self, tr("Обновления"), tr("Не удалось проверить обновления: нет соединения с GitHub.")
+                )
             return
         if not info.is_newer:
-            QMessageBox.information(
-                self, tr("Обновления"), tr("У вас последняя версия — {current_version}.", current_version=info.current_version)
-            )
+            if not auto:
+                QMessageBox.information(
+                    self, tr("Обновления"), tr("У вас последняя версия — {current_version}.", current_version=info.current_version)
+                )
             return
-        box = QMessageBox(self)
-        box.setWindowTitle(tr("Доступна новая версия"))
-        box.setText(tr("Fluxion {latest_version} (у вас {current_version}).", latest_version=info.latest_version, current_version=info.current_version))
+        if auto and str(self.qsettings.value(self.UPDATES_SKIP_KEY, "") or "") == info.latest_version:
+            return
+        self._show_update_dialog(info)
+
+    def _can_update_in_place(self, info) -> bool:
+        """«Обновить сейчас»: a copy from the installer and a release with the installer and its checksum."""
+        from core.app_paths import is_installed
+
+        return bool(info.installer_url and info.sha256_url) and is_installed()
+
+    def _show_update_dialog(self, info) -> None:
+        in_place = self._can_update_in_place(info)
+        title = tr("Fluxion {latest_version} (у вас {current_version}).",
+                   latest_version=info.latest_version, current_version=info.current_version)
+        parts = [f"<b>{html.escape(title)}</b>"]
         notes = info.release_notes.strip()
         if notes:
-            box.setInformativeText(notes[:1500])
+            parts.append(f"<p><b>{html.escape(tr('Что нового:'))}</b><br>"
+                         + html.escape(notes[:1500]).replace("\n", "<br>") + "</p>")
         # the site gives FluxionSetup.exe; the GitHub release page stays as a second way
-        site_btn = box.addButton(tr("Скачать с сайта"), QMessageBox.AcceptRole)
-        github_btn = box.addButton(tr("Страница на GitHub"), QMessageBox.ActionRole) if info.release_url else None
+        links = [f'<a href="{SITE_URL}#download">{html.escape(tr("Скачать с сайта"))}</a>']
+        if info.release_url:
+            links.append(f'<a href="{html.escape(info.release_url)}">{html.escape(tr("Страница на GitHub"))}</a>')
+        parts.append("<p>" + " · ".join(links) + "</p>")
+        if not in_place:
+            parts.append("<p>" + html.escape(
+                tr("Эта копия Fluxion не установлена установщиком: скачайте новую версию с сайта.")) + "</p>")
+
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("Доступна новая версия"))
+        box.setTextFormat(Qt.RichText)
+        box.setText("".join(parts))
+        label = box.findChild(QLabel, "qt_msgbox_label")
+        if label is not None:
+            label.setOpenExternalLinks(True)
+            label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        auto_box = QCheckBox(tr("Проверять обновления автоматически"))
+        auto_box.setChecked(self._auto_updates_enabled())
+        box.setCheckBox(auto_box)
+        main_btn = box.addButton(tr("Обновить сейчас") if in_place else tr("Скачать с сайта"), QMessageBox.AcceptRole)
+        skip_btn = box.addButton(tr("Пропустить эту версию"), QMessageBox.ActionRole)
         box.addButton(tr("Позже"), QMessageBox.RejectRole)
         box.exec()
+        self.qsettings.setValue(self.UPDATES_AUTO_KEY, auto_box.isChecked())
         clicked = box.clickedButton()
-        if clicked is site_btn:
-            QDesktopServices.openUrl(QUrl(SITE_URL + "#download"))
-        elif github_btn is not None and clicked is github_btn:
-            QDesktopServices.openUrl(QUrl(info.release_url))
+        if clicked is skip_btn:
+            self.qsettings.setValue(self.UPDATES_SKIP_KEY, info.latest_version)
+        elif clicked is main_btn:
+            if in_place:
+                self._start_update(info)
+            else:
+                QDesktopServices.openUrl(QUrl(SITE_URL + "#download"))
+
+    def _start_update(self, info) -> None:
+        """«Обновить сейчас»: download and check the installer, then run it and quit."""
+        from PySide6.QtWidgets import QProgressDialog
+
+        dialog = QProgressDialog(tr("Загрузка обновления…"), tr("Отмена"), 0, 100, self)
+        dialog.setWindowTitle(tr("Обновления"))
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+        worker = InstallerDownloadWorker(info, self)
+        self._installer_worker = worker
+
+        def on_progress(done: int, total: int) -> None:
+            if total:
+                dialog.setMaximum(100)
+                dialog.setValue(min(99, int(done * 100 / total)))
+            else:
+                dialog.setMaximum(0)  # size unknown: a busy bar
+
+        worker.progress.connect(on_progress)
+        dialog.canceled.connect(worker.cancel)
+        worker.failed.connect(lambda kind: self._on_update_failed(kind, dialog))
+        worker.done.connect(lambda path: self._on_installer_ready(path, dialog))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_update_failed(self, kind: str, dialog=None) -> None:
+        if dialog is not None:
+            dialog.reset()
+        if kind == "cancelled":
+            return
+        if kind == "checksum_mismatch":
+            text = tr("Контрольная сумма установщика не совпала — файл повреждён или подменён. Обновление отменено.")
+        elif kind == "checksum_missing":
+            text = tr("В выпуске нет контрольной суммы установщика — обновление отменено. Скачайте новую версию с сайта.")
+        else:
+            text = tr("Не удалось загрузить обновление: {error}", error=kind.partition(":")[2] or kind)
+        QMessageBox.warning(self, tr("Обновления"), text)
+
+    def _on_installer_ready(self, path: str, dialog=None) -> None:
+        """The checked installer: run it silently (it closes Fluxion and starts the new one) and quit."""
+        from core.update import launch_installer
+
+        if dialog is not None:
+            dialog.reset()
+        try:
+            launch_installer(path)
+        except OSError as exc:
+            QMessageBox.warning(self, tr("Обновления"), tr("Не удалось запустить установщик: {error}", error=exc))
+            return
+        self.close()
+        QApplication.quit()
 
     # ── theme ────────────────────────────────────────────────────────────
 
@@ -6431,6 +6578,9 @@ def main() -> int:
             if os.environ.get("FLUXION_SMOKE_VOICE"):
                 result = result or _voice_smoke_check(os.environ["FLUXION_SMOKE_VOICE"])
         else:
+            # updates: in the background a little after start, at most once a day (Помощь → Проверить обновления)
+            if getattr(sys, "frozen", False):
+                QTimer.singleShot(15000, window.auto_check_updates)
             result = app.exec()
 
         window.deleteLater()

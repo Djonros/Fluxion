@@ -47,6 +47,17 @@ def is_portable() -> bool:
     return is_frozen() and (exe_dir() / PORTABLE_MARKER).is_file()
 
 
+def is_installed() -> bool:
+    """A copy put in place by FluxionSetup.exe (its uninstaller is next to the exe).
+
+    Only such a copy updates itself in one click; a portable or unpacked .7z
+    copy and a run from the sources are updated by hand.
+    """
+    if not is_frozen() or is_portable():
+        return False
+    return any(exe_dir().glob("unins*.exe"))
+
+
 def user_root() -> Path:
     """Per-user folder of an installed build: ``%LOCALAPPDATA%\\Fluxion``."""
     override = os.environ.get("FLUXION_HOME", "").strip()

@@ -10,6 +10,11 @@
 ; * silent mode for the in-app updater:
 ;     FluxionSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ;   (a running Fluxion is closed; the program is not started afterwards)
+;   /RESTARTAPP starts Fluxion again after the silent install: the in-app
+;   one-click update passes it (core/update.py)
+; * code signing: scripts\build_installer.ps1 passes /DSignToolName=... and
+;   /S<name>=<command> when FLUXION_SIGN_THUMBPRINT or FLUXION_SIGNTOOL_CMD is
+;   set; then the setup and the uninstaller are signed
 ; * uninstall removes the program only; it asks whether to remove the data
 ;   (never in silent mode)
 
@@ -56,6 +61,10 @@ Compression=lzma2/max
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
 WizardStyle=modern
+#ifdef SignToolName
+SignTool={#SignToolName}
+SignedUninstaller=yes
+#endif
 ShowLanguageDialog=no
 
 [Languages]
@@ -81,11 +90,23 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Запустить Fluxion"; Flags: nowait postinstall skipifsilent
+; the one-click update: start the new version after the silent install
+Filename: "{app}\{#AppExeName}"; Flags: nowait skipifnotsilent; Check: RestartAppRequested
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Code]
+function RestartAppRequested: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/RESTARTAPP') = 0 then
+      Result := True;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;

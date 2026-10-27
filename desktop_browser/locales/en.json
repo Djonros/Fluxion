@@ -755,5 +755,15 @@
  "Данные: {path}": "Data: {path}",
  "Открыть сайт": "Open website",
  "Скачать с сайта": "Download from the website",
- "Страница на GitHub": "Page on GitHub"
+ "Страница на GitHub": "Page on GitHub",
+ "Что нового:": "What's new:",
+ "Эта копия Fluxion не установлена установщиком: скачайте новую версию с сайта.": "This copy of Fluxion was not installed by the installer: download the new version from the website.",
+ "Проверять обновления автоматически": "Check for updates automatically",
+ "Обновить сейчас": "Update now",
+ "Пропустить эту версию": "Skip this version",
+ "Загрузка обновления…": "Downloading the update…",
+ "Контрольная сумма установщика не совпала — файл повреждён или подменён. Обновление отменено.": "The installer checksum does not match: the file is damaged or has been replaced. The update is cancelled.",
+ "В выпуске нет контрольной суммы установщика — обновление отменено. Скачайте новую версию с сайта.": "The release has no installer checksum, so the update is cancelled. Download the new version from the website.",
+ "Не удалось загрузить обновление: {error}": "Could not download the update: {error}",
+ "Не удалось запустить установщик: {error}": "Could not start the installer: {error}"
 }

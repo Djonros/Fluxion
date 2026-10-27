@@ -755,5 +755,15 @@
  "Данные: {path}": "Données : {path}",
  "Открыть сайт": "Ouvrir le site",
  "Скачать с сайта": "Télécharger depuis le site",
- "Страница на GitHub": "Page sur GitHub"
+ "Страница на GitHub": "Page sur GitHub",
+ "Что нового:": "Nouveautés :",
+ "Эта копия Fluxion не установлена установщиком: скачайте новую версию с сайта.": "Cette copie de Fluxion n'a pas été installée par l'installateur : téléchargez la nouvelle version sur le site.",
+ "Проверять обновления автоматически": "Rechercher les mises à jour automatiquement",
+ "Обновить сейчас": "Mettre à jour maintenant",
+ "Пропустить эту версию": "Ignorer cette version",
+ "Загрузка обновления…": "Téléchargement de la mise à jour…",
+ "Контрольная сумма установщика не совпала — файл повреждён или подменён. Обновление отменено.": "La somme de contrôle de l'installateur ne correspond pas : le fichier est endommagé ou a été remplacé. Mise à jour annulée.",
+ "В выпуске нет контрольной суммы установщика — обновление отменено. Скачайте новую версию с сайта.": "La version ne contient pas la somme de contrôle de l'installateur : mise à jour annulée. Téléchargez la nouvelle version sur le site.",
+ "Не удалось загрузить обновление: {error}": "Impossible de télécharger la mise à jour : {error}",
+ "Не удалось запустить установщик: {error}": "Impossible de lancer l'installateur : {error}"
 }
