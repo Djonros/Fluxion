@@ -39,6 +39,10 @@ class Material:
     mass_m2: tuple[tuple[float, float], ...] = ()  # checker plate: (thickness, kg per m²)
     note: str = ""
     source: str = "builtin"
+    # for the engineering calculator: (up to thickness mm or 0 — any, σт MPa, σв MPa), E in GPa
+    strength: tuple[tuple[float, float, float], ...] = ()
+    elastic: float = 0.0
+    strength_note: str = ""
 
     @property
     def is_sheet(self) -> bool:
@@ -58,6 +62,19 @@ class Material:
     def nearest_thicknesses(self, thickness: float, count: int = 3) -> list[float]:
         return sorted(sorted(self.thicknesses, key=lambda t: (abs(t - thickness), t))[:count])
 
+    @property
+    def has_strength(self) -> bool:
+        return bool(self.strength)
+
+    def strength_at(self, thickness: float | None = None) -> tuple[float, float]:
+        """(σт, σв) in MPa for a part of *thickness* mm: the first row it fits, the last row beyond."""
+        if not self.strength:
+            raise CatalogError(f"«{self.short}»: в каталоге нет σт и σв")
+        for t_max, yield_, ultimate in self.strength:
+            if not t_max or thickness is None or thickness <= t_max:
+                return yield_, ultimate
+        return self.strength[-1][1], self.strength[-1][2]
+
     def to_json(self) -> dict:
         data = {"name": self.name, "short": self.short, "kind": self.kind, "density": self.density,
                 "synonyms": list(self.synonyms)}
@@ -67,6 +84,12 @@ class Material:
             data["mass_m2"] = {f"{t:g}": m for t, m in self.mass_m2}
         if self.note:
             data["note"] = self.note
+        if self.strength:
+            data["strength"] = [[t, y, u] for t, y, u in self.strength]
+        if self.elastic:
+            data["elastic"] = self.elastic
+        if self.strength_note:
+            data["strength_note"] = self.strength_note
         return data
 
 
@@ -167,8 +190,19 @@ def from_json(data: dict, source: str = "builtin") -> Material:
     if isinstance(synonyms, str):
         synonyms = re.split(r"[;,]\s*", synonyms)
     synonyms = tuple(s.strip() for s in synonyms if str(s).strip()) or (short,)
+    strength = []
+    for row in data.get("strength") or []:
+        if not isinstance(row, (list, tuple)) or len(row) != 3:
+            raise CatalogError(f"«{name}»: strength — строки [до толщины, σт, σв]")
+        t_max = float(str(row[0]).replace(",", ".") or 0)
+        yield_, ultimate = _number(row[1], f"«{name}»: σт"), _number(row[2], f"«{name}»: σв")
+        if yield_ > ultimate:
+            raise CatalogError(f"«{name}»: σт {yield_:g} больше σв {ultimate:g}")
+        strength.append((t_max, yield_, ultimate))
+    elastic = _number(data["elastic"], f"«{name}»: модуль упругости") if data.get("elastic") else 0.0
     return Material(name, short, density, kind, synonyms, thicknesses, mass_m2,
-                    str(data.get("note") or "").strip(), source)
+                    str(data.get("note") or "").strip(), source, tuple(strength), elastic,
+                    str(data.get("strength_note") or "").strip())
 
 
 def read_catalog(path: Path, source: str) -> tuple[list[Material], list[str]]:

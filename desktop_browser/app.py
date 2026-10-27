@@ -740,6 +740,19 @@ def archive_command(text: str) -> str | None:
     return None
 
 
+CALC_PREFIXES = ("/расчёт", "/расчет", "/calc")
+
+
+def calc_command(text: str) -> str | None:
+    """The question of a "/расчёт …" chat message ("" — open the calculator); None for other messages."""
+    lowered = text.lower()
+    for prefix in CALC_PREFIXES:
+        rest = lowered[len(prefix):]
+        if lowered.startswith(prefix) and (not rest or rest[0].isspace()):
+            return text[len(prefix):].strip()
+    return None
+
+
 def acad_command(text: str) -> str | None:
     """The drawing of an "/автокад путь.dwg" chat message ("" — choose it); None for other messages."""
     lowered = text.lower()
@@ -753,10 +766,19 @@ def acad_command(text: str) -> str | None:
 _SPOKEN_CAD_RE = re.compile(r"^\W*(?:в\s+)?(?:компас[еау]?|kompas)\b[\s,.:;!—-]*(.+)$", re.IGNORECASE | re.DOTALL)
 
 
+_SPOKEN_CALC_RE = re.compile(
+    r"^\W*(?:расч[её]т[\s,.:;!—-]+|(?:посчитай|рассчитай|проверь)\s+(?=(?:сварн\w*\s+)?(?:шов|швы|болт|балк|"
+    r"лонжерон|раму|гибк|развертк|развёртк|вал|ось|шпонк)))(.+)$", re.IGNORECASE | re.DOTALL)
+
+
 def spoken_command(text: str) -> str:
-    """A slash cannot be said: "Компас, втулка 30 на 20" -> "/компас втулка 30 на 20"."""
+    """A slash cannot be said: "Компас, втулка 30 на 20" -> "/компас втулка 30 на 20",
+    "Расчёт, шов катет 6…" or "посчитай балку…" -> "/расчёт …"."""
     match = _SPOKEN_CAD_RE.match(text)
-    return f"{CAD_PREFIXES[0]} {match.group(1).strip()}" if match else text
+    if match:
+        return f"{CAD_PREFIXES[0]} {match.group(1).strip()}"
+    match = _SPOKEN_CALC_RE.match(text)
+    return f"{CALC_PREFIXES[0]} {match.group(1).strip()}" if match else text
 
 
 class CadWorker(QThread):
@@ -806,6 +828,45 @@ class CadWorker(QThread):
         from cad.text2cad import result_text
 
         self.done.emit(result_text(part, result))
+
+
+class CalcWorker(QThread):
+    """One step of a «/расчёт» conversation (package calc) in a background thread: the chat
+    model reads the question, Fluxion asks for what is missing or the formulas count and
+    the model puts the verdict into words."""
+
+    asked = Signal(str)
+    done = Signal(str, str, dict)   # text, kind of the calculation, its raw values
+    failed = Signal(str)
+
+    def __init__(self, conversation, message: str, parent=None):
+        super().__init__(parent)
+        self.conversation = conversation
+        self.message = message
+
+    def run(self) -> None:
+        from calc.chat import explain
+        from calc.core import CalcError
+
+        try:
+            reply = self.conversation.step(self.message)
+        except CalcError as exc:
+            self.failed.emit(f"Не получилось разобрать вопрос: {exc}")
+            return
+        except Exception as exc:
+            self.failed.emit(f"Модель не ответила: {exc}")
+            return
+        if reply.kind == "ask":
+            self.asked.emit(reply.text)
+            return
+        if reply.kind != "result":
+            self.done.emit(reply.text, reply.calc if reply.kind == "error" else "", reply.params or {})
+            return
+        text = reply.text
+        comment = explain(reply.result, self.conversation.backend)
+        if comment:
+            text += "\n\nПояснение (модель): " + comment
+        self.done.emit(text, reply.calc, reply.params or {})
 
 
 class AssemblyReportWorker(QThread):
@@ -1768,6 +1829,8 @@ class FluxionWindow(QMainWindow):
         self._speech_timer.setInterval(500)
         self._speech_timer.timeout.connect(self._on_speech_tick)
         self._cad_conversation = None  # cad.text2cad.Conversation waiting for an answer
+        self._calc_conversation = None  # calc.chat.Conversation waiting for an answer
+        self._last_calc: tuple[str, dict] | None = None  # the last chat calculation, for the calculator window
         self.index_worker: IndexWorker | None = None
         self._model_worker: ModelListWorker | None = None
         self._health_worker: HealthWorker | None = None
@@ -2172,6 +2235,10 @@ class FluxionWindow(QMainWindow):
         act_materials = QAction("Каталог материалов…", self)
         act_materials.triggered.connect(self._open_materials_dialog)
         m_tools.addAction(act_materials)
+        act_calc = QAction("Инженерный калькулятор…", self)
+        act_calc.setToolTip("Сварные швы, болты, балки и рамы, гибка листа, валы — по формулам. В чате: /расчёт …")
+        act_calc.triggered.connect(lambda: self._open_calc())
+        m_tools.addAction(act_calc)
         m_tools.addSeparator()
         act_report = QAction("Ведомость и металлоёмкость сборки (Pro)…", self)
         act_report.setToolTip("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel")
@@ -4681,6 +4748,19 @@ class FluxionWindow(QMainWindow):
             else:
                 self._open_acad_check()
             return
+        calc_question = calc_command(text) if source is None else None
+        if calc_question is not None:
+            self.prompt.clear()
+            if calc_question:
+                self._send_calc_message(calc_question, shown=text)
+            else:
+                self._open_calc()
+            return
+        if self._calc_conversation is not None and source is None:
+            # the answer to Fluxion's question about the calculation
+            self.prompt.clear()
+            self._send_calc_message(text, shown=text, answer=True)
+            return
         description = cad_command(text)
         if description is not None:
             if not description:
@@ -5078,6 +5158,7 @@ class FluxionWindow(QMainWindow):
             "laser": self._open_laser_package,
             "acad": self._open_acad_check,
             "archive": self._open_archive,
+            "calc": self._open_calc,
         }
 
     def open_manual(self, page: str = "") -> None:
@@ -5200,6 +5281,68 @@ class FluxionWindow(QMainWindow):
         else:
             self.prompt.clear()
         self._send_cad_message(description, shown=f"/компас {description}")
+
+    def _open_calc(self, start: tuple[str, dict] | None = None) -> None:
+        """Инструменты → Инженерный калькулятор; after «/расчёт» in the chat — with that calculation filled in."""
+        from .calc_dialog import CalcDialog
+
+        CalcDialog(self, start or self._last_calc).exec()
+
+    def _send_calc_message(self, message: str, shown: str, answer: bool = False) -> None:
+        """«/расчёт …»: the model reads the question, the formulas of the package calc count."""
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._last_query = shown
+        self._append_message("user", shown)
+        self.history.append({"role": "user", "content": shown})
+        if self.backend is None:
+            self._calc_conversation = None
+            self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
+            return
+        if not answer or self._calc_conversation is None:
+            from calc.chat import Conversation
+
+            self._calc_conversation = Conversation(self.backend)
+        self._append_message("assistant", "")
+        self._calc_entry = self._messages[-1]
+        self._calc_entry["meta"] = "[Инженерный калькулятор | расчёт по формулам]"
+        self._start_thinking()
+        self._set_generating(True)
+        self.calc_worker = CalcWorker(self._calc_conversation, message, self)
+        self.calc_worker.asked.connect(self._on_calc_asked)
+        self.calc_worker.done.connect(self._on_calc_done)
+        self.calc_worker.failed.connect(self._on_calc_failed)
+        self.calc_worker.finished.connect(self.calc_worker.deleteLater)
+        self.calc_worker.start()
+
+    def _on_calc_asked(self, question: str) -> None:
+        self._calc_entry["text"] = question
+        self.history.append({"role": "assistant", "content": question})
+        self._notify_answer()
+        self.calc_worker = None
+        self._set_generating(False)
+        self.prompt.setPlaceholderText("Ответ про расчёт: недостающие данные… или «отмена»")
+        self._render_messages()
+        self._save_memory()
+
+    def _on_calc_done(self, text: str, calc_kind: str, params: dict) -> None:
+        if calc_kind:
+            self._last_calc = (calc_kind, params)
+            text += "\nФормулы и отчёт: Инструменты → «Инженерный калькулятор…» — расчёт уже заполнен."
+        self._calc_entry["text"] = text
+        self.history.append({"role": "assistant", "content": text})
+        self._notify_answer(text.splitlines()[0])
+        self._end_calc_turn()
+
+    def _on_calc_failed(self, message: str) -> None:
+        self._calc_entry["text"] = message
+        self._end_calc_turn()
+
+    def _end_calc_turn(self) -> None:
+        self.calc_worker = None
+        self._calc_conversation = None
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
 
     def _open_materials_dialog(self) -> None:
         """Инструменты → Каталог материалов: the merged catalog, the user's file, import."""

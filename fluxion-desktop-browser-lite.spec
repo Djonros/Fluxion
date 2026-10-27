@@ -168,6 +168,21 @@ a = Analysis(
         "desktop_browser.acad_check_dialog",
         "desktop_browser.manual",
         "desktop_browser.archive_dialog",
+        # «Инженерный калькулятор»: imported lazily from the window and the chat
+        "calc",
+        "calc.core",
+        "calc.units",
+        "calc.fields",
+        "calc.strength",
+        "calc.sections",
+        "calc.welds",
+        "calc.bolts",
+        "calc.beams",
+        "calc.bending",
+        "calc.shafts",
+        "calc.report",
+        "calc.chat",
+        "desktop_browser.calc_dialog",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window
         "dxfka",
