@@ -95,6 +95,25 @@
 
   };
 
+  // Fluxion Mobile ships as releases tagged mobile-vX.Y.Z, never marked latest.
+  const applyMobile = (releases) => {
+    const release = releases.find((r) => /^mobile-v/i.test(r.tag_name || "") && !r.draft);
+    const apk = release && (release.assets || []).find((a) => /\.apk$/i.test(a.name));
+    if (!apk) return;
+    setBuild("Mobile", apk.browser_download_url, size(apk.size));
+    const version = document.querySelector("[data-mobile-version]");
+    if (version) version.textContent = `Ранняя версия ${release.tag_name.replace(/^mobile-v/i, "")}`;
+  };
+
+  fetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
+    headers: { Accept: "application/vnd.github+json" },
+  })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+    .then(applyMobile)
+    .catch(() => {
+      // The button already points at the list of mobile releases.
+    });
+
   fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
     headers: { Accept: "application/vnd.github+json" },
   })
