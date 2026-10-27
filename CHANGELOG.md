@@ -5,9 +5,10 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.0] — 2026-10-27
 
 ### Added
+- Interface language: «Вид → Язык / Language» — Russian, English, Ukrainian, Belarusian, Kazakh, Spanish and French. The texts of the window and its dialogs go through `tr()` (`desktop_browser/i18n.py`): the Russian text is the key, `desktop_browser/locales/<code>.json` holds the translations. The choice is kept and applies after a restart the program offers; the manual shows its page in the chosen language when there is one (new page «Язык интерфейса»).
 - The installer `FluxionSetup-<version>.exe` (Inno Setup, `installer/fluxion.iss`): per user, no administrator rights, into `%LOCALAPPDATA%\Programs\Fluxion`; the Start menu, a desktop shortcut on request, an entry in «Установленные приложения», «Запустить Fluxion» at the end. A new version installs over the old one and closes a running Fluxion; `/VERYSILENT /SUPPRESSMSGBOXES` for an unattended update. Uninstalling removes the program and asks whether to remove the data too (never in silent mode; the licence stays). `scripts/build_installer.ps1` builds it after `build_lite.ps1` with a `.sha256` next to it; `fluxion-build.bat --lite` does it when Inno Setup is installed (otherwise says how: `winget install JRSoftware.InnoSetup --scope user`), and `fluxion-release.bat` attaches it to the release. The site and the README offer the installer first, the `.7z` as the portable version.
 - One-click update. An installed Fluxion checks the latest release in the background a little after start, at most once a day (silent without an update or a connection; «Проверять обновления автоматически» in the dialog turns it off). The dialog shows the version and «Что нового», «Обновить сейчас», «Пропустить эту версию», «Позже» and links to the site and GitHub. «Обновить сейчас» downloads `FluxionSetup-<version>.exe` of the release with a cancelable progress, checks it against the `.sha256` asset (a missing or different checksum cancels the update), runs it with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RESTARTAPP` and quits; the installer replaces the program and starts it again. A portable or unpacked copy and a run from the sources get «Скачать с сайта» instead (`core/app_paths.is_installed`: the uninstaller next to the exe).
 - Optional code signing of the build: `FLUXION_SIGN_THUMBPRINT` (a certificate in the store or on a token, signtool) or `FLUXION_SIGNTOOL_CMD` (a cloud signer) sign `FluxionBrowserLite.exe` before packing and the setup with its uninstaller; without them nothing changes (OWNER_GUIDE.md, «Подпись кода»).
@@ -17,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - An installed Fluxion keeps the user's data out of the program folder (`core/app_paths.py`): chats, indexes, logs, the web cache, SearXNG settings and a user `config/config.yaml` are in `%LOCALAPPDATA%\Fluxion` (`data`, `config`), next to the models and the training environment. The first start of the new version copies `data` and `config` from next to the exe there once (the old folders stay; the training environment is used where it is). A file `portable.txt` next to the exe keeps everything in the exe folder, as before. Runs from the sources are unchanged.
 - `fluxion-update.bat` says it is a developer tool and refuses an archive with the same or an older `APP_VERSION` than the folder has (`--force` accepts it): a stale `Fluxion-main-fixed.zip` in Downloads rolled the code back.
+
+### Fixed
+- Pillow is in `requirements.txt`: the OCR tests of «Архив КД» failed on CI.
 
 ## [0.20.0] — 2026-10-27
 
