@@ -25,7 +25,9 @@ from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSplitter, QTextBrowser,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-MANUAL_DIR = Path(__file__).with_name("manual")
+from .i18n import language, tr
+
+MANUAL_DIR = Path(__file__).with_name("manual")  # Russian; manual/<code>/ — the pages in another language
 _META_RE = re.compile(r"^<!--(.*?)-->\s*$", re.MULTILINE)
 
 
@@ -39,7 +41,16 @@ class Page:
     text: str  # Markdown without the title and the meta line
 
 
-def load_pages(folder: Path = MANUAL_DIR) -> list[Page]:
+def load_pages(folder: Path | None = None, code: str = "") -> list[Page]:
+    """The pages of *folder*; by default the manual in the interface language: a page of
+    manual/<code>/ (the same file name) replaces the Russian one, the rest stay Russian."""
+    if folder is not None:
+        return _read_pages(folder)
+    translated = {p.key: p for p in _read_pages(MANUAL_DIR / (code or language()))}
+    return [translated.get(p.key, p) for p in _read_pages(MANUAL_DIR)]
+
+
+def _read_pages(folder: Path) -> list[Page]:
     pages = []
     for path in sorted(folder.glob("*.md")):
         try:
@@ -63,7 +74,7 @@ def load_pages(folder: Path = MANUAL_DIR) -> list[Page]:
             body = body.replace(meta.group(0), "", 1)
         tool = fields.get("инструмент", "")
         pages.append(Page(re.sub(r"^\d+-", "", path.stem), title.group(1).strip() if title else path.stem,
-                          fields.get("раздел", "Разное"), "" if tool == "-" else tool, "pro" in flags,
+                          fields.get("раздел", tr("Разное")), "" if tool == "-" else tool, "pro" in flags,
                           body.strip()))
     return pages
 
@@ -79,7 +90,7 @@ def matches(page: Page, query: str) -> bool:
 
 
 def page_markdown(page: Page) -> str:
-    badge = "**Pro** — функция Fluxion Pro (меню «Помощь» → «Лицензия…»)" if page.pro else "Бесплатно"
+    badge = tr("**Pro** — функция Fluxion Pro (меню «Помощь» → «Лицензия…»)") if page.pro else tr("Бесплатно")
     return f"# {page.title}\n\n{badge}\n\n{page.text}"
 
 
@@ -93,11 +104,11 @@ class ManualDialog(QDialog):
         self.pages = load_pages() if pages is None else pages
         self.tools = tools or {}
         self.current: Page | None = None
-        self.setWindowTitle("Инструкция по инструментам")
+        self.setWindowTitle(tr("Инструкция по инструментам"))
         self.resize(980, 640)
         box = QVBoxLayout(self)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Поиск по инструкции: «материал», «DXF», «архив»…")
+        self.search.setPlaceholderText(tr("Поиск по инструкции: «материал», «DXF», «архив»…"))
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._fill)
         box.addWidget(self.search)
@@ -117,11 +128,11 @@ class ManualDialog(QDialog):
         self.hint = QLabel()
         self.hint.setObjectName("subtitle")
         row.addWidget(self.hint, 1)
-        self.open_button = QPushButton("Открыть инструмент")
+        self.open_button = QPushButton(tr("Открыть инструмент"))
         self.open_button.setObjectName("sendButton")
         self.open_button.clicked.connect(self._open_tool)
         row.addWidget(self.open_button)
-        close = QPushButton("Закрыть")
+        close = QPushButton(tr("Закрыть"))
         close.clicked.connect(self.reject)
         row.addWidget(close)
         right_box.addLayout(row)
@@ -140,7 +151,7 @@ class ManualDialog(QDialog):
                 continue
             parent = sections.get(page.section)
             if parent is None:
-                parent = sections[page.section] = QTreeWidgetItem(self.tree, [page.section])
+                parent = sections[page.section] = QTreeWidgetItem(self.tree, [tr(page.section)])
                 parent.setFlags(parent.flags() & ~Qt.ItemIsSelectable)
                 parent.setExpanded(True)
             item = QTreeWidgetItem(parent, [page.title + ("  · Pro" if page.pro else "")])
@@ -148,7 +159,7 @@ class ManualDialog(QDialog):
             first = first or item
         if first is None:
             self.current = None
-            self.view.setMarkdown("Ничего не найдено." if self.pages else "Инструкция пуста.")
+            self.view.setMarkdown(tr("Ничего не найдено.") if self.pages else tr("Инструкция пуста."))
             self.open_button.setEnabled(False)
             self.hint.clear()
         elif query.strip():
@@ -172,7 +183,7 @@ class ManualDialog(QDialog):
         can_open = bool(page.tool) and page.tool in self.tools
         self.open_button.setVisible(bool(page.tool))
         self.open_button.setEnabled(can_open)
-        self.hint.setText("" if can_open or not page.tool else "Закройте окно инструмента, чтобы открыть его отсюда")
+        self.hint.setText("" if can_open or not page.tool else tr("Закройте окно инструмента, чтобы открыть его отсюда"))
 
     def _open_tool(self) -> None:
         if self.current is None or self.current.tool not in self.tools:
@@ -189,7 +200,7 @@ def open_manual(parent=None, page: str = "", tools: dict[str, Callable[[], objec
 def help_button(dialog, page: str) -> QPushButton:
     """A «?» button for the window of a tool: the manual on its page; F1 in the window too."""
     button = QPushButton("?")
-    button.setToolTip("Инструкция (F1)")
+    button.setToolTip(tr("Инструкция (F1)"))
     button.setFixedWidth(32)
     button.clicked.connect(lambda: open_manual(dialog, page))
     QShortcut(QKeySequence("F1"), dialog, activated=lambda: open_manual(dialog, page))

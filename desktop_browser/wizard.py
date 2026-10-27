@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from .health import DependencyStatus, check_all, linkify
 from .installer import WINGET_PACKAGES, ensure_docker, refresh_path, winget_available, winget_install
+from .i18n import tr
 
 
 class WizardCheckWorker(QThread):
@@ -48,10 +49,10 @@ class InstallWorker(QThread):
             package = WINGET_PACKAGES.get(key)
             if package is None:
                 continue
-            self.line.emit(f"Устанавливаем {key} ({package})…")
+            self.line.emit(tr("Устанавливаем {key} ({package})…", key=key, package=package))
             ok, output = winget_install(package, on_line=self.line.emit)
             ok_all = ok_all and ok
-            entry = f"{key}: {'установлен' if ok else 'не установлен'}"
+            entry = f"{key}: {tr('установлен') if ok else tr('не установлен')}"
             if not ok:
                 tail = output.strip().splitlines()[-1] if output.strip() else ""
                 if tail:
@@ -59,11 +60,11 @@ class InstallWorker(QThread):
             report.append(entry)
         refresh_path()
         if "docker" in self.keys:
-            self.line.emit("Запускаем Docker Desktop…")
+            self.line.emit(tr("Запускаем Docker Desktop…"))
             if not ensure_docker(wait_secs=150.0, on_status=self.line.emit):
                 ok_all = False
                 report.append(
-                    "docker: демон не поднялся — возможно, нужна перезагрузка после установки"
+                    tr("docker: демон не поднялся — возможно, нужна перезагрузка после установки")
                 )
         self.done.emit(ok_all, "\n".join(report))
 
@@ -93,7 +94,7 @@ class PullWorker(QThread):
                     pct = -1
                 self.progress.emit(status, pct)
         except Exception as exc:
-            self.failed.emit(f"Ошибка загрузки модели: {exc}")
+            self.failed.emit(tr("Ошибка загрузки модели: {exc}", exc=exc))
             return
         self.done.emit()
 
@@ -117,11 +118,11 @@ class GgufDownloadWorker(QThread):
             mm.download(
                 self.model_id,
                 on_progress=lambda done, total: self.progress.emit(
-                    "Скачиваем модель…", int(100 * done / total) if total else -1
+                    tr("Скачиваем модель…"), int(100 * done / total) if total else -1
                 ),
             )
         except Exception as exc:
-            self.failed.emit(f"Ошибка загрузки модели: {exc}")
+            self.failed.emit(tr("Ошибка загрузки модели: {exc}", exc=exc))
             return
         self.done.emit()
 
@@ -145,10 +146,10 @@ class LlamaTestWorker(QThread):
                 backend.generate([{"role": "user", "content": "Ответь одним словом: работает?"}])
             )
         except Exception as exc:
-            self.failed.emit(f"Движок llama.cpp не ответил: {exc}")
+            self.failed.emit(tr("Движок llama.cpp не ответил: {exc}", exc=exc))
             return
         text = reply.strip().splitlines()[0] if reply.strip() else ""
-        self.ok.emit(text[:120] or "(пустой ответ)")
+        self.ok.emit(text[:120] or tr("(пустой ответ)"))
 
 
 def _backend_kind(settings) -> str:
@@ -180,13 +181,13 @@ class TestWorker(QThread):
                 options={"num_predict": 16},
             )
         except OllamaError as exc:
-            self.failed.emit(f"Модель не ответила: {exc}")
+            self.failed.emit(tr("Модель не ответила: {exc}", exc=exc))
             return
         except Exception as exc:
-            self.failed.emit(f"Ошибка соединения: {exc}")
+            self.failed.emit(tr("Ошибка соединения: {exc}", exc=exc))
             return
         text = reply.strip().splitlines()[0] if reply.strip() else ""
-        self.ok.emit(text[:120] or "(пустой ответ)")
+        self.ok.emit(text[:120] or tr("(пустой ответ)"))
 
 
 class FirstRunWizard(QDialog):
@@ -203,25 +204,25 @@ class FirstRunWizard(QDialog):
         self._test_worker: TestWorker | None = None
         self._install_worker: InstallWorker | None = None
 
-        self.setWindowTitle("Fluxion — первичная настройка")
+        self.setWindowTitle(tr("Fluxion — первичная настройка"))
         self.setMinimumWidth(520)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(10)
 
-        title = QLabel("Добро пожаловать!")
+        title = QLabel(tr("Добро пожаловать!"))
         title.setStyleSheet("font-size: 16px; font-weight: 600;")
         layout.addWidget(title)
-        layout.addWidget(QLabel("Проверим зависимости. Всё настраивается локально — код не покидает машину."))
+        layout.addWidget(QLabel(tr("Проверим зависимости. Всё настраивается локально — код не покидает машину.")))
 
-        self.check_label = QLabel("Проверяем зависимости…")
+        self.check_label = QLabel(tr("Проверяем зависимости…"))
         self.check_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.check_label.setWordWrap(True)
         self.check_label.setOpenExternalLinks(True)
         layout.addWidget(self.check_label)
 
-        self.install_button = QPushButton("Установить недостающее автоматически")
+        self.install_button = QPushButton(tr("Установить недостающее автоматически"))
         self.install_button.setObjectName("themeButton")
         self.install_button.clicked.connect(self._start_install)
         self.install_button.setVisible(False)
@@ -247,11 +248,11 @@ class FirstRunWizard(QDialog):
         layout.addWidget(self.pull_status)
 
         buttons = QHBoxLayout()
-        self.test_button = QPushButton("Проверить связь")
+        self.test_button = QPushButton(tr("Проверить связь"))
         self.test_button.clicked.connect(self._start_test)
         buttons.addWidget(self.test_button)
         buttons.addStretch()
-        self.finish_button = QPushButton("Готово")
+        self.finish_button = QPushButton(tr("Готово"))
         self.finish_button.setObjectName("sendButton")
         self.finish_button.clicked.connect(self.accept)
         buttons.addWidget(self.finish_button)
@@ -286,11 +287,11 @@ class FirstRunWizard(QDialog):
                 model_missing = True
         self.check_label.setText("<br>".join(lines))
         if model_missing:
-            model = getattr(self.settings, "model", "модель")
+            model = getattr(self.settings, "model", tr("модель"))
             if _backend_kind(self.settings) == "llama_cpp":
-                self.pull_button.setText("Скачать модель (GGUF, с докачкой)")
+                self.pull_button.setText(tr("Скачать модель (GGUF, с докачкой)"))
             else:
-                self.pull_button.setText(f"Скачать модель {model}")
+                self.pull_button.setText(tr("Скачать модель {model}", model=model))
             self.pull_button.setVisible(True)
         installable = [
             s.key for s in statuses
@@ -298,7 +299,7 @@ class FirstRunWizard(QDialog):
         ]
         if installable and winget_available():
             self.install_button.setText(
-                f"Установить автоматически ({', '.join(installable)})"
+                tr("Установить автоматически ({value})", value=', '.join(installable))
             )
             self.install_button.setVisible(True)
         else:
@@ -315,7 +316,7 @@ class FirstRunWizard(QDialog):
             return
         self.install_button.setEnabled(False)
         self.install_status.setVisible(True)
-        self.install_status.setText("Установка может занять несколько минут…")
+        self.install_status.setText(tr("Установка может занять несколько минут…"))
         self._install_worker = InstallWorker(keys)
         self._install_worker.line.connect(self._on_install_line)
         self._install_worker.done.connect(self._on_install_done)
@@ -337,10 +338,10 @@ class FirstRunWizard(QDialog):
         self.pull_progress.setRange(0, 100)
         self.pull_status.setVisible(True)
         if _backend_kind(self.settings) == "llama_cpp":
-            self.pull_status.setText("Скачиваем модель…")
+            self.pull_status.setText(tr("Скачиваем модель…"))
             self._pull_worker = GgufDownloadWorker()
         else:
-            self.pull_status.setText("Подключение к Ollama…")
+            self.pull_status.setText(tr("Подключение к Ollama…"))
             self._pull_worker = PullWorker(
                 getattr(self.settings, "ollama_host", "http://localhost:11434"),
                 getattr(self.settings, "model", ""),
@@ -367,7 +368,7 @@ class FirstRunWizard(QDialog):
     def _on_pull_done(self) -> None:
         self.pull_progress.setRange(0, 100)
         self.pull_progress.setValue(100)
-        self.pull_status.setText("✅ Модель скачана.")
+        self.pull_status.setText(tr("✅ Модель скачана."))
         self.pull_button.setVisible(False)
         self._run_checks()
 
@@ -375,7 +376,7 @@ class FirstRunWizard(QDialog):
 
     def _start_test(self) -> None:
         self.test_button.setEnabled(False)
-        self.test_result.setText("Проверяем связь с моделью…")
+        self.test_result.setText(tr("Проверяем связь с моделью…"))
         if _backend_kind(self.settings) == "llama_cpp":
             self._test_worker = LlamaTestWorker(self.settings)
         else:
@@ -388,7 +389,7 @@ class FirstRunWizard(QDialog):
         self._test_worker.start()
 
     def _on_test_ok(self, reply: str) -> None:
-        self.test_result.setText(f"✅ Модель отвечает: «{reply}»")
+        self.test_result.setText(tr("✅ Модель отвечает: «{reply}»", reply=reply))
         self.test_button.setEnabled(True)
 
     def _on_test_failed(self, message: str) -> None:

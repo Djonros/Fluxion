@@ -12,8 +12,9 @@ cd /d "%~dp0"
 ::    fluxion-release.bat --check   - только проверки и тесты, ничего не меняет
 ::
 ::  Версия берётся из desktop_browser\__init__.py (APP_VERSION), тег - v<версия>.
-::  Перед выпуском: пересоберите exe (fluxion-update.bat --build-only) и
-::  добавьте раздел версии в CHANGELOG.md.
+::  Перед выпуском: пересоберите exe (fluxion-build.bat --lite) и
+::  добавьте раздел версии в CHANGELOG.md. К релизу прикрепляются архивы .7z
+::  и установщик dist\artifacts\FluxionSetup-<версия>.exe с файлом .sha256.
 :: ============================================================================
 
 set "CHECK_ONLY="
@@ -134,7 +135,7 @@ echo       Отправлено
 
 :: ── 7. Релиз на GitHub ──────────────────────────────────────────────────────
 echo [7/7] Релиз на GitHub...
-powershell -NoProfile -Command "$d = Join-Path (Get-Location) 'dist\artifacts'; $limit = 2GB; $out = @(); foreach ($kind in 'Lite','Full') { $f = Get-ChildItem -LiteralPath $d -Filter ('FluxionBrowser-' + $kind + '-*.7z') -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($f) { $mb = [math]::Round($f.Length / 1MB); if ($f.Length -lt $limit) { $out += $f.FullName; Write-Host ('      ' + $f.Name + '  ' + $mb + ' MB  ' + $f.LastWriteTime) } else { Write-Host ('      [!] ' + $f.Name + ' - ' + $mb + ' MB: больше лимита GitHub 2 ГБ, не прикрепляется') } } }; Set-Content -Encoding UTF8 -LiteralPath ($env:TMPF + '.assets') -Value $out"
+powershell -NoProfile -Command "$d = Join-Path (Get-Location) 'dist\artifacts'; $limit = 2GB; $out = @(); foreach ($kind in 'Lite','Full') { $f = Get-ChildItem -LiteralPath $d -Filter ('FluxionBrowser-' + $kind + '-*.7z') -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($f) { $mb = [math]::Round($f.Length / 1MB); if ($f.Length -lt $limit) { $out += $f.FullName; Write-Host ('      ' + $f.Name + '  ' + $mb + ' MB  ' + $f.LastWriteTime) } else { Write-Host ('      [!] ' + $f.Name + ' - ' + $mb + ' MB: больше лимита GitHub 2 ГБ, не прикрепляется') } } }; $setup = Join-Path $d ('FluxionSetup-' + $env:VER + '.exe'); if (Test-Path -LiteralPath $setup) { $s = Get-Item -LiteralPath $setup; $out += $s.FullName; Write-Host ('      ' + $s.Name + '  ' + [math]::Round($s.Length / 1MB) + ' MB  ' + $s.LastWriteTime); if (Test-Path -LiteralPath ($setup + '.sha256')) { $out += ($setup + '.sha256') } } else { Write-Host ('      [!] Нет установщика FluxionSetup-' + $env:VER + '.exe: соберите его (fluxion-build.bat --lite, нужен Inno Setup)') }; Set-Content -Encoding UTF8 -LiteralPath ($env:TMPF + '.assets') -Value $out"
 set "HAVE_ASSETS="
 if exist "%TMPF%.assets" for %%A in ("%TMPF%.assets") do if %%~zA GTR 3 set "HAVE_ASSETS=1"
 if not defined HAVE_ASSETS echo       [!] В dist\artifacts нет архивов сборки - релиз будет без файлов.

@@ -49,6 +49,7 @@ a = Analysis(
         ("core/model_catalog.json", "core"),  # catalog of the "Модели" page
         ("cad/materials.json", "cad"),  # materials of "Деталь в КОМПАС" (cad/materials.py)
         ("desktop_browser/manual", "desktop_browser/manual"),  # «Инструкция по инструментам» (desktop_browser/manual.py)
+        ("desktop_browser/locales", "desktop_browser/locales"),  # interface languages (desktop_browser/i18n.py)
         ("finetune", "finetune"),
         ("licensing", "licensing"),
         # plain sources for the training env's own interpreter (PYTHONPATH)
@@ -167,6 +168,7 @@ a = Analysis(
         "cad.acad_check",
         "desktop_browser.acad_check_dialog",
         "desktop_browser.manual",
+        "desktop_browser.i18n",
         "desktop_browser.archive_dialog",
         # «Инженерный калькулятор»: imported lazily from the window and the chat
         "calc",

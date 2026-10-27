@@ -6,7 +6,6 @@ import secrets
 import os
 import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -31,11 +30,9 @@ search:
 
 
 def _data_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).resolve().parent
-    else:
-        base = Path(__file__).resolve().parent.parent
-    data = base / "data" / "searxng"
+    from core.app_paths import data_dir
+
+    data = data_dir() / "searxng"
     data.mkdir(parents=True, exist_ok=True)
     return data
 

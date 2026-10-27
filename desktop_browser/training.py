@@ -138,11 +138,15 @@ def training_env_dir(data_dir: str | Path) -> Path:
     From sources it is ``<data_dir>/training_env``. A frozen build keeps it in
     ``%LOCALAPPDATA%/Fluxion/training_env``: the environment (several GB) then
     survives a new version in another folder, a moved program and a start from
-    an archiver's temp folder. A ready environment in the old place is still used.
+    an archiver's temp folder. A ready environment in the old place (the data
+    folder, or ``data`` next to the exe of an earlier build) is still used.
     """
     legacy = Path(data_dir) / ENV_DIR_NAME
     if not getattr(sys, "frozen", False) or detect_training_env(legacy):
         return legacy
+    exe_legacy = Path(sys.executable).resolve().parent / "data" / ENV_DIR_NAME
+    if detect_training_env(exe_legacy):
+        return exe_legacy
     base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
     return Path(base) / "Fluxion" / ENV_DIR_NAME
 

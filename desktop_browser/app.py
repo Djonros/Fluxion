@@ -46,8 +46,9 @@ from PySide6.QtWidgets import (
 from cli.theme import DARK, LIGHT, Theme
 from core.language import LANG_NAMES, matches_language, resolve_target
 from licensing.store import load_activation
-from . import APP_VERSION
+from . import APP_VERSION, SITE_URL
 from .banner import BrandBanner
+from .i18n import LANGUAGES, SETTING_KEY as LANGUAGE_SETTING, language, load_catalog, tr
 from .browser import create_browser_panel
 from .memory import delete_session, load_sessions, save_session, session_title
 from .runtime import TEMP_RUN_WARNING, is_temp_run
@@ -91,16 +92,16 @@ def resolve_project_root(picked_value: str, settings) -> str:
     return str(settings.project_root())
 
 WELCOME_HTML = (
-    "<h3>Добро пожаловать в Fluxion</h3>"
-    "<p>Спросите о коде, архитектуре или начните с примера сверху.</p>"
+    tr("<h3>Добро пожаловать в Fluxion</h3>"
+    "<p>Спросите о коде, архитектуре или начните с примера сверху.</p>")
 )
 
 PLAN_TASK_PREFIX = (
-    "Составь нумерованный план действий по задаче. Не изменяй файлы. "
+    tr("Составь нумерованный план действий по задаче. Не изменяй файлы. "
     "Прочитай нужные файлы по одному разу, затем вызови finish: "
-    "в ответе — нумерованный список шагов."
+    "в ответе — нумерованный список шагов.")
 )
-PLAN_RUN_PREFIX = "Реализуй план:\n"
+PLAN_RUN_PREFIX = tr("Реализуй план:\n")
 PLAN_RUN_URL = "fluxion://run-plan"
 SPEAK_URL = "fluxion://speak/"  # + index of the answer in _messages
 HANDS_FREE_WAIT = 8.0  # seconds to wait for speech before listening again
@@ -116,14 +117,14 @@ ACTIVITY_QUIET_WARNING = 300
 LARGE_DATASET = 20_000  # records; above it training asks to take a part
 SUGGESTED_SAMPLES = 5_000
 TEMP_RUN_TRAINING = (
-    "Обучение недоступно: программа запущена прямо из архива (временная папка). "
+    tr("Обучение недоступно: программа запущена прямо из архива (временная папка). "
     "Распакуйте Fluxion в обычную папку и запустите оттуда — иначе окружение "
-    "обучения и результаты пропадут при закрытии архиватора."
+    "обучения и результаты пропадут при закрытии архиватора.")
 )
 VERIFICATION_LABELS = {
-    "passed": "тесты пройдены",
-    "failed": "тесты НЕ пройдены",
-    "syntax_only": "тестов нет — проверен только синтаксис",
+    "passed": tr("тесты пройдены"),
+    "failed": tr("тесты НЕ пройдены"),
+    "syntax_only": tr("тестов нет — проверен только синтаксис"),
 }
 
 
@@ -372,6 +373,39 @@ class UpdateWorker(QThread):
         self.done.emit(check_for_updates(self._version))
 
 
+class InstallerDownloadWorker(QThread):
+    """One-click update: downloads FluxionSetup.exe of the release and checks its SHA256."""
+
+    progress = Signal(int, int)  # done_bytes, total_bytes (0 = unknown)
+    failed = Signal(str)  # UpdateError.kind; "network:<message>" for a network error
+    done = Signal(str)  # the checked installer
+
+    def __init__(self, info, parent=None):
+        super().__init__(parent)
+        self.info = info
+        self._cancel = False
+
+    def cancel(self) -> None:
+        self._cancel = True
+
+    def run(self) -> None:
+        import tempfile
+
+        from core.update import UpdateError, download_installer
+
+        try:
+            path = download_installer(
+                self.info,
+                Path(tempfile.gettempdir()) / "FluxionUpdate",
+                on_progress=lambda done, total: self.progress.emit(done, total),
+                cancelled=lambda: self._cancel,
+            )
+        except UpdateError as exc:
+            self.failed.emit(f"network:{exc}" if exc.kind == "network" else exc.kind)
+            return
+        self.done.emit(str(path))
+
+
 class ModelDownloadWorker(QThread):
     """Downloads a catalog GGUF model with progress/resume (roadmap 18.2)."""
 
@@ -395,7 +429,7 @@ class ModelDownloadWorker(QThread):
             else:
                 path = mm.download(self.model_id, on_progress=report)
         except Exception as exc:
-            self.failed.emit(f"Ошибка загрузки модели: {exc}")
+            self.failed.emit(tr("Ошибка загрузки модели: {exc}", exc=exc))
             return
         self.done.emit(str(path))
 
@@ -426,7 +460,7 @@ class HfDownloadDialog(QDialog):
 
     def __init__(self, parent=None, installed: set[str] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Скачать модель по ссылке")
+        self.setWindowTitle(tr("Скачать модель по ссылке"))
         self.setMinimumWidth(560)
         self.installed = {name.lower() for name in installed or ()}
         self.selected_file = None
@@ -435,17 +469,17 @@ class HfDownloadDialog(QDialog):
 
         layout = QVBoxLayout(self)
         hint = QLabel(
-            "Вставьте ссылку на модель в формате GGUF с Hugging Face: страницу модели "
-            "(например, huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF) или ссылку на файл."
+            tr("Вставьте ссылку на модель в формате GGUF с Hugging Face: страницу модели "
+            "(например, huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF) или ссылку на файл.")
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
         row = QHBoxLayout()
         self.link = QLineEdit()
-        self.link.setPlaceholderText("https://huggingface.co/автор/модель-GGUF")
+        self.link.setPlaceholderText(tr("https://huggingface.co/автор/модель-GGUF"))
         self.link.returnPressed.connect(self.find_files)
         row.addWidget(self.link, 1)
-        self.find_button = QPushButton("Найти файлы")
+        self.find_button = QPushButton(tr("Найти файлы"))
         self.find_button.clicked.connect(self.find_files)
         row.addWidget(self.find_button)
         layout.addLayout(row)
@@ -459,9 +493,9 @@ class HfDownloadDialog(QDialog):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         note = QLabel(
-            "Модели не из каталога Fluxion не проверены: чат обычно работает, а агент "
+            tr("Модели не из каталога Fluxion не проверены: чат обычно работает, а агент "
             "и вызовы инструментов могут работать хуже. Чем меньше файл, тем быстрее "
-            "модель и ниже качество; Q4_K_M — хороший баланс."
+            "модель и ниже качество; Q4_K_M — хороший баланс.")
         )
         note.setObjectName("subtitle")
         note.setWordWrap(True)
@@ -469,10 +503,10 @@ class HfDownloadDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch()
-        cancel = QPushButton("Отмена")
+        cancel = QPushButton(tr("Отмена"))
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
-        self.download_button = QPushButton("Скачать")
+        self.download_button = QPushButton(tr("Скачать"))
         self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self._accept_selected)
         buttons.addWidget(self.download_button)
@@ -492,7 +526,7 @@ class HfDownloadDialog(QDialog):
         self.files.clear()
         self.download_button.setEnabled(False)
         self.find_button.setEnabled(False)
-        self.status.setText(f"Ищем файлы модели {repo_id}…")
+        self.status.setText(tr("Ищем файлы модели {repo_id}…", repo_id=repo_id))
         self._worker = HfFilesWorker(repo_id, self)
         self._worker.done.connect(self.show_files)
         self._worker.failed.connect(self._on_failed)
@@ -516,10 +550,10 @@ class HfDownloadDialog(QDialog):
         pick = None
         for file in files:
             problem = hf_file_problem(file.path)
-            size = f"{file.size_bytes / 1e9:.1f} ГБ" if file.size_bytes else "размер неизвестен"
+            size = tr("{value:.1f} ГБ", value=file.size_bytes / 1e9) if file.size_bytes else tr("размер неизвестен")
             text = f"{file.path} · {size}"
             if file.filename.lower() in self.installed:
-                text += " · уже скачана"
+                text += tr(" · уже скачана")
             if problem:
                 text += f" · {problem}"
             item = QListWidgetItem(text)
@@ -534,11 +568,11 @@ class HfDownloadDialog(QDialog):
         usable = [self.files.item(i) for i in range(self.files.count())
                   if self.files.item(i).flags() & Qt.ItemIsEnabled]
         if not files:
-            self.status.setText("В этой модели нет файлов GGUF. Ищите репозиторий с «GGUF» в названии.")
+            self.status.setText(tr("В этой модели нет файлов GGUF. Ищите репозиторий с «GGUF» в названии."))
         elif not usable:
-            self.status.setText("Подходящих файлов нет.")
+            self.status.setText(tr("Подходящих файлов нет."))
         else:
-            self.status.setText(f"Файлов GGUF: {len(usable)}. Выберите один и нажмите «Скачать».")
+            self.status.setText(tr("Файлов GGUF: {n_usable}. Выберите один и нажмите «Скачать».", n_usable=len(usable)))
         if pick is None:
             pick = next((i for i in usable if "q4_k_m" in i.text().lower()), None)
         if pick is not None:
@@ -577,7 +611,7 @@ class SpeechModelDownloadWorker(QThread):
         try:
             path = models.download(self.model_id, on_progress=lambda d, t: self.progress.emit(d, t))
         except Exception as exc:
-            self.failed.emit(f"Ошибка загрузки модели распознавания речи: {exc}")
+            self.failed.emit(tr("Ошибка загрузки модели распознавания речи: {exc}", exc=exc))
             return
         self.done.emit(str(path))
 
@@ -632,16 +666,16 @@ class ModelImportWorker(QThread):
         try:
             if self.source_path:
                 item = mm.import_from_disk(self.source_path)
-                self.done.emit(f"Импортирована модель: {item.filename}")
+                self.done.emit(tr("Импортирована модель: {filename}", filename=item.filename))
                 return
             imported = mm.import_from_ollama()
             if imported:
                 names = ", ".join(i.filename for i in imported)
-                self.done.emit(f"Импортировано из Ollama: {names}")
+                self.done.emit(tr("Импортировано из Ollama: {names}", names=names))
             else:
-                self.done.emit("В хранилище Ollama GGUF-модели не найдены.")
+                self.done.emit(tr("В хранилище Ollama GGUF-модели не найдены."))
         except Exception as exc:
-            self.failed.emit(f"Ошибка импорта: {exc}")
+            self.failed.emit(tr("Ошибка импорта: {exc}", exc=exc))
 
 
 class ChatWorker(QThread):
@@ -675,7 +709,7 @@ class ChatWorker(QThread):
                     extra["source"] = self.source
                 result, stream = self.assistant.ask_stream(query=query, history=self.history, **extra)
             except Exception as exc:
-                self.failed.emit(f"Ошибка генерации: {exc}")
+                self.failed.emit(tr("Ошибка генерации: {exc}", exc=exc))
                 return
             if attempt == 1:
                 self.meta.emit(result)
@@ -697,7 +731,7 @@ class ChatWorker(QThread):
                         mismatch = True
                         break
             except Exception as exc:
-                self.failed.emit(f"Ошибка генерации: {exc}")
+                self.failed.emit(tr("Ошибка генерации: {exc}", exc=exc))
                 return
             if mismatch and not self._stop:
                 self.text_reset.emit()
@@ -713,7 +747,7 @@ class ChatWorker(QThread):
 
 
 CAD_PREFIXES = ("/компас", "/kompas")
-CAD_HINT = "Например: втулка 30 на 20 длиной 50, фаска 1, бронза"
+CAD_HINT = tr("Например: втулка 30 на 20 длиной 50, фаска 1, бронза")
 
 
 def cad_command(text: str) -> str | None:
@@ -802,10 +836,10 @@ class CadWorker(QThread):
         try:
             reply = self.conversation.step(self.message)
         except spec.SpecError as exc:
-            self.failed.emit(f"Не получилось разобрать описание: {exc}")
+            self.failed.emit(tr("Не получилось разобрать описание: {exc}", exc=exc))
             return
         except Exception as exc:
-            self.failed.emit(f"Модель не ответила: {exc}")
+            self.failed.emit(tr("Модель не ответила: {exc}", exc=exc))
             return
         if reply.kind == "ask":
             self.asked.emit(reply.text)
@@ -815,7 +849,7 @@ class CadWorker(QThread):
             return
         part = reply.part
         self.progress.emit(reply.text)
-        self.progress.emit("Строю в КОМПАС-3D…")
+        self.progress.emit(tr("Строю в КОМПАС-3D…"))
         try:
             result = kompas.build_part(part, kompas.part_path(part["name"]), log=lambda line: None)
         except kompas.KompasError as exc:
@@ -823,7 +857,7 @@ class CadWorker(QThread):
             return
         except Exception as exc:  # COM errors carry the KOMPAS message
             reason = getattr(exc, "strerror", None) or str(exc)
-            self.failed.emit(f"КОМПАС-3D не смог построить деталь: {reason}")
+            self.failed.emit(tr("КОМПАС-3D не смог построить деталь: {reason}", reason=reason))
             return
         from cad.text2cad import result_text
 
@@ -851,10 +885,10 @@ class CalcWorker(QThread):
         try:
             reply = self.conversation.step(self.message)
         except CalcError as exc:
-            self.failed.emit(f"Не получилось разобрать вопрос: {exc}")
+            self.failed.emit(tr("Не получилось разобрать вопрос: {exc}", exc=exc))
             return
         except Exception as exc:
-            self.failed.emit(f"Модель не ответила: {exc}")
+            self.failed.emit(tr("Модель не ответила: {exc}", exc=exc))
             return
         if reply.kind == "ask":
             self.asked.emit(reply.text)
@@ -865,7 +899,7 @@ class CalcWorker(QThread):
         text = reply.text
         comment = explain(reply.result, self.conversation.backend)
         if comment:
-            text += "\n\nПояснение (модель): " + comment
+            text += tr("\n\nПояснение (модель): ") + comment
         self.done.emit(text, reply.calc, reply.params or {})
 
 
@@ -895,14 +929,14 @@ class AssemblyReportWorker(QThread):
             if self.fixes:
                 self._fix()
             top = assembly.read(self.path, log=self.progress.emit)
-            self.progress.emit("Считаю ведомость и металлоёмкость…")
+            self.progress.emit(tr("Считаю ведомость и металлоёмкость…"))
             result = report.build(top, report.load_decisions(top.file))
             report.add_welds(result, log=self.progress.emit)
         except assembly.AssemblyError as exc:
             self.failed.emit(str(exc))
             return
         except Exception as exc:  # COM errors carry the KOMPAS message
-            self.failed.emit(f"Не получилось составить отчёт: {exc}")
+            self.failed.emit(tr("Не получилось составить отчёт: {exc}", exc=exc))
             return
         finally:
             if pythoncom is not None:
@@ -916,7 +950,7 @@ class AssemblyReportWorker(QThread):
         files = list(dict.fromkeys([self.path] + [f.file or self.path for f in self.fixes]))
         stamp = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
         for file in files:
-            self.progress.emit(f"Резервная копия: {fix.backup(file, stamp)}")
+            self.progress.emit(tr("Резервная копия: {value}", value=fix.backup(file, stamp)))
         sections = [f for f in self.fixes if isinstance(f, fix.SectionFix)]
         if sections:
             for line in fix.apply_section_fixes(self.path, sections, log=lambda _line: None):
@@ -940,20 +974,20 @@ class ReportWarningsDialog(QDialog):
         from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
 
         self.result = result
-        self.setWindowTitle("Перед оформлением отчёта")
+        self.setWindowTitle(tr("Перед оформлением отчёта"))
         self.resize(1100, 560)
         box = QVBoxLayout(self)
         intro = QLabel(
-            f"<b>{html.escape(result.top.title)}</b>: спорных мест — {len(result.remarks)}. "
+            tr("<b>{value}</b>: спорных мест — {n_remarks}. "
             "Отметьте каждое: отчёт формируется, только когда отмечено всё. "
             "У покупных снимите «Покупное», если это ваше изготовление. Отметки запоминаются для этого изделия. "
-            "Двойной щелчок по строке открывает модель в КОМПАС, по пути к файлу — его папку."
+            "Двойной щелчок по строке открывает модель в КОМПАС, по пути к файлу — его папку.", value=html.escape(result.top.title), n_remarks=len(result.remarks))
         )
         intro.setWordWrap(True)
         intro.setTextFormat(Qt.RichText)
         box.addWidget(intro)
-        headers = ["Проверено", "Покупное", "Уровень", "Замечание", "Обозначение и наименование", "Где",
-                   "Что будет и что сделать"]
+        headers = [tr("Проверено"), tr("Покупное"), tr("Уровень"), tr("Замечание"), tr("Обозначение и наименование"), tr("Где"),
+                   tr("Что будет и что сделать")]
         self.table = QTableWidget(len(result.remarks), len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.verticalHeader().setVisible(False)
@@ -977,8 +1011,8 @@ class ReportWarningsDialog(QDialog):
                 if (col == 4 or col == 6 and self._borrowed(r)) and r.get("file"):  # links: the model, its folder
                     from cad.report import model_file
 
-                    item.setToolTip(f"Открыть: {model_file(r['file'])}" if col == 4
-                                    else f"Показать в папке: {model_file(r['file'])}")
+                    item.setToolTip(tr("Открыть: {value}", value=model_file(r['file'])) if col == 4
+                                    else tr("Показать в папке: {value}", value=model_file(r['file'])))
                     item.setForeground(QColor("#0563C1"))
                     font = item.font()
                     font.setUnderline(True)
@@ -1006,19 +1040,19 @@ class ReportWarningsDialog(QDialog):
         self.material_fixes = material_fixes(result.top)
         self.fix_requested = False
         if self.fixes:
-            fix_button = QPushButton(f"Исправить в модели ({len(self.fixes)})…")
-            fix_button.setToolTip("Перенести покупные в «Прочие изделия» спецификации их сборок")
+            fix_button = QPushButton(tr("Исправить в модели ({n_fixes})…", n_fixes=len(self.fixes)))
+            fix_button.setToolTip(tr("Перенести покупные в «Прочие изделия» спецификации их сборок"))
             fix_button.clicked.connect(self._ask_fix)
             buttons.addWidget(fix_button)
         if self.material_fixes:
-            material_button = QPushButton(f"Задать материал ({len(self.material_fixes)})…")
-            material_button.setToolTip("Выбрать материал в справочнике «Материалы» КОМПАС-3D для деталей без материала")
+            material_button = QPushButton(tr("Задать материал ({n_material_fixes})…", n_material_fixes=len(self.material_fixes)))
+            material_button.setToolTip(tr("Выбрать материал в справочнике «Материалы» КОМПАС-3D для деталей без материала"))
             material_button.clicked.connect(self._ask_material)
             buttons.addWidget(material_button)
-        cancel = QPushButton("Отмена — исправлю модель")
+        cancel = QPushButton(tr("Отмена — исправлю модель"))
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
-        self.make_button = QPushButton("Сформировать отчёт")
+        self.make_button = QPushButton(tr("Сформировать отчёт"))
         self.make_button.setObjectName("sendButton")
         self.make_button.clicked.connect(self.accept)
         buttons.addWidget(self.make_button)
@@ -1032,14 +1066,14 @@ class ReportWarningsDialog(QDialog):
         files = list(dict.fromkeys(f.file or self.result.top.file for f in self.fixes))
         lines = [f"• {f.text}" for f in self.fixes[:25]]
         if len(self.fixes) > 25:
-            lines.append(f"…и ещё {len(self.fixes) - 25}")
-        return ("Fluxion перенесёт покупные изделия в раздел «" + OTHER_SECTION + "» спецификации их сборок: "
+            lines.append(tr("…и ещё {value}", value=len(self.fixes) - 25))
+        return (tr("Fluxion перенесёт покупные изделия в раздел «") + OTHER_SECTION + tr("» спецификации их сборок: "
                 "изменит раздел объекта спецификации, а где его нет — создаст (сборке без спецификации — "
                 "и саму спецификацию). Файлы самих изделий "
-                "(и библиотеки покупных) не меняются.\n\n" + "\n".join(lines)
-                + "\n\nИзменятся файлы (перед этим — резервная копия в папке «Резервные копии Fluxion» рядом):\n"
+                "(и библиотеки покупных) не меняются.\n\n") + "\n".join(lines)
+                + tr("\n\nИзменятся файлы (перед этим — резервная копия в папке «Резервные копии Fluxion» рядом):\n")
                 + "\n".join(files)
-                + "\n\nСборка должна быть закрыта в КОМПАС-3D. После исправления отчёт составится заново.")
+                + tr("\n\nСборка должна быть закрыта в КОМПАС-3D. После исправления отчёт составится заново."))
 
     def _ask_fix(self) -> None:
         marks = self.marks()
@@ -1047,9 +1081,9 @@ class ReportWarningsDialog(QDialog):
                      if r["purchased"] is not None and not marks[r["id"]].get("purchased", True)}
         self.fixes = [f for f in self.fixes if f.component.title not in made_here]
         if not self.fixes:
-            QMessageBox.information(self, "Исправить в модели", "Исправлять нечего: всё отмечено как своё изготовление.")
+            QMessageBox.information(self, tr("Исправить в модели"), tr("Исправлять нечего: всё отмечено как своё изготовление."))
             return
-        answer = QMessageBox.question(self, "Исправить в модели", self.fix_text(),
+        answer = QMessageBox.question(self, tr("Исправить в модели"), self.fix_text(),
                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer == QMessageBox.Yes:
             self.fix_requested = True
@@ -1105,7 +1139,7 @@ class ReportWarningsDialog(QDialog):
         marks = self.marks()
         done = sum(1 for m in marks.values() if m["checked"])
         total = len(marks)
-        self.counter.setText(f"Отмечено {done} из {total}")
+        self.counter.setText(tr("Отмечено {done} из {total}", done=done, total=total))
         self.make_button.setEnabled(done == total)  # blocked until every place is marked
 
 
@@ -1117,12 +1151,12 @@ class MaterialFixDialog(QDialog):
         super().__init__(parent)
         self.fixes, self.product_file = fixes, product_file
         self.material: tuple[str, float] | None = None
-        self.setWindowTitle("Задать материал")
+        self.setWindowTitle(tr("Задать материал"))
         self.resize(820, 520)
         box = QVBoxLayout(self)
-        intro = QLabel("Отметьте детали и выберите материал в справочнике «Материалы» КОМПАС-3D. "
+        intro = QLabel(tr("Отметьте детали и выберите материал в справочнике «Материалы» КОМПАС-3D. "
                        "Материал записывается в файл детали (у локальной — в файл сборки); перед этим "
-                       "Fluxion сделает резервную копию каждого файла.")
+                       "Fluxion сделает резервную копию каждого файла."))
         intro.setWordWrap(True)
         box.addWidget(intro)
         self.list = QListWidget()
@@ -1134,10 +1168,10 @@ class MaterialFixDialog(QDialog):
         self.list.itemChanged.connect(self._update)
         box.addWidget(self.list, 1)
         row = QHBoxLayout()
-        self.material_label = QLabel("Материал не выбран")
+        self.material_label = QLabel(tr("Материал не выбран"))
         self.material_label.setWordWrap(True)
         row.addWidget(self.material_label, 1)
-        choose = QPushButton("Выбрать в справочнике КОМПАС…")
+        choose = QPushButton(tr("Выбрать в справочнике КОМПАС…"))
         choose.clicked.connect(self._choose)
         row.addWidget(choose)
         box.addLayout(row)
@@ -1146,10 +1180,10 @@ class MaterialFixDialog(QDialog):
 
         buttons.addWidget(help_button(self, "ispravit-v-modeli"))
         buttons.addStretch(1)
-        cancel = QPushButton("Отмена")
+        cancel = QPushButton(tr("Отмена"))
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
-        self.apply_button = QPushButton("Задать материал")
+        self.apply_button = QPushButton(tr("Задать материал"))
         self.apply_button.setObjectName("sendButton")
         self.apply_button.clicked.connect(self._confirm)
         buttons.addWidget(self.apply_button)
@@ -1169,8 +1203,8 @@ class MaterialFixDialog(QDialog):
         from cad.assembly import material_text
 
         self.material = (material, density)
-        self.material_label.setText(f"Материал: <b>{html.escape(material_text(material))}</b>, "
-                                    f"плотность {density:g} г/см³")
+        self.material_label.setText(tr("Материал: <b>{value}</b>, "
+                                    "плотность {density:g} г/см³", value=html.escape(material_text(material)), density=density))
         self._update()
 
     def _choose(self) -> None:
@@ -1179,7 +1213,7 @@ class MaterialFixDialog(QDialog):
         try:
             got = choose_kompas_material(int(self.winId()))
         except Exception as exc:  # no KOMPAS or no library
-            QMessageBox.warning(self, "Справочник «Материалы»", str(exc))
+            QMessageBox.warning(self, tr("Справочник «Материалы»"), str(exc))
             return
         if got:
             self.set_material(*got)
@@ -1191,17 +1225,17 @@ class MaterialFixDialog(QDialog):
         files = list(dict.fromkeys(f.file or self.product_file for f in fixes))
         product_dir = str(Path(self.product_file).parent).lower() if self.product_file else ""
         shared = [f for f in files if product_dir and not f.lower().startswith(product_dir)]
-        lines = [f"• {f.text}" for f in fixes[:25]] + ([f"…и ещё {len(fixes) - 25}"] if len(fixes) > 25 else [])
-        text = (f"Задать материал «{material_text(self.material[0])}» ({self.material[1]:g} г/см³):\n\n"
-                + "\n".join(lines) + "\n\nИзменятся файлы (перед этим — резервная копия в папке "
-                "«Резервные копии Fluxion» рядом):\n" + "\n".join(files))
+        lines = [f"• {f.text}" for f in fixes[:25]] + ([tr("…и ещё {value}", value=len(fixes) - 25)] if len(fixes) > 25 else [])
+        text = (tr("Задать материал «{value}» ({value2:g} г/см³):\n\n", value=material_text(self.material[0]), value2=self.material[1])
+                + "\n".join(lines) + tr("\n\nИзменятся файлы (перед этим — резервная копия в папке "
+                "«Резервные копии Fluxion» рядом):\n") + "\n".join(files))
         if shared:
-            text += ("\n\nВнимание: эти файлы лежат вне папки изделия — возможно, общие для других "
-                     "изделий, материал поменяется и там:\n" + "\n".join(shared))
-        return text + "\n\nСборка и детали должны быть закрыты в КОМПАС-3D. После этого отчёт составится заново."
+            text += (tr("\n\nВнимание: эти файлы лежат вне папки изделия — возможно, общие для других "
+                     "изделий, материал поменяется и там:\n") + "\n".join(shared))
+        return text + tr("\n\nСборка и детали должны быть закрыты в КОМПАС-3D. После этого отчёт составится заново.")
 
     def _confirm(self) -> None:
-        answer = QMessageBox.question(self, "Задать материал", self.confirm_text(),
+        answer = QMessageBox.question(self, tr("Задать материал"), self.confirm_text(),
                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer == QMessageBox.Yes:
             self.accept()
@@ -1216,7 +1250,7 @@ class MaterialsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Каталог материалов")
+        self.setWindowTitle(tr("Каталог материалов"))
         self.resize(720, 520)
         layout = QVBoxLayout(self)
         self.info = QLabel()
@@ -1228,14 +1262,14 @@ class MaterialsDialog(QDialog):
         from .manual import help_button
 
         buttons.addWidget(help_button(self, "katalog-materialov"))
-        for title, slot in (("Открыть файл каталога", self._open_file),
-                            ("Импорт из Excel/CSV…", self._import),
-                            ("Обновить", self.refresh)):
+        for title, slot in ((tr("Открыть файл каталога"), self._open_file),
+                            (tr("Импорт из Excel/CSV…"), self._import),
+                            (tr("Обновить"), self.refresh)):
             button = QPushButton(title)
             button.clicked.connect(slot)
             buttons.addWidget(button)
         buttons.addStretch(1)
-        close = QPushButton("Закрыть")
+        close = QPushButton(tr("Закрыть"))
         close.clicked.connect(self.accept)
         buttons.addWidget(close)
         layout.addLayout(buttons)
@@ -1246,20 +1280,20 @@ class MaterialsDialog(QDialog):
 
         catalog, errors = materials.load_with_errors(reload=True)
         self.list.clear()
-        kinds = {"solid": "сплошной", "sheet": "лист", "checker": "рифлёный лист"}
+        kinds = {"solid": tr("сплошной"), "sheet": tr("лист"), "checker": tr("рифлёный лист")}
         for m in catalog:
-            line = f"{m.short} — {kinds.get(m.kind, m.kind)}, {m.density:g} г/см³"
+            line = tr("{short} — {value}, {density:g} г/см³", short=m.short, value=kinds.get(m.kind, m.kind), density=m.density)
             if m.thicknesses:
-                line += ", толщины: " + " ".join(f"{t:g}" for t in m.thicknesses)
+                line += tr(", толщины: ") + " ".join(f"{t:g}" for t in m.thicknesses)
             if m.source == "user":
-                line += "  [свой]"
+                line += tr("  [свой]")
             item = QListWidgetItem(line)
-            item.setToolTip(f"{m.name}\nсинонимы: {', '.join(m.synonyms)}" + (f"\n{m.note}" if m.note else ""))
+            item.setToolTip(tr("{name}\nсинонимы: {value}", name=m.name, value=', '.join(m.synonyms)) + (f"\n{m.note}" if m.note else ""))
             self.list.addItem(item)
-        text = (f"Материалов: {len(catalog)}. Свои материалы — в файле {materials.user_catalog_path()} "
-                "(запись с тем же названием заменяет встроенную).")
+        text = (tr("Материалов: {n_catalog}. Свои материалы — в файле {value} "
+                "(запись с тем же названием заменяет встроенную).", n_catalog=len(catalog), value=materials.user_catalog_path()))
         if errors:
-            text += "\nНе прочитано: " + "; ".join(errors)
+            text += tr("\nНе прочитано: ") + "; ".join(errors)
         self.info.setText(text)
 
     def _open_file(self) -> None:
@@ -1274,17 +1308,17 @@ class MaterialsDialog(QDialog):
         from cad import materials
 
         path, _ = QFileDialog.getOpenFileName(
-            self, "Импорт материалов", str(Path.home()), "Таблицы (*.xlsx *.csv);;Все файлы (*)"
+            self, tr("Импорт материалов"), str(Path.home()), tr("Таблицы (*.xlsx *.csv);;Все файлы (*)")
         )
         if not path:
             return
         result = materials.import_table(Path(path))
-        lines = [f"Добавлено: {len(result.added)}, заменено: {len(result.replaced)}."]
+        lines = [tr("Добавлено: {n_added}, заменено: {n_replaced}.", n_added=len(result.added), n_replaced=len(result.replaced))]
         if result.path:
-            lines.append(f"Каталог: {result.path}")
+            lines.append(tr("Каталог: {path}", path=result.path))
         if result.errors:
-            lines.append("Пропущены строки:\n" + "\n".join(result.errors[:30]))
-        QMessageBox.information(self, "Импорт материалов", "\n".join(lines))
+            lines.append(tr("Пропущены строки:\n") + "\n".join(result.errors[:30]))
+        QMessageBox.information(self, tr("Импорт материалов"), "\n".join(lines))
         self.refresh()
 
 
@@ -1398,7 +1432,7 @@ class GitInitWorker(QThread):
         if result.returncode != 0 and "nothing to commit" not in combined:
             self.done.emit(False, (result.stderr or result.stdout).strip()[:300])
             return
-        self.done.emit(True, f"Репозиторий инициализирован: {self.root}")
+        self.done.emit(True, tr("Репозиторий инициализирован: {root}", root=self.root))
 
 
 class HealthDialog(QDialog):
@@ -1407,7 +1441,7 @@ class HealthDialog(QDialog):
     def __init__(self, window, parent=None):
         super().__init__(parent or window)
         self.window = window
-        self.setWindowTitle("Fluxion — состояние")
+        self.setWindowTitle(tr("Fluxion — состояние"))
         self.setMinimumWidth(600)
         self._fix_workers: list[QThread] = []
 
@@ -1419,16 +1453,16 @@ class HealthDialog(QDialog):
         outer.addLayout(self.rows_box)
 
         buttons = QHBoxLayout()
-        recheck = QPushButton("Перепроверить")
+        recheck = QPushButton(tr("Перепроверить"))
         recheck.setObjectName("themeButton")
         recheck.clicked.connect(self._run_checks)
         buttons.addWidget(recheck)
-        wizard_btn = QPushButton("Мастер настройки…")
+        wizard_btn = QPushButton(tr("Мастер настройки…"))
         wizard_btn.setObjectName("themeButton")
         wizard_btn.clicked.connect(self._open_wizard)
         buttons.addWidget(wizard_btn)
         buttons.addStretch()
-        close_btn = QPushButton("Закрыть")
+        close_btn = QPushButton(tr("Закрыть"))
         close_btn.clicked.connect(self.accept)
         buttons.addWidget(close_btn)
         outer.addLayout(buttons)
@@ -1441,7 +1475,7 @@ class HealthDialog(QDialog):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-        info = QLabel("Проверяем зависимости…")
+        info = QLabel(tr("Проверяем зависимости…"))
         self.rows_box.addWidget(info)
         self._worker = HealthWorker(
             self.window.settings, self.window.web_search, self.window.rag_service
@@ -1486,12 +1520,12 @@ class HealthDialog(QDialog):
         layout.addWidget(text, 1)
 
         if not status.available and status.fix == "searxng":
-            fix_button = QPushButton("Исправить")
+            fix_button = QPushButton(tr("Исправить"))
             fix_button.setObjectName("themeButton")
             fix_button.clicked.connect(lambda checked=False, b=fix_button: self._fix_searxng(b))
             layout.addWidget(fix_button)
         elif not status.available and status.fix == "docker":
-            fix_button = QPushButton("Исправить")
+            fix_button = QPushButton(tr("Исправить"))
             fix_button.setObjectName("themeButton")
             fix_button.clicked.connect(lambda checked=False, b=fix_button: self._fix_docker(b))
             layout.addWidget(fix_button)
@@ -1508,25 +1542,25 @@ class HealthDialog(QDialog):
         client = getattr(self.window.web_search, "client", None)
         base_url = getattr(client, "base_url", "http://localhost:8080")
         button.setEnabled(False)
-        button.setText("Запуск…")
+        button.setText(tr("Запуск…"))
         worker = SearxFixWorker(base_url)
         worker.done.connect(lambda ok, b=button: self._on_fix_done(ok, b))
         self._fix_workers.append(worker)
         worker.start()
 
     def _on_fix_done(self, ok: bool, button: QPushButton) -> None:
-        button.setText("Исправить" if not ok else "Готово")
+        button.setText(tr("Исправить") if not ok else tr("Готово"))
         if ok:
             self._run_checks()
         else:
             button.setEnabled(True)
-            button.setToolTip("Не удалось запустить контейнер — см. подсказку выше")
+            button.setToolTip(tr("Не удалось запустить контейнер — см. подсказку выше"))
 
     def _fix_docker(self, button: QPushButton) -> None:
         client = getattr(self.window.web_search, "client", None)
         base_url = getattr(client, "base_url", "")
         button.setEnabled(False)
-        button.setText("Запуск…")
+        button.setText(tr("Запуск…"))
         worker = DockerFixWorker(base_url)
         worker.done.connect(lambda ok, b=button: self._on_fix_done(ok, b))
         self._fix_workers.append(worker)
@@ -1567,7 +1601,7 @@ class AgentWorker(QThread):
         try:
             agent = self.agent_factory(self.task, self.allow_write, self.max_iter)
         except Exception as exc:
-            self.failed.emit(f"Ошибка запуска агента: {exc}")
+            self.failed.emit(tr("Ошибка запуска агента: {exc}", exc=exc))
             return
 
         cancelled = False
@@ -1586,7 +1620,7 @@ class AgentWorker(QThread):
                     result = getattr(agent, "last_result", None)
                     break
         except Exception as exc:
-            self.failed.emit(f"Ошибка агента: {exc}")
+            self.failed.emit(tr("Ошибка агента: {exc}", exc=exc))
             return
 
         self.done.emit({
@@ -1613,7 +1647,7 @@ class IndexWorker(QThread):
         try:
             count = self.rag_service.index(self.path)
         except Exception as exc:
-            self.failed.emit(f"Ошибка индексации: {exc}")
+            self.failed.emit(tr("Ошибка индексации: {exc}", exc=exc))
             return
         self.done.emit(int(count))
 
@@ -1635,12 +1669,12 @@ class ModelListWorker(QThread):
     def run(self) -> None:
         client = getattr(self.backend, "client", None)
         if client is None or not hasattr(client, "list_models"):
-            self.failed.emit("Смена моделей доступна только для Ollama-движка")
+            self.failed.emit(tr("Смена моделей доступна только для Ollama-движка"))
             return
         try:
             models = list(client.list_models())
         except Exception as exc:
-            self.failed.emit(f"Не удалось получить список моделей: {exc}")
+            self.failed.emit(tr("Не удалось получить список моделей: {exc}", exc=exc))
             return
         self.done.emit(models)
 
@@ -1648,22 +1682,22 @@ class ModelListWorker(QThread):
 # Filters of the "Модели" page: (label, kind).  A kind is a catalog tag, or
 # installed / rag (embeddings) / free / pro.
 MODEL_KINDS = (
-    ("Все модели", ""),
-    ("Для кода", "code"),
-    ("Для текстов и документов", "text"),
-    ("Для слабых компьютеров", "small"),
-    ("Поиск по проекту (эмбеддинги)", "rag"),
-    ("Установленные", "installed"),
-    ("Бесплатные", "free"),
+    (tr("Все модели"), ""),
+    (tr("Для кода"), "code"),
+    (tr("Для текстов и документов"), "text"),
+    (tr("Для слабых компьютеров"), "small"),
+    (tr("Поиск по проекту (эмбеддинги)"), "rag"),
+    (tr("Установленные"), "installed"),
+    (tr("Бесплатные"), "free"),
     ("Pro", "pro"),
 )
 MODEL_VRAM_LIMITS = (
-    ("Любая видеокарта", 0.0),
-    ("До 4 ГБ видеопамяти", 4.0),
-    ("До 8 ГБ", 8.0),
-    ("До 12 ГБ", 12.0),
-    ("До 16 ГБ", 16.0),
-    ("До 24 ГБ", 24.0),
+    (tr("Любая видеокарта"), 0.0),
+    (tr("До 4 ГБ видеопамяти"), 4.0),
+    (tr("До 8 ГБ"), 8.0),
+    (tr("До 12 ГБ"), 12.0),
+    (tr("До 16 ГБ"), 16.0),
+    (tr("До 24 ГБ"), 24.0),
 )
 
 
@@ -1713,7 +1747,7 @@ class CloudApiWorker(QThread):
             except Exception as exc:
                 self.done.emit(False, str(exc), [])
                 return
-            self.done.emit(True, f"Моделей у провайдера: {len(models)}.", models)
+            self.done.emit(True, tr("Моделей у провайдера: {n_models}.", n_models=len(models)), models)
             return
         try:
             ok, message = check_connection(self.cfg)
@@ -1747,10 +1781,10 @@ class TrainingWorker(QThread):
             self.failed.emit(str(exc))
             return
         except SystemExit as exc:
-            self.failed.emit(f"Обучение прервано (exit {exc.code})")
+            self.failed.emit(tr("Обучение прервано (exit {code})", code=exc.code))
             return
         except Exception as exc:
-            self.failed.emit(f"Ошибка обучения: {exc}")
+            self.failed.emit(tr("Ошибка обучения: {exc}", exc=exc))
             return
         self.done.emit(result)
 
@@ -1777,7 +1811,7 @@ class EnvWorker(QThread):
             self.failed.emit(str(exc))
             return
         except Exception as exc:
-            self.failed.emit(f"Ошибка установки окружения: {exc}")
+            self.failed.emit(tr("Ошибка установки окружения: {exc}", exc=exc))
             return
         self.done.emit()
 
@@ -1913,7 +1947,7 @@ class FluxionWindow(QMainWindow):
         selector.clear()
         current_known = any(s["id"] == self._session_id for s in self._sessions)
         if self._session_id is not None and not current_known:
-            selector.addItem("Текущий чат", None)
+            selector.addItem(tr("Текущий чат"), None)
             selector.setCurrentIndex(0)
         for s in reversed(self._sessions):
             selector.addItem(s["title"], s["id"])
@@ -1950,7 +1984,7 @@ class FluxionWindow(QMainWindow):
         from .memory import safe_filename, session_to_markdown
 
         if not self.history:
-            self._append_banner("Экспорт: чат пуст — нечего сохранять.")
+            self._append_banner(tr("Экспорт: чат пуст — нечего сохранять."))
             return
         session = {
             "id": self._session_id or "",
@@ -1960,24 +1994,24 @@ class FluxionWindow(QMainWindow):
         }
         default = safe_filename(session["title"])
         path, _ = QFileDialog.getSaveFileName(
-            self, "Экспорт чата", default, "Markdown (*.md)"
+            self, tr("Экспорт чата"), default, "Markdown (*.md)"
         )
         if not path:
             return
         try:
             Path(path).write_text(session_to_markdown(session), encoding="utf-8")
         except OSError as exc:
-            self._append_banner(f"Экспорт не удался: {exc}")
+            self._append_banner(tr("Экспорт не удался: {exc}", exc=exc))
             return
-        self._append_banner(f"Чат экспортирован: {path}")
+        self._append_banner(tr("Чат экспортирован: {path}", path=path))
 
     def _delete_current_chat(self) -> None:
         if self._session_id is None:
             return
         answer = QMessageBox.question(
             self,
-            "Удалить чат",
-            "Удалить текущий чат из истории?",
+            tr("Удалить чат"),
+            tr("Удалить текущий чат из истории?"),
             QMessageBox.Yes | QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -2004,16 +2038,16 @@ class FluxionWindow(QMainWindow):
         if not self._messages:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Экспорт чата", "fluxion-chat.md", "Markdown (*.md)"
+            self, tr("Экспорт чата"), "fluxion-chat.md", "Markdown (*.md)"
         )
         if not path:
             return
         blocks = []
         for entry in self._messages:
-            who = "Вы" if entry["role"] == "user" else "Fluxion"
+            who = tr("Вы") if entry["role"] == "user" else "Fluxion"
             blocks.append(f"**{who}**\n\n{entry['text']}\n")
         Path(path).write_text("\n---\n\n".join(blocks), encoding="utf-8")
-        self.statusBar().showMessage(f"Чат экспортирован: {path}", 5000)
+        self.statusBar().showMessage(tr("Чат экспортирован: {path}", path=path), 5000)
 
     def _refresh_index_chip(self) -> None:
         if not hasattr(self, "index_chip"):
@@ -2032,21 +2066,21 @@ class FluxionWindow(QMainWindow):
         self.index_chip.style().polish(self.index_chip)
 
     def _build_engine_popover(self, pop: ChipPopover) -> None:
-        backend_name = type(self.backend).__name__ if self.backend is not None else "не подключён"
+        backend_name = type(self.backend).__name__ if self.backend is not None else tr("не подключён")
         if self._is_cloud_backend():
-            backend_name = "Облачная модель (API)"
+            backend_name = tr("Облачная модель (API)")
         model = getattr(self.settings, "model", "") or "—"
         state = str(self.status_label.property("state") or "todo")
-        pop.add_row("Движок", backend_name)
-        pop.add_row("Модель", model)
-        pop.add_row("Статус", state)
+        pop.add_row(tr("Движок"), backend_name)
+        pop.add_row(tr("Модель"), model)
+        pop.add_row(tr("Статус"), state)
         if state == "offline":
             pop.add_note(
-                "Возможные причины: Ollama не запущена, модель не загружена "
-                "или движок отключён конфигурацией."
+                tr("Возможные причины: Ollama не запущена, модель не загружена "
+                "или движок отключён конфигурацией.")
             )
-        pop.add_action("Повторить проверку", self._retry_engine_check)
-        pop.add_action("Открыть чат (сменить модель)", lambda: self.pages.setCurrentIndex(0))
+        pop.add_action(tr("Повторить проверку"), self._retry_engine_check)
+        pop.add_action(tr("Открыть чат (сменить модель)"), lambda: self.pages.setCurrentIndex(0))
 
     def _retry_engine_check(self) -> None:
         self._load_models()
@@ -2054,19 +2088,19 @@ class FluxionWindow(QMainWindow):
 
     def _build_index_popover(self, pop: ChipPopover) -> None:
         if self.rag_service is None:
-            pop.add_row("Индекс", "недоступен (движок не подключён)")
-            pop.add_action("Повторить проверку", self._retry_engine_check)
+            pop.add_row(tr("Индекс"), tr("недоступен (движок не подключён)"))
+            pop.add_action(tr("Повторить проверку"), self._retry_engine_check)
             return
         try:
             count = self.rag_service.count()
         except Exception:
             count = 0
-        pop.add_row("Чанков", str(count))
-        pop.add_row("Папка", str(self.qsettings.value("project_path", "") or "—"))
-        pop.add_row("Обновлён", str(self.qsettings.value("index_updated_at", "") or "—"))
-        pop.add_row("Эмбеддинг", self._embed_backend_id())
-        pop.add_action("Переиндексировать", self._start_indexing)
-        pop.add_action("Страница проекта", lambda: self.pages.setCurrentIndex(1))
+        pop.add_row(tr("Чанков"), str(count))
+        pop.add_row(tr("Папка"), str(self.qsettings.value("project_path", "") or "—"))
+        pop.add_row(tr("Обновлён"), str(self.qsettings.value("index_updated_at", "") or "—"))
+        pop.add_row(tr("Эмбеддинг"), self._embed_backend_id())
+        pop.add_action(tr("Переиндексировать"), self._start_indexing)
+        pop.add_action(tr("Страница проекта"), lambda: self.pages.setCurrentIndex(1))
 
     def _build_ui(self) -> None:
         # ── Menu Bar (новое) ────────────────────────────────────────
@@ -2086,7 +2120,7 @@ class FluxionWindow(QMainWindow):
         sidebar_layout.setSpacing(8)
 
         self.brand_banner = BrandBanner()
-        tagline = QLabel("Локальный AI-ассистент")
+        tagline = QLabel(tr("Локальный AI-ассистент"))
         tagline.setObjectName("tagline")
         sidebar_layout.addWidget(self.brand_banner)
         sidebar_layout.addWidget(tagline)
@@ -2098,7 +2132,7 @@ class FluxionWindow(QMainWindow):
 
         # Chat and Project are in the sidebar; "Модели" and "Обучение" open from
         # the top menu "Модели" (pages 2 and 3 keep their indexes).
-        for index, title in ((PAGE_CHAT, "Чат"), (PAGE_PROJECT, "Проект")):
+        for index, title in ((PAGE_CHAT, tr("Чат")), (PAGE_PROJECT, tr("Проект"))):
             button = QPushButton(title)
             button.setCheckable(True)
             button.setProperty("nav", True)
@@ -2142,7 +2176,7 @@ class FluxionWindow(QMainWindow):
         bar.setObjectName("mainStatusBar")
         bar.setSizeGripEnabled(False)
         self.status_label = StatusChip("engineChip")
-        self.status_label.setText("Движок: не подключён")
+        self.status_label.setText(tr("Движок: не подключён"))
         self.status_label.set_popover_builder(self._build_engine_popover)
         bar.addWidget(self.status_label)
         self.index_chip = StatusChip("indexChip")
@@ -2151,15 +2185,15 @@ class FluxionWindow(QMainWindow):
         bar.addWidget(self.index_chip)
 
         self.browser_button = QToolButton()
-        self.browser_button.setText("Браузер")
+        self.browser_button.setText(tr("Браузер"))
         self.browser_button.setCheckable(True)
-        self.browser_button.setToolTip("Показать/скрыть встроенный браузер")
+        self.browser_button.setToolTip(tr("Показать/скрыть встроенный браузер"))
         self.browser_button.toggled.connect(self._toggle_web_panel)
         bar.addPermanentWidget(self.browser_button)
 
         self.health_button = QToolButton()
-        self.health_button.setText("Состояние")
-        self.health_button.setToolTip("Диагностика зависимостей: Ollama, модель, Docker, веб-поиск, индекс")
+        self.health_button.setText(tr("Состояние"))
+        self.health_button.setToolTip(tr("Диагностика зависимостей: Ollama, модель, Docker, веб-поиск, индекс"))
         self.health_button.clicked.connect(self._open_health_dialog)
         bar.addPermanentWidget(self.health_button)
 
@@ -2174,111 +2208,141 @@ class FluxionWindow(QMainWindow):
         bar = self.menuBar()
 
         # Файл
-        m_file = bar.addMenu("&Файл")
-        act_export = QAction("Экспорт чата .md…", self)
+        m_file = bar.addMenu(tr("&Файл"))
+        act_export = QAction(tr("Экспорт чата .md…"), self)
         act_export.setShortcut("Ctrl+E")
         act_export.triggered.connect(self.export_chat_md)
         m_file.addAction(act_export)
         m_file.addSeparator()
-        act_quit = QAction("Закрыть окно", self)
+        act_quit = QAction(tr("Закрыть окно"), self)
         act_quit.setShortcut("Ctrl+W")
         act_quit.triggered.connect(self.close)
         m_file.addAction(act_quit)
 
         # Правка
-        m_edit = bar.addMenu("&Правка")
-        act_copy = QAction("Копировать", self)
+        m_edit = bar.addMenu(tr("&Правка"))
+        act_copy = QAction(tr("Копировать"), self)
         act_copy.setShortcut("Ctrl+C")
         act_copy.triggered.connect(self._copy_selection)
         m_edit.addAction(act_copy)
         m_edit.addSeparator()
-        self.act_searxng = QAction("Расширенный веб-поиск (SearXNG в Docker)", self)
+        self.act_searxng = QAction(tr("Расширенный веб-поиск (SearXNG в Docker)"), self)
         self.act_searxng.setCheckable(True)
         self.act_searxng.setChecked(self._searxng_on())
         self.act_searxng.toggled.connect(self._toggle_searxng)
         m_edit.addAction(self.act_searxng)
 
         # Вид
-        m_view = bar.addMenu("&Вид")
-        self.act_theme = QAction("Светлая тема" if self.theme.name == "dark" else "Тёмная тема", self)
+        m_view = bar.addMenu(tr("&Вид"))
+        self.act_theme = QAction(tr("Светлая тема") if self.theme.name == "dark" else tr("Тёмная тема"), self)
         self.act_theme.triggered.connect(self.toggle_theme)
         m_view.addAction(self.act_theme)
+        m_lang = m_view.addMenu("Язык / Language")  # in both languages: findable in either
+        self.language_actions = {}
+        for code, name in LANGUAGES.items():
+            act = QAction(name, self, checkable=True)
+            act.setChecked(code == language())
+            act.triggered.connect(lambda _checked=False, code=code: self.choose_language(code))
+            m_lang.addAction(act)
+            self.language_actions[code] = act
 
         # Проект
-        m_proj = bar.addMenu("&Проект")
-        act_pick = QAction("Выбрать папку…", self)
+        m_proj = bar.addMenu(tr("&Проект"))
+        act_pick = QAction(tr("Выбрать папку…"), self)
         act_pick.triggered.connect(self._pick_project_folder)
         m_proj.addAction(act_pick)
-        act_index = QAction("Проиндексировать", self)
+        act_index = QAction(tr("Проиндексировать"), self)
         act_index.triggered.connect(self._start_indexing)
         m_proj.addAction(act_index)
 
         # Модели: the catalog, the cloud model and training open from here
-        m_models = bar.addMenu("&Модели")
-        act_models = QAction("Скачать и выбрать модели…", self)
+        m_models = bar.addMenu(tr("&Модели"))
+        act_models = QAction(tr("Скачать и выбрать модели…"), self)
         act_models.setShortcut("Ctrl+M")
         act_models.triggered.connect(lambda: self.pages.setCurrentIndex(PAGE_MODELS))
         m_models.addAction(act_models)
-        act_cloud = QAction("Облачная модель по API…", self)
+        act_cloud = QAction(tr("Облачная модель по API…"), self)
         act_cloud.triggered.connect(self._open_cloud_section)
         m_models.addAction(act_cloud)
         m_models.addSeparator()
-        act_training = QAction("Обучение модели…", self)
+        act_training = QAction(tr("Обучение модели…"), self)
         act_training.triggered.connect(lambda: self.pages.setCurrentIndex(PAGE_TRAINING))
         m_models.addAction(act_training)
 
         # Инструменты: part in KOMPAS-3D by description (prototype, for everyone)
-        m_tools = bar.addMenu("&Инструменты")
-        act_cad = QAction("Деталь в КОМПАС…", self)
+        m_tools = bar.addMenu(tr("&Инструменты"))
+        act_cad = QAction(tr("Деталь в КОМПАС…"), self)
         act_cad.triggered.connect(self._open_cad_dialog)
         m_tools.addAction(act_cad)
-        act_materials = QAction("Каталог материалов…", self)
+        act_materials = QAction(tr("Каталог материалов…"), self)
         act_materials.triggered.connect(self._open_materials_dialog)
         m_tools.addAction(act_materials)
-        act_calc = QAction("Инженерный калькулятор…", self)
-        act_calc.setToolTip("Сварные швы, болты, балки и рамы, гибка листа, валы — по формулам. В чате: /расчёт …")
+        act_calc = QAction(tr("Инженерный калькулятор…"), self)
+        act_calc.setToolTip(tr("Сварные швы, болты, балки и рамы, гибка листа, валы — по формулам. В чате: /расчёт …"))
         act_calc.triggered.connect(lambda: self._open_calc())
         m_tools.addAction(act_calc)
         m_tools.addSeparator()
-        act_report = QAction("Ведомость и металлоёмкость сборки (Pro)…", self)
-        act_report.setToolTip("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel")
+        act_report = QAction(tr("Ведомость и металлоёмкость сборки (Pro)…"), self)
+        act_report.setToolTip(tr("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel"))
         act_report.triggered.connect(self._open_assembly_report)
         m_tools.addAction(act_report)
-        act_laser = QAction("Пакет на лазер (DXFka)…", self)
-        act_laser.setToolTip("DXF всех листовых деталей сборки по папкам толщин (Pro)")
+        act_laser = QAction(tr("Пакет на лазер (DXFka)…"), self)
+        act_laser.setToolTip(tr("DXF всех листовых деталей сборки по папкам толщин (Pro)"))
         act_laser.triggered.connect(self._open_laser_package)
         m_tools.addAction(act_laser)
         m_tools.addSeparator()
-        act_acad = QAction("Нормоконтроль чертежа AutoCAD (Pro)…", self)
-        act_acad.setToolTip("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel")
+        act_acad = QAction(tr("Нормоконтроль чертежа AutoCAD (Pro)…"), self)
+        act_acad.setToolTip(tr("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel"))
         act_acad.triggered.connect(self._open_acad_check)
         m_tools.addAction(act_acad)
         m_tools.addSeparator()
-        act_style = QAction("Мой стиль письма…", self)
-        act_style.setToolTip("Служебки, пояснительные записки и письма заказчикам вашим стилем (Pro)")
+        act_style = QAction(tr("Мой стиль письма…"), self)
+        act_style.setToolTip(tr("Служебки, пояснительные записки и письма заказчикам вашим стилем (Pro)"))
         act_style.triggered.connect(self._open_writing_style)
         m_tools.addAction(act_style)
-        act_archive = QAction("Архив КД (Pro)…", self)
-        act_archive.setToolTip("Поиск по архиву КД: КОМПАС-3D, PDF, документы. Вопросы в чате: /архив …")
+        act_archive = QAction(tr("Архив КД (Pro)…"), self)
+        act_archive.setToolTip(tr("Поиск по архиву КД: КОМПАС-3D, PDF, документы. Вопросы в чате: /архив …"))
         act_archive.triggered.connect(self._open_archive)
         m_tools.addAction(act_archive)
 
         # Помощь
-        m_help = bar.addMenu("&Помощь")
-        act_manual = QAction("Инструкция по инструментам…", self)
+        m_help = bar.addMenu(tr("&Помощь"))
+        act_manual = QAction(tr("Инструкция по инструментам…"), self)
         act_manual.setShortcut("F1")
-        act_manual.setToolTip("Как пользоваться каждым инструментом Fluxion: пошагово, с примерами")
+        act_manual.setToolTip(tr("Как пользоваться каждым инструментом Fluxion: пошагово, с примерами"))
         act_manual.triggered.connect(lambda: self.open_manual())
         m_help.addAction(act_manual)
-        act_update = QAction("Проверить обновления…", self)
-        act_update.triggered.connect(self._check_updates)
+        act_update = QAction(tr("Проверить обновления…"), self)
+        act_update.triggered.connect(lambda: self._check_updates())
         m_help.addAction(act_update)
-        self.act_license = QAction("Лицензия…", self)
+        self.act_license = QAction(tr("Лицензия…"), self)
         self.act_license.triggered.connect(self._open_license_dialog)
         m_help.addAction(self.act_license)
-        act_about = QAction("О Fluxion", self)
-        # act_about.triggered.connect(self._show_about)
+        act_about = QAction(tr("О Fluxion"), self)
+        act_about.triggered.connect(self._show_about)
         m_help.addAction(act_about)
+
+    def _show_about(self) -> None:
+        """Menu Помощь → О Fluxion: the version, the site, the folder of the user's data."""
+        from core.app_paths import data_dir
+
+        site = SITE_URL.split("://", 1)[-1].rstrip("/")
+        version = tr("Версия {version}", version=APP_VERSION)
+        site_line = tr("Сайт: {link}", link=f'<a href="{SITE_URL}">{site}</a>')
+        data_line = tr("Данные: {path}", path=html.escape(str(data_dir())))
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("О Fluxion"))
+        box.setTextFormat(Qt.RichText)
+        box.setText(f"<b>Fluxion</b><br>{version}<br>{site_line}<br>{data_line}")
+        label = box.findChild(QLabel, "qt_msgbox_label")
+        if label is not None:
+            label.setOpenExternalLinks(True)
+            label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        site_btn = box.addButton(tr("Открыть сайт"), QMessageBox.ActionRole)
+        box.addButton(tr("Закрыть"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is site_btn:
+            QDesktopServices.openUrl(QUrl(SITE_URL))
 
     def _sync_nav(self, index: int) -> None:
         """Sidebar shows the open page; none is lit for pages from the menu."""
@@ -2316,7 +2380,7 @@ class FluxionWindow(QMainWindow):
         client = getattr(self.web_search, "client", None)
         base_url = getattr(client, "base_url", "") or "http://localhost:8080"
         if enabled:
-            self.statusBar().showMessage("Запускаю SearXNG в Docker…", 8000)
+            self.statusBar().showMessage(tr("Запускаю SearXNG в Docker…"), 8000)
             worker = SearxFixWorker(base_url, self)
             worker.done.connect(self._on_searxng_started)
             self._searxng_worker = worker
@@ -2328,15 +2392,15 @@ class FluxionWindow(QMainWindow):
 
             Thread(target=stop_searxng, daemon=True, name="searxng-stop").start()
             self.statusBar().showMessage(
-                "Расширенный поиск выключен: используется встроенный, Docker не нужен.", 8000
+                tr("Расширенный поиск выключен: используется встроенный, Docker не нужен."), 8000
             )
 
     def _on_searxng_started(self, ok: bool) -> None:
         if ok:
-            self.statusBar().showMessage("SearXNG запущен: веб-поиск в расширенном режиме.", 8000)
+            self.statusBar().showMessage(tr("SearXNG запущен: веб-поиск в расширенном режиме."), 8000)
         else:
             self.statusBar().showMessage(
-                "SearXNG не запустился (нужен Docker Desktop) — пока работает встроенный поиск.", 12000
+                tr("SearXNG не запустился (нужен Docker Desktop) — пока работает встроенный поиск."), 12000
             )
 
     def _copy_selection(self) -> None:
@@ -2390,14 +2454,14 @@ class FluxionWindow(QMainWindow):
 
         # ── хедер: заголовок слева, модель и операции справа ─────────
         header = QHBoxLayout()
-        title = QLabel("Чат")
+        title = QLabel(tr("Чат"))
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch()
         self.agent_settings_button = QToolButton()
-        self.agent_settings_button.setText("⚙ Настройки чата")
+        self.agent_settings_button.setText(tr("⚙ Настройки чата"))
         self.agent_settings_button.setObjectName("iconButton")
-        self.agent_settings_button.setToolTip("Модель, число итераций агента, git-инструменты")
+        self.agent_settings_button.setToolTip(tr("Модель, число итераций агента, git-инструменты"))
         self.agent_settings_button.clicked.connect(self._show_agent_settings)
         header.addWidget(self.agent_settings_button)
         self.chat_kebab = QToolButton()
@@ -2405,22 +2469,22 @@ class FluxionWindow(QMainWindow):
         self.chat_kebab.setObjectName("iconButton")
         self.chat_kebab.setPopupMode(QToolButton.InstantPopup)
         kebab_menu = QMenu(self.chat_kebab)
-        act_new = kebab_menu.addAction("Новый чат")
+        act_new = kebab_menu.addAction(tr("Новый чат"))
         act_new.setShortcut("Ctrl+N")
         act_new.triggered.connect(self.new_chat)
-        act_export = kebab_menu.addAction("Экспорт чата в .md…")
+        act_export = kebab_menu.addAction(tr("Экспорт чата в .md…"))
         act_export.triggered.connect(self.export_chat_md)
         self.chat_kebab.setMenu(kebab_menu)
         header.addWidget(self.chat_kebab)
         layout.addLayout(header)
 
-        subtitle = QLabel("Спросите Fluxion о коде или начните с одного из примеров.")
+        subtitle = QLabel(tr("Спросите Fluxion о коде или начните с одного из примеров."))
         subtitle.setObjectName("subtitle")
         layout.addWidget(subtitle)
 
         # ── чипы-примеры: wrap вместо обрезания ──────────────────────
         flow = FlowLayout()
-        for text in ("Объясни этот проект", "Найди возможную ошибку", "Предложи рефакторинг"):
+        for text in (tr("Объясни этот проект"), tr("Найди возможную ошибку"), tr("Предложи рефакторинг")):
             button = QPushButton(text)
             button.setProperty("suggestion", True)
             button.clicked.connect(lambda checked=False, value=text: self.prompt.setText(value))
@@ -2445,8 +2509,8 @@ class FluxionWindow(QMainWindow):
         composer_layout.setContentsMargins(12, 10, 10, 10)
         composer_layout.setSpacing(10)
         self.prompt = QLineEdit()
-        self.prompt.setPlaceholderText("Напишите сообщение...")
-        self.prompt.setToolTip("Enter — отправить; Ctrl+Enter — разово выполнить агентом")
+        self.prompt.setPlaceholderText(tr("Напишите сообщение..."))
+        self.prompt.setToolTip(tr("Enter — отправить; Ctrl+Enter — разово выполнить агентом"))
         self.prompt.returnPressed.connect(self.send_message)
         for keys in ("Ctrl+Return", "Ctrl+Enter"):
             shortcut = QShortcut(QKeySequence(keys), self.prompt)
@@ -2464,7 +2528,7 @@ class FluxionWindow(QMainWindow):
         self.mic_button.setObjectName("composerIcon")
         self.mic_button.setIconSize(QSize(20, 20))
         self.mic_button.setProperty("recording", False)
-        self.mic_button.setToolTip("Голосовой ввод (Ctrl+Пробел): говорите, пауза или повторное нажатие — стоп")
+        self.mic_button.setToolTip(tr("Голосовой ввод (Ctrl+Пробел): говорите, пауза или повторное нажатие — стоп"))
         self.mic_button.clicked.connect(self.toggle_voice_input)
         composer_layout.addWidget(self.mic_button)
         self.speak_toggle = QToolButton()
@@ -2478,8 +2542,8 @@ class FluxionWindow(QMainWindow):
         self.hands_free_button.setIconSize(QSize(20, 20))
         self.hands_free_button.setCheckable(True)
         self.hands_free_button.setToolTip(
-            "Голосом без рук (Ctrl+Shift+Пробел): Fluxion слушает, отправляет, читает ответ вслух "
-            "и снова слушает. «Стоп» голосом или эта кнопка — выключить"
+            tr("Голосом без рук (Ctrl+Shift+Пробел): Fluxion слушает, отправляет, читает ответ вслух "
+            "и снова слушает. «Стоп» голосом или эта кнопка — выключить")
         )
         self.hands_free_button.toggled.connect(self.set_hands_free)
         self._show_speak_toggle()
@@ -2489,11 +2553,11 @@ class FluxionWindow(QMainWindow):
         hands_free_shortcut.activated.connect(self.hands_free_button.toggle)
         voice_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
         voice_shortcut.activated.connect(self.toggle_voice_input)
-        self.stop_button = QPushButton("Стоп")
+        self.stop_button = QPushButton(tr("Стоп"))
         self.stop_button.setObjectName("stopButton")
         self.stop_button.clicked.connect(self.stop_generation)
         self.stop_button.setVisible(False)
-        self.send_button = QPushButton("Отправить")
+        self.send_button = QPushButton(tr("Отправить"))
         self.send_button.setObjectName("sendButton")
         self.send_button.clicked.connect(self.send_message)
         composer_layout.addWidget(self.stop_button)
@@ -2503,28 +2567,28 @@ class FluxionWindow(QMainWindow):
         modes = QHBoxLayout()
         modes.setContentsMargins(2, 0, 2, 0)
         modes.setSpacing(6)
-        self.chat_agent_files = QCheckBox("✎ Агент: файлы")
+        self.chat_agent_files = QCheckBox(tr("✎ Агент: файлы"))
         self.chat_agent_files.setObjectName("modeChip")
         self.chat_agent_files.setCursor(Qt.PointingHandCursor)
         self.chat_agent_files.toggled.connect(self._on_chat_agent_files_toggled)
         modes.addWidget(self.chat_agent_files)
-        self.chat_plan = QCheckBox("☰ План")
+        self.chat_plan = QCheckBox(tr("☰ План"))
         self.chat_plan.setObjectName("modeChip")
         self.chat_plan.setCursor(Qt.PointingHandCursor)
         self.chat_plan.setToolTip(
-            "Агент составит нумерованный план и не изменит файлы; "
-            "под ответом появится «Выполнить план»"
+            tr("Агент составит нумерованный план и не изменит файлы; "
+            "под ответом появится «Выполнить план»")
         )
         modes.addWidget(self.chat_plan)
-        self.chat_style = QCheckBox("✍ Мой стиль")
+        self.chat_style = QCheckBox(tr("✍ Мой стиль"))
         self.chat_style.setObjectName("modeChip")
         self.chat_style.setCursor(Qt.PointingHandCursor)
-        self.chat_style.setToolTip("Писать служебки, пояснительные записки и письма заказчикам вашим стилем (Pro). "
-                                   "Образцы — Инструменты → «Мой стиль письма…»")
+        self.chat_style.setToolTip(tr("Писать служебки, пояснительные записки и письма заказчикам вашим стилем (Pro). "
+                                   "Образцы — Инструменты → «Мой стиль письма…»"))
         self.chat_style.toggled.connect(self._on_chat_style_toggled)
         modes.addWidget(self.chat_style)
         modes.addStretch()
-        hint = QLabel("Ctrl+Enter — агенту")
+        hint = QLabel(tr("Ctrl+Enter — агенту"))
         hint.setObjectName("modeHint")
         modes.addWidget(hint)
         layout.addLayout(modes)
@@ -2541,7 +2605,7 @@ class FluxionWindow(QMainWindow):
         box.setContentsMargins(14, 12, 14, 12)
         box.setSpacing(10)
 
-        box.addWidget(self._settings_caption("Модель"))
+        box.addWidget(self._settings_caption(tr("Модель")))
         model_row = QHBoxLayout()
         model_row.setSpacing(8)
         self.model_combo = QComboBox()
@@ -2551,45 +2615,45 @@ class FluxionWindow(QMainWindow):
         model_row.addWidget(self.model_combo, 1)
         self.model_refresh_button = QPushButton("⟳")
         self.model_refresh_button.setObjectName("iconButton")
-        self.model_refresh_button.setToolTip("Обновить список моделей")
+        self.model_refresh_button.setToolTip(tr("Обновить список моделей"))
         self.model_refresh_button.clicked.connect(self._load_models)
         model_row.addWidget(self.model_refresh_button)
         box.addLayout(model_row)
-        self.message_sound = QCheckBox("Звук, когда Fluxion ответил")
-        self.message_sound.setToolTip("Короткий сигнал в конце ответа чата и агента")
+        self.message_sound = QCheckBox(tr("Звук, когда Fluxion ответил"))
+        self.message_sound.setToolTip(tr("Короткий сигнал в конце ответа чата и агента"))
         self.message_sound.setChecked(message_sound_enabled(self.qsettings))
         self.message_sound.toggled.connect(
             lambda checked: self.qsettings.setValue("message_sound", int(checked))
         )
         box.addWidget(self.message_sound)
 
-        box.addWidget(self._settings_caption("Голос"))
-        self.voice_speak_answers = QCheckBox("Озвучивать ответы")
-        self.voice_speak_answers.setToolTip("Fluxion читает ответ вслух голосом Windows; код не читается")
+        box.addWidget(self._settings_caption(tr("Голос")))
+        self.voice_speak_answers = QCheckBox(tr("Озвучивать ответы"))
+        self.voice_speak_answers.setToolTip(tr("Fluxion читает ответ вслух голосом Windows; код не читается"))
         self.voice_speak_answers.setChecked(self.speak_toggle.isChecked())
         self.voice_speak_answers.toggled.connect(self.speak_toggle.setChecked)
         box.addWidget(self.voice_speak_answers)
-        self.voice_send_at_once = QCheckBox("Отправлять сразу после диктовки")
-        self.voice_send_at_once.setToolTip("Иначе распознанный текст остаётся в поле ввода, его можно поправить")
+        self.voice_send_at_once = QCheckBox(tr("Отправлять сразу после диктовки"))
+        self.voice_send_at_once.setToolTip(tr("Иначе распознанный текст остаётся в поле ввода, его можно поправить"))
         self.voice_send_at_once.setChecked(flag_setting(self.qsettings, "voice_send_at_once"))
         self.voice_send_at_once.toggled.connect(
             lambda checked: self.qsettings.setValue("voice_send_at_once", int(checked))
         )
         box.addWidget(self.voice_send_at_once)
 
-        box.addWidget(self._settings_caption("Агент"))
+        box.addWidget(self._settings_caption(tr("Агент")))
         row = QHBoxLayout()
         row.setSpacing(10)
-        row.addWidget(QLabel("Макс. итераций:"))
+        row.addWidget(QLabel(tr("Макс. итераций:")))
         self.agent_iterations = QSpinBox()
         self.agent_iterations.setRange(1, 50)
         self.agent_iterations.setValue(AGENT_DEFAULT_ITERATIONS)
         row.addWidget(self.agent_iterations)
         row.addStretch()
         box.addLayout(row)
-        self.agent_unlimited = QCheckBox("Без лимита")
+        self.agent_unlimited = QCheckBox(tr("Без лимита"))
         self.agent_unlimited.setToolTip(
-            "Pro: агент работает, пока не закончит задачу (жёсткий потолок — 200 итераций)"
+            tr("Pro: агент работает, пока не закончит задачу (жёсткий потолок — 200 итераций)")
         )
         self.agent_unlimited.toggled.connect(
             lambda checked: self.agent_iterations.setEnabled(not checked)
@@ -2598,8 +2662,8 @@ class FluxionWindow(QMainWindow):
         self.agent_git_button = QPushButton()
         self.agent_git_button.setObjectName("popAction")
         self.agent_git_button.setToolTip(
-            "Git-инструменты агента: снимок проекта перед правками, "
-            "git_status / git_diff / git_commit"
+            tr("Git-инструменты агента: снимок проекта перед правками, "
+            "git_status / git_diff / git_commit")
         )
         self.agent_git_button.clicked.connect(self._on_git_button)
         box.addWidget(self.agent_git_button)
@@ -2690,24 +2754,24 @@ class FluxionWindow(QMainWindow):
 
         # ── хедер: primary на своём месте ────────────────────────────
         header = QHBoxLayout()
-        title = QLabel("Проект")
+        title = QLabel(tr("Проект"))
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch()
-        self.index_stop_button = QPushButton("Стоп")
+        self.index_stop_button = QPushButton(tr("Стоп"))
         self.index_stop_button.setObjectName("stopButton")
         self.index_stop_button.clicked.connect(self._stop_indexing)
         self.index_stop_button.setVisible(False)
         header.addWidget(self.index_stop_button)
-        self.index_button = QPushButton("Проиндексировать")
+        self.index_button = QPushButton(tr("Проиндексировать"))
         self.index_button.setObjectName("sendButton")
         self.index_button.clicked.connect(self._start_indexing)
         header.addWidget(self.index_button)
         layout.addLayout(header)
 
         subtitle = QLabel(
-            "Выберите папку проекта и проиндексируйте её: код, тексты и документы "
-            "(PDF, Word, Excel, PowerPoint) — чат будет использовать их как контекст."
+            tr("Выберите папку проекта и проиндексируйте её: код, тексты и документы "
+            "(PDF, Word, Excel, PowerPoint) — чат будет использовать их как контекст.")
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -2722,13 +2786,13 @@ class FluxionWindow(QMainWindow):
         path_row = QHBoxLayout()
         self.project_path = QLineEdit()
         self.project_path.setObjectName("monoField")
-        self.project_path.setPlaceholderText("Папка проекта не выбрана")
+        self.project_path.setPlaceholderText(tr("Папка проекта не выбрана"))
         self.project_path.setReadOnly(True)
         saved = self.qsettings.value("project_path", "")
         if saved:
             self.project_path.setText(str(saved))
         path_row.addWidget(self.project_path, 1)
-        pick_button = QPushButton("Выбрать…")
+        pick_button = QPushButton(tr("Выбрать…"))
         pick_button.setObjectName("iconButton")
         pick_button.clicked.connect(self._pick_project_folder)
         path_row.addWidget(pick_button)
@@ -2736,11 +2800,11 @@ class FluxionWindow(QMainWindow):
 
         stats = QHBoxLayout()
         stats.setSpacing(10)
-        self.chunks_chip = QLabel("чанки: —")
+        self.chunks_chip = QLabel(tr("чанки: —"))
         self.chunks_chip.setObjectName("statusChip")
-        self.index_date_chip = QLabel("обновлён: —")
+        self.index_date_chip = QLabel(tr("обновлён: —"))
         self.index_date_chip.setObjectName("statusChip")
-        self.embed_chip = QLabel("эмбеддинг: —")
+        self.embed_chip = QLabel(tr("эмбеддинг: —"))
         self.embed_chip.setObjectName("statusChip")
         stats.addWidget(self.chunks_chip)
         stats.addWidget(self.index_date_chip)
@@ -2789,11 +2853,11 @@ class FluxionWindow(QMainWindow):
         if chunks is None:
             return
         if self.indexing:
-            chunks.setText("чанки: индексация…")
+            chunks.setText(tr("чанки: индексация…"))
             chunks.setProperty("state", "current")
-            chunks.setToolTip("Первая загрузка модели эмбеддингов может занять время.")
+            chunks.setToolTip(tr("Первая загрузка модели эмбеддингов может занять время."))
         elif self.rag_service is None:
-            chunks.setText("чанки: n/a")
+            chunks.setText(tr("чанки: n/a"))
             chunks.setProperty("state", "todo")
             chunks.setToolTip("")
         else:
@@ -2801,12 +2865,12 @@ class FluxionWindow(QMainWindow):
                 count = self.rag_service.count()
             except Exception:
                 count = 0
-            chunks.setText(f"чанки: {count}")
+            chunks.setText(tr("чанки: {count}", count=count))
             chunks.setProperty("state", "ok" if count else "todo")
             chunks.setToolTip("")
         updated = str(self.qsettings.value("index_updated_at", "") or "")
-        self.index_date_chip.setText(f"обновлён: {updated or '—'}")
-        self.embed_chip.setText(f"эмбеддинг: {self._embed_backend_id()}")
+        self.index_date_chip.setText(tr("обновлён: {value}", value=updated or '—'))
+        self.embed_chip.setText(tr("эмбеддинг: {value}", value=self._embed_backend_id()))
         for chip in (chunks, self.index_date_chip, self.embed_chip):
             chip.style().unpolish(chip)
             chip.style().polish(chip)
@@ -2817,15 +2881,15 @@ class FluxionWindow(QMainWindow):
         if banners is None:
             return
         if self.rag_service is None:
-            banners.show_warning("Движок не подключён: индексация недоступна.", key="engine")
+            banners.show_warning(tr("Движок не подключён: индексация недоступна."), key="engine")
         else:
             banners.dismiss_key("engine")
         stored = str(self.qsettings.value("index_embed_backend", "") or "")
         current = self._embed_backend_id()
         if stored and current != "—" and stored != current:
             banners.show_warning(
-                "Индекс собран другим эмбеддинг-бэкендом — ответы могут устареть.",
-                "Переиндексировать",
+                tr("Индекс собран другим эмбеддинг-бэкендом — ответы могут устареть."),
+                tr("Переиндексировать"),
                 self._start_indexing,
                 key="reindex",
             )
@@ -2834,12 +2898,12 @@ class FluxionWindow(QMainWindow):
 
     def _chunks_label(self) -> str:
         if self.rag_service is None:
-            return "RAG: недоступен (движок не подключён)"
+            return tr("RAG: недоступен (движок не подключён)")
         try:
             count = self.rag_service.count()
         except Exception:
             count = 0
-        return f"RAG: {count} чанков в индексе"
+        return tr("RAG: {count} чанков в индексе", count=count)
 
     def refresh_project_status(self) -> None:
         """Update the RAG chunks label (e.g. after engine wiring)."""
@@ -2851,7 +2915,7 @@ class FluxionWindow(QMainWindow):
         from PySide6.QtWidgets import QFileDialog
 
         start = self.project_path.text() or str(Path.home())
-        folder = QFileDialog.getExistingDirectory(self, "Выберите папку проекта", start)
+        folder = QFileDialog.getExistingDirectory(self, tr("Выберите папку проекта"), start)
         if folder:
             self.project_path.setText(folder)
             self.qsettings.setValue("project_path", folder)
@@ -2862,14 +2926,14 @@ class FluxionWindow(QMainWindow):
         if not path or self.indexing:
             return
         if self.rag_service is None:
-            self.project_view.setHtml("<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>")
+            self.project_view.setHtml(tr("<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>"))
             return
 
         self.indexing = True
         self.index_button.setEnabled(False)
         self.index_stop_button.setVisible(True)
-        self.index_status.setText("Индексация… первая загрузка модели эмбеддингов может занять время.")
-        self.project_view.setHtml(f"<p><b>Индексация:</b> {html.escape(path)}</p>")
+        self.index_status.setText(tr("Индексация… первая загрузка модели эмбеддингов может занять время."))
+        self.project_view.setHtml(tr("<p><b>Индексация:</b> {value}</p>", value=html.escape(path)))
 
         self.index_worker = IndexWorker(self.rag_service, path)
         self.index_worker.done.connect(self._on_index_done)
@@ -2880,7 +2944,7 @@ class FluxionWindow(QMainWindow):
     def _stop_indexing(self) -> None:
         # Индексация атомарна внутри RAGService — остановка недоступна,
         # кнопка лишь информирует; оставляем завершение естественным путём.
-        self.index_status.setText("Завершение текущей операции…")
+        self.index_status.setText(tr("Завершение текущей операции…"))
 
     def _set_indexing_done(self) -> None:
         self.indexing = False
@@ -2891,7 +2955,7 @@ class FluxionWindow(QMainWindow):
     def _on_index_done(self, count: int) -> None:
         self._set_indexing_done()
         self.index_status.setText(self._chunks_label())
-        self.project_view.append(f"<p><b>Готово:</b> проиндексировано {count} чанков. Чат теперь будет сам искать ответы в коде и документах папки.</p>")
+        self.project_view.append(tr("<p><b>Готово:</b> проиндексировано {count} чанков. Чат теперь будет сам искать ответы в коде и документах папки.</p>", count=count))
         self._refresh_index_chip()
         self.qsettings.setValue("index_updated_at", datetime.now().strftime("%Y-%m-%d %H:%M"))
         self.qsettings.setValue("index_embed_backend", self._embed_backend_id())
@@ -2923,7 +2987,7 @@ class FluxionWindow(QMainWindow):
         if not hasattr(self, "agent_git_button"):
             return
         if not self._git_enabled():
-            self.agent_git_button.setText("Git: выключен")
+            self.agent_git_button.setText(tr("Git: выключен"))
             return
         from orchestrator import git_helper
 
@@ -2931,7 +2995,7 @@ class FluxionWindow(QMainWindow):
             repo = git_helper.is_repo(self._agent_project_root())
         except Exception:
             repo = False
-        self.agent_git_button.setText("Git: репозиторий" if repo else "Git: нет репозитория")
+        self.agent_git_button.setText(tr("Git: репозиторий") if repo else tr("Git: нет репозитория"))
 
     def _open_git_dialog(self) -> None:
         import shutil
@@ -2941,9 +3005,9 @@ class FluxionWindow(QMainWindow):
         if not self._git_enabled():
             box = QMessageBox(self)
             box.setWindowTitle("Git")
-            box.setText("Git-инструменты агента выключены. Включить их снова?")
-            enable = box.addButton("Включить", QMessageBox.YesRole)
-            box.addButton("Оставить выключенными", QMessageBox.NoRole)
+            box.setText(tr("Git-инструменты агента выключены. Включить их снова?"))
+            enable = box.addButton(tr("Включить"), QMessageBox.YesRole)
+            box.addButton(tr("Оставить выключенными"), QMessageBox.NoRole)
             box.exec()
             if box.clickedButton() is enable:
                 self.qsettings.setValue("agent_git_enabled", 1)
@@ -2954,8 +3018,8 @@ class FluxionWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Git",
-                "Git не установлен. Установите его через мастер настройки "
-                "или вручную: https://git-scm.com/download/win",
+                tr("Git не установлен. Установите его через мастер настройки "
+                "или вручную: https://git-scm.com/download/win"),
             )
             return
 
@@ -2968,25 +3032,25 @@ class FluxionWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Git",
-                f"Проект уже в git-репозитории:\n{root}\n\n"
-                "Агент может использовать git_status, git_diff и git_commit.",
+                tr("Проект уже в git-репозитории:\n{root}\n\n"
+                "Агент может использовать git_status, git_diff и git_commit.", root=root),
             )
             return
 
         box = QMessageBox(self)
-        box.setWindowTitle("Git-репозиторий")
+        box.setWindowTitle(tr("Git-репозиторий"))
         box.setText(
-            f"Папка проекта не является git-репозиторием:\n{root}\n\n"
+            tr("Папка проекта не является git-репозиторием:\n{root}\n\n"
             "Инициализировать репозиторий (git init + первый коммит) "
-            "или работать без git-инструментов?"
+            "или работать без git-инструментов?", root=root)
         )
-        init_btn = box.addButton("Инициализировать", QMessageBox.YesRole)
-        no_git_btn = box.addButton("Без git", QMessageBox.NoRole)
-        box.addButton("Отмена", QMessageBox.RejectRole)
+        init_btn = box.addButton(tr("Инициализировать"), QMessageBox.YesRole)
+        no_git_btn = box.addButton(tr("Без git"), QMessageBox.NoRole)
+        box.addButton(tr("Отмена"), QMessageBox.RejectRole)
         box.exec()
         clicked = box.clickedButton()
         if clicked is init_btn:
-            self.statusBar().showMessage("Инициализируем git-репозиторий…")
+            self.statusBar().showMessage(tr("Инициализируем git-репозиторий…"))
             if getattr(self, "agent_git_button", None) is not None:
                 self.agent_git_button.setEnabled(False)
             self._git_init_worker = GitInitWorker(str(root))
@@ -2995,7 +3059,7 @@ class FluxionWindow(QMainWindow):
         elif clicked is no_git_btn:
             self.qsettings.setValue("agent_git_enabled", 0)
             self._refresh_git_button()
-            self.statusBar().showMessage("Git-инструменты агента отключены.", 8000)
+            self.statusBar().showMessage(tr("Git-инструменты агента отключены."), 8000)
 
     def _on_git_init_done(self, ok: bool, message: str) -> None:
         if getattr(self, "agent_git_button", None) is not None:
@@ -3012,17 +3076,17 @@ class FluxionWindow(QMainWindow):
         layout.setContentsMargins(36, 24, 36, 20)
         layout.setSpacing(12)
 
-        title = QLabel("Обучение")
+        title = QLabel(tr("Обучение"))
         title.setObjectName("pageTitle")
         layout.addWidget(title)
         self.training_subtitle = QLabel(
-            "QLoRA дообучение на вашем датасете (Pro). Готовая модель появится в списке моделей."
+            tr("QLoRA дообучение на вашем датасете (Pro). Готовая модель появится в списке моделей.")
         )
         self.training_subtitle.setObjectName("subtitle")
         layout.addWidget(self.training_subtitle)
 
         self.training_steps = StepIndicator(
-            ["Окружение", "Данные и параметры", "Запуск и мониторинг"]
+            [tr("Окружение"), tr("Данные и параметры"), tr("Запуск и мониторинг")]
         )
         layout.addWidget(self.training_steps)
 
@@ -3036,15 +3100,15 @@ class FluxionWindow(QMainWindow):
         self.training_env_label.setObjectName("subtitle")
         self.training_env_label.setWordWrap(True)
         c1.addWidget(self.training_env_label)
-        self.training_install_button = QPushButton("Установить окружение обучения")
+        self.training_install_button = QPushButton(tr("Установить окружение обучения"))
         self.training_install_button.setObjectName("sendButton")
         self.training_install_button.clicked.connect(self.install_training_env)
         self.training_install_button.setVisible(False)
         c1.addWidget(self.training_install_button)
-        self.training_reinstall_button = QPushButton("Переустановить окружение")
+        self.training_reinstall_button = QPushButton(tr("Переустановить окружение"))
         self.training_reinstall_button.setToolTip(
-            "Удалить окружение обучения и поставить его заново: если обучение "
-            "пишет, что PyTorch без CUDA или окружение повреждено"
+            tr("Удалить окружение обучения и поставить его заново: если обучение "
+            "пишет, что PyTorch без CUDA или окружение повреждено")
         )
         self.training_reinstall_button.clicked.connect(self.reinstall_training_env)
         self.training_reinstall_button.setVisible(False)
@@ -3059,19 +3123,19 @@ class FluxionWindow(QMainWindow):
         c2.setSpacing(10)
         dataset_row = QHBoxLayout()
         self.training_dataset = QLineEdit()
-        self.training_dataset.setPlaceholderText("Датасет .jsonl (ChatML, поле messages)")
+        self.training_dataset.setPlaceholderText(tr("Датасет .jsonl (ChatML, поле messages)"))
         self.training_dataset.textChanged.connect(self._validate_dataset)
         dataset_row.addWidget(self.training_dataset, 1)
-        self.training_pick_button = QPushButton("Выбрать…")
+        self.training_pick_button = QPushButton(tr("Выбрать…"))
         self.training_pick_button.setObjectName("iconButton")
         self.training_pick_button.clicked.connect(self._pick_dataset_file)
         dataset_row.addWidget(self.training_pick_button)
-        self.training_docs_button = QPushButton("Из документов…")
+        self.training_docs_button = QPushButton(tr("Из документов…"))
         self.training_docs_button.setObjectName("iconButton")
-        self.training_docs_button.setToolTip("Составить датасет «вопрос — ответ» по вашим документам")
+        self.training_docs_button.setToolTip(tr("Составить датасет «вопрос — ответ» по вашим документам"))
         self.training_docs_button.clicked.connect(self._make_dataset_from_docs)
         dataset_row.addWidget(self.training_docs_button)
-        self.dataset_chip = QLabel("датасет: не выбран")
+        self.dataset_chip = QLabel(tr("датасет: не выбран"))
         self.dataset_chip.setObjectName("statusChip")
         dataset_row.addWidget(self.dataset_chip)
         c2.addLayout(dataset_row)
@@ -3079,19 +3143,19 @@ class FluxionWindow(QMainWindow):
         form = QFormLayout()
         form.setSpacing(10)
         self.training_preset = QComboBox()
-        self.training_preset.addItem("low — 6–8 ГБ VRAM (unsloth)", "low")
-        self.training_preset.addItem("standard — 8–12 ГБ (HF peft+trl)", "standard")
-        form.addRow("Пресет:", self.training_preset)
+        self.training_preset.addItem(tr("low — 6–8 ГБ VRAM (unsloth)"), "low")
+        self.training_preset.addItem(tr("standard — 8–12 ГБ (HF peft+trl)"), "standard")
+        form.addRow(tr("Пресет:"), self.training_preset)
         # A preset file (e.g. downloaded from the Fluxion website) overrides the
         # built-in preset; choosing a built-in preset again drops the file.
         self._training_preset_path = ""
         self._applying_training_preset = False
         preset_file_row = QHBoxLayout()
-        self.training_preset_file_button = QPushButton("Загрузить из файла…")
+        self.training_preset_file_button = QPushButton(tr("Загрузить из файла…"))
         self.training_preset_file_button.setObjectName("iconButton")
         self.training_preset_file_button.clicked.connect(self._pick_training_preset_file)
         preset_file_row.addWidget(self.training_preset_file_button)
-        self.training_preset_chip = QLabel("встроенный пресет")
+        self.training_preset_chip = QLabel(tr("встроенный пресет"))
         self.training_preset_chip.setObjectName("statusChip")
         preset_file_row.addWidget(self.training_preset_chip, 1)
         form.addRow("", preset_file_row)
@@ -3099,15 +3163,15 @@ class FluxionWindow(QMainWindow):
         self.training_epochs = QSpinBox()
         self.training_epochs.setRange(1, 20)
         self.training_epochs.setValue(TrainingParams().epochs)
-        form.addRow("Эпохи:", self.training_epochs)
+        form.addRow(tr("Эпохи:"), self.training_epochs)
         self.training_max_samples = QSpinBox()
         self.training_max_samples.setRange(0, 1_000_000)
         self.training_max_samples.setValue(0)
-        self.training_max_samples.setSpecialValueText("все")
-        form.addRow("Макс. примеров:", self.training_max_samples)
+        self.training_max_samples.setSpecialValueText(tr("все"))
+        form.addRow(tr("Макс. примеров:"), self.training_max_samples)
         c2.addLayout(form)
 
-        self.training_advanced_button = QPushButton("▸ Дополнительные настройки")
+        self.training_advanced_button = QPushButton(tr("▸ Дополнительные настройки"))
         self.training_advanced_button.setObjectName("iconButton")
         self.training_advanced_button.setCheckable(True)
         self.training_advanced_button.toggled.connect(self._toggle_training_advanced)
@@ -3119,7 +3183,7 @@ class FluxionWindow(QMainWindow):
         adv_box.setContentsMargins(14, 12, 14, 12)
         adv_box.setSpacing(10)
         adv_hint = QLabel(
-            "Обычно менять не нужно: значения по умолчанию подходят для первого обучения."
+            tr("Обычно менять не нужно: значения по умолчанию подходят для первого обучения.")
         )
         adv_hint.setObjectName("subtitle")
         adv_hint.setWordWrap(True)
@@ -3131,27 +3195,27 @@ class FluxionWindow(QMainWindow):
         self.training_base_model = QLineEdit()
         self.training_base_model.setText(TrainingParams().base_model)
         self.training_base_model.setToolTip(
-            "Модель с Hugging Face, которую дообучаем. Пресет из файла задаёт её сам."
+            tr("Модель с Hugging Face, которую дообучаем. Пресет из файла задаёт её сам.")
         )
-        adv.addRow("Базовая модель:", self.training_base_model)
+        adv.addRow(tr("Базовая модель:"), self.training_base_model)
         self.training_ollama_model = QLineEdit()
         self.training_ollama_model.setText(TrainingParams().ollama_model_name)
         self.training_ollama_model.setToolTip(
-            "Под этим названием дообученная модель появится в списке «Модель» в чате "
-            "(и в Ollama, если она установлена)."
+            tr("Под этим названием дообученная модель появится в списке «Модель» в чате "
+            "(и в Ollama, если она установлена).")
         )
-        adv.addRow("Название модели:", self.training_ollama_model)
+        adv.addRow(tr("Название модели:"), self.training_ollama_model)
         self.training_adapter_name = QLineEdit()
         self.training_adapter_name.setText(TrainingParams().adapter_name)
         self.training_adapter_name.setToolTip(
-            "Под этим именем адаптер LoRA сохранится в реестре адаптеров."
+            tr("Под этим именем адаптер LoRA сохранится в реестре адаптеров.")
         )
-        adv.addRow("Название адаптера:", self.training_adapter_name)
+        adv.addRow(tr("Название адаптера:"), self.training_adapter_name)
         self.training_description = QLineEdit()
-        self.training_description.setPlaceholderText("Необязательно: для чего эта модель")
-        adv.addRow("Описание:", self.training_description)
+        self.training_description.setPlaceholderText(tr("Необязательно: для чего эта модель"))
+        adv.addRow(tr("Описание:"), self.training_description)
         adv_box.addLayout(adv)
-        self.training_export = QCheckBox("Собрать готовую модель для чата (GGUF)")
+        self.training_export = QCheckBox(tr("Собрать готовую модель для чата (GGUF)"))
         self.training_export.setChecked(True)
         adv_box.addWidget(self.training_export)
         self.training_export_note = QLabel()
@@ -3170,10 +3234,10 @@ class FluxionWindow(QMainWindow):
         c3.setContentsMargins(16, 14, 16, 14)
         c3.setSpacing(10)
         buttons = QHBoxLayout()
-        self.training_run_button = QPushButton("Начать обучение")
+        self.training_run_button = QPushButton(tr("Начать обучение"))
         self.training_run_button.setObjectName("sendButton")
         self.training_run_button.clicked.connect(self.run_training)
-        self.training_stop_button = QPushButton("Стоп")
+        self.training_stop_button = QPushButton(tr("Стоп"))
         self.training_stop_button.setObjectName("stopButton")
         self.training_stop_button.clicked.connect(self.stop_training)
         self.training_stop_button.setVisible(False)
@@ -3203,8 +3267,8 @@ class FluxionWindow(QMainWindow):
         self.training_view.setMinimumHeight(220)
         self._wire_sticky_scroll(self.training_view)
         self.training_view.setHtml(
-            "<p>Этапы: обучение → объединение с базовой моделью → готовая модель (GGUF) "
-            "→ список моделей программы.</p>"
+            tr("<p>Этапы: обучение → объединение с базовой моделью → готовая модель (GGUF) "
+            "→ список моделей программы.</p>")
         )
         c3.addWidget(self.training_view, 1)
         layout.addWidget(card3, 1)
@@ -3233,20 +3297,20 @@ class FluxionWindow(QMainWindow):
         layout.setSpacing(12)
 
         header = QHBoxLayout()
-        title = QLabel("Модели")
+        title = QLabel(tr("Модели"))
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch()
         self.models_refresh_button = QPushButton("⟳")
         self.models_refresh_button.setObjectName("iconButton")
-        self.models_refresh_button.setToolTip("Обновить список и каталог с сайта")
+        self.models_refresh_button.setToolTip(tr("Обновить список и каталог с сайта"))
         self.models_refresh_button.clicked.connect(self._refresh_models_and_catalog)
         header.addWidget(self.models_refresh_button)
         layout.addLayout(header)
 
         subtitle = QLabel(
-            "Каталог GGUF-моделей: скачивание с докачкой, импорт без перекачки. "
-            "Хранилище: %LOCALAPPDATA%\\Fluxion\\models"
+            tr("Каталог GGUF-моделей: скачивание с докачкой, импорт без перекачки. "
+            "Хранилище: %LOCALAPPDATA%\\Fluxion\\models")
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -3264,7 +3328,7 @@ class FluxionWindow(QMainWindow):
         filters = QHBoxLayout()
         filters.setSpacing(8)
         self.models_search = QLineEdit()
-        self.models_search.setPlaceholderText("Поиск модели…")
+        self.models_search.setPlaceholderText(tr("Поиск модели…"))
         self.models_search.setClearButtonEnabled(True)
         self.models_search.textChanged.connect(self._apply_model_filter)
         filters.addWidget(self.models_search, 1)
@@ -3276,7 +3340,7 @@ class FluxionWindow(QMainWindow):
         self.models_vram = QComboBox()
         for label, gb in MODEL_VRAM_LIMITS:
             self.models_vram.addItem(label, gb)
-        self.models_vram.setToolTip("Показать модели, которым хватит памяти видеокарты")
+        self.models_vram.setToolTip(tr("Показать модели, которым хватит памяти видеокарты"))
         self.models_vram.currentIndexChanged.connect(self._apply_model_filter)
         filters.addWidget(self.models_vram)
         layout.addLayout(filters)
@@ -3284,7 +3348,7 @@ class FluxionWindow(QMainWindow):
         self._model_cards_box = QVBoxLayout()
         self._model_cards_box.setSpacing(12)
         layout.addLayout(self._model_cards_box)
-        self.models_empty = QLabel("Под условия поиска не подходит ни одна модель.")
+        self.models_empty = QLabel(tr("Под условия поиска не подходит ни одна модель."))
         self.models_empty.setObjectName("subtitle")
         self.models_empty.setVisible(False)
         layout.addWidget(self.models_empty)
@@ -3295,16 +3359,16 @@ class FluxionWindow(QMainWindow):
         self._build_model_cards()
 
         actions = QHBoxLayout()
-        import_disk = QPushButton("Импорт с диска…")
+        import_disk = QPushButton(tr("Импорт с диска…"))
         import_disk.setProperty("suggestion", True)
         import_disk.clicked.connect(self._import_model_disk)
         actions.addWidget(import_disk)
-        by_link = QPushButton("Скачать по ссылке…")
+        by_link = QPushButton(tr("Скачать по ссылке…"))
         by_link.setProperty("suggestion", True)
-        by_link.setToolTip("Любая модель GGUF с Hugging Face, не только из списка")
+        by_link.setToolTip(tr("Любая модель GGUF с Hugging Face, не только из списка"))
         by_link.clicked.connect(self._download_model_by_link)
         actions.addWidget(by_link)
-        import_ollama = QPushButton("Импорт из Ollama")
+        import_ollama = QPushButton(tr("Импорт из Ollama"))
         import_ollama.setProperty("suggestion", True)
         import_ollama.clicked.connect(self._import_models_ollama)
         actions.addWidget(import_ollama)
@@ -3341,9 +3405,9 @@ class FluxionWindow(QMainWindow):
         box.setContentsMargins(16, 12, 16, 12)
         box.setSpacing(8)
         title = QLabel(
-            "<b>Распознавание речи</b>"
+            tr("<b>Распознавание речи</b>"
             '<br><span style="color:#94A3B8;">Модель Whisper для голосового ввода в чате (кнопка микрофона или Ctrl+Пробел). '
-            "Речь распознаётся на компьютере, звук никуда не отправляется. Бесплатно.</span>"
+            "Речь распознаётся на компьютере, звук никуда не отправляется. Бесплатно.</span>")
         )
         title.setTextFormat(Qt.RichText)
         title.setWordWrap(True)
@@ -3352,8 +3416,8 @@ class FluxionWindow(QMainWindow):
         for model in SPEECH_MODELS:
             row = QHBoxLayout()
             label = QLabel(
-                f"<b>{html.escape(model.name)}</b> · {model.size_bytes / 1e9:.1f} ГБ"
-                f'<br><span style="color:#94A3B8;">{html.escape(model.summary)}</span>'
+                tr("<b>{value}</b> · {value2:.1f} ГБ"
+                '<br><span style="color:#94A3B8;">{value3}</span>', value=html.escape(model.name), value2=model.size_bytes / 1e9, value3=html.escape(model.summary))
             )
             label.setTextFormat(Qt.RichText)
             label.setWordWrap(True)
@@ -3373,13 +3437,13 @@ class FluxionWindow(QMainWindow):
         busy = self._speech_download_worker is not None
         for model_id, button in self._speech_buttons.items():
             if not is_installed(model_id):
-                button.setText("Скачать")
+                button.setText(tr("Скачать"))
                 button.setEnabled(not busy)
             elif model_id == current:
-                button.setText("✓ Используется")
+                button.setText(tr("✓ Используется"))
                 button.setEnabled(False)
             else:
-                button.setText("Использовать")
+                button.setText(tr("Использовать"))
                 button.setEnabled(not busy)
 
     def _on_speech_model_button(self, model_id: str) -> None:
@@ -3393,7 +3457,7 @@ class FluxionWindow(QMainWindow):
             return
         self.models_progress.setVisible(True)
         self.models_progress.setRange(0, 0)
-        self.models_status.setText("Скачиваем модель распознавания речи… докачка поддерживается")
+        self.models_status.setText(tr("Скачиваем модель распознавания речи… докачка поддерживается"))
         worker = SpeechModelDownloadWorker(model_id, self)
         self._speech_download_worker = worker
         worker.progress.connect(self._on_speech_download_progress)
@@ -3408,7 +3472,7 @@ class FluxionWindow(QMainWindow):
             self.models_progress.setRange(0, total)
             self.models_progress.setValue(min(done, total))
             self.models_status.setText(
-                f"Скачиваем модель распознавания речи… {done / 1e9:.2f} / {total / 1e9:.2f} ГБ"
+                tr("Скачиваем модель распознавания речи… {value:.2f} / {value2:.2f} ГБ", value=done / 1e9, value2=total / 1e9)
             )
 
     def _on_speech_download_done(self, model_id: str) -> None:
@@ -3417,7 +3481,7 @@ class FluxionWindow(QMainWindow):
         self.qsettings.setValue("voice_model", model_id)
         self.models_progress.setVisible(False)
         self.models_status.setText(
-            f"Модель {speech_model(model_id).name} загружена: голосовой ввод в чате — кнопка микрофона или Ctrl+Пробел."
+            tr("Модель {value} загружена: голосовой ввод в чате — кнопка микрофона или Ctrl+Пробел.", value=speech_model(model_id).name)
         )
 
     def _on_speech_download_failed(self, message: str) -> None:
@@ -3445,10 +3509,10 @@ class FluxionWindow(QMainWindow):
         box.setContentsMargins(16, 12, 16, 12)
         box.setSpacing(8)
         title = QLabel(
-            '<b>Облачная модель по API</b> <span style="color:#8B4BFF; font-weight:600;">PRO</span>'
+            tr('<b>Облачная модель по API</b> <span style="color:#8B4BFF; font-weight:600;">PRO</span>'
             '<br><span style="color:#94A3B8;">Чат и агент работают через модель провайдера: '
             "OpenRouter, Groq, Together, OpenAI или любой OpenAI-совместимый адрес (vLLM, LM Studio). "
-            "Вопросы и фрагменты кода из них уходят провайдеру, токены оплачиваются у него.</span>"
+            "Вопросы и фрагменты кода из них уходят провайдеру, токены оплачиваются у него.</span>")
         )
         title.setTextFormat(Qt.RichText)
         title.setWordWrap(True)
@@ -3461,25 +3525,25 @@ class FluxionWindow(QMainWindow):
         index = self.cloud_provider.findData(cfg.provider)
         self.cloud_provider.setCurrentIndex(index if index >= 0 else 0)
         self.cloud_provider.currentIndexChanged.connect(self._on_cloud_provider_changed)
-        form.addRow("Провайдер", self.cloud_provider)
+        form.addRow(tr("Провайдер"), self.cloud_provider)
 
         self.cloud_base_url = QLineEdit(cfg.base_url)
         self.cloud_base_url.setPlaceholderText("https://…/v1")
-        form.addRow("Адрес API", self.cloud_base_url)
+        form.addRow(tr("Адрес API"), self.cloud_base_url)
 
         key_row = QHBoxLayout()
         self.cloud_key = QLineEdit(cfg.api_key)
         self.cloud_key.setEchoMode(QLineEdit.Password)
-        self.cloud_key.setPlaceholderText("ключ из личного кабинета провайдера")
+        self.cloud_key.setPlaceholderText(tr("ключ из личного кабинета провайдера"))
         key_row.addWidget(self.cloud_key, 1)
         show_key = QToolButton()
-        show_key.setText("Показать")
+        show_key.setText(tr("Показать"))
         show_key.setCheckable(True)
         show_key.toggled.connect(
             lambda on: self.cloud_key.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password)
         )
         key_row.addWidget(show_key)
-        form.addRow("Ключ", key_row)
+        form.addRow(tr("Ключ"), key_row)
 
         model_row = QHBoxLayout()
         self.cloud_model = QComboBox()
@@ -3487,25 +3551,25 @@ class FluxionWindow(QMainWindow):
         if cfg.model:
             self.cloud_model.addItem(cfg.model)
         example = provider_by_key(cfg.provider).example_model
-        self.cloud_model.lineEdit().setPlaceholderText(example or "имя модели у провайдера")
+        self.cloud_model.lineEdit().setPlaceholderText(example or tr("имя модели у провайдера"))
         model_row.addWidget(self.cloud_model, 1)
-        self.cloud_models_button = QPushButton("Список моделей")
+        self.cloud_models_button = QPushButton(tr("Список моделей"))
         self.cloud_models_button.setProperty("suggestion", True)
         self.cloud_models_button.clicked.connect(lambda: self._start_cloud_worker("models"))
         model_row.addWidget(self.cloud_models_button)
-        form.addRow("Модель", model_row)
+        form.addRow(tr("Модель"), model_row)
         box.addLayout(form)
 
-        self.cloud_enabled = QCheckBox("Использовать облачную модель вместо локальной")
+        self.cloud_enabled = QCheckBox(tr("Использовать облачную модель вместо локальной"))
         self.cloud_enabled.setChecked(cfg.enabled)
         box.addWidget(self.cloud_enabled)
 
         actions = QHBoxLayout()
-        self.cloud_check_button = QPushButton("Проверить связь")
+        self.cloud_check_button = QPushButton(tr("Проверить связь"))
         self.cloud_check_button.setProperty("suggestion", True)
         self.cloud_check_button.clicked.connect(lambda: self._start_cloud_worker("check"))
         actions.addWidget(self.cloud_check_button)
-        self.cloud_save_button = QPushButton("Сохранить")
+        self.cloud_save_button = QPushButton(tr("Сохранить"))
         self.cloud_save_button.setProperty("suggestion", True)
         self.cloud_save_button.clicked.connect(self._cloud_save)
         actions.addWidget(self.cloud_save_button)
@@ -3532,7 +3596,7 @@ class FluxionWindow(QMainWindow):
         if provider.example_model:
             self.cloud_model.setEditText(provider.example_model)
         self.cloud_model.lineEdit().setPlaceholderText(
-            provider.example_model or "имя модели у провайдера"
+            provider.example_model or tr("имя модели у провайдера")
         )
 
     def _cloud_form_config(self):
@@ -3553,27 +3617,27 @@ class FluxionWindow(QMainWindow):
         from licensing import feature_enabled
 
         allowed = bool(feature_enabled("multi_model"))
-        self.cloud_save_button.setText("Сохранить" if allowed else "Доступно в Pro")
+        self.cloud_save_button.setText(tr("Сохранить") if allowed else tr("Доступно в Pro"))
         lines = [prefix] if prefix else []
         if self._is_cloud_backend():
-            lines.append(f"Сейчас чат и агент работают через облачную модель {self.backend.model}.")
+            lines.append(tr("Сейчас чат и агент работают через облачную модель {model}.", model=self.backend.model))
         elif self.cloud_enabled.isChecked() and not allowed:
-            lines.append("Облачная модель включена, но лицензия Pro не активна: работает локальная модель.")
+            lines.append(tr("Облачная модель включена, но лицензия Pro не активна: работает локальная модель."))
         overrides = env_overrides()
         if overrides:
             lines.append(
-                "Переменные " + ", ".join(overrides)
-                + " заданы в системе или в файле .env и действуют вместо настроек здесь."
+                tr("Переменные ") + ", ".join(overrides)
+                + tr(" заданы в системе или в файле .env и действуют вместо настроек здесь.")
             )
         if not allowed:
-            lines.append("Облачные модели доступны в Fluxion Pro: меню Помощь → Лицензия…")
+            lines.append(tr("Облачные модели доступны в Fluxion Pro: меню Помощь → Лицензия…"))
         self.cloud_status.setText("\n".join(lines))
 
     def _start_cloud_worker(self, action: str) -> None:
         if self._cloud_worker is not None:
             return
         self.cloud_status.setText(
-            "Получаем список моделей…" if action == "models" else "Проверяем связь с провайдером…"
+            tr("Получаем список моделей…") if action == "models" else tr("Проверяем связь с провайдером…")
         )
         self.cloud_check_button.setEnabled(False)
         self.cloud_models_button.setEnabled(False)
@@ -3599,7 +3663,7 @@ class FluxionWindow(QMainWindow):
             self.cloud_model.addItems([str(m) for m in models])
             self.cloud_model.setEditText(current or (str(models[0]) if models else ""))
             if models and not current:
-                message += " Выберите модель в списке."
+                message += tr(" Выберите модель в списке.")
         self.cloud_status.setText(("✓ " if ok else "✗ ") + message)
 
     def _cloud_save(self) -> None:
@@ -3608,25 +3672,25 @@ class FluxionWindow(QMainWindow):
 
         if not feature_enabled("multi_model"):
             self.cloud_status.setText(
-                "Облачные модели доступны в Fluxion Pro. Активируйте лицензию: меню Помощь → Лицензия…"
+                tr("Облачные модели доступны в Fluxion Pro. Активируйте лицензию: меню Помощь → Лицензия…")
             )
             return
         cfg = self._cloud_form_config()
         if cfg.enabled and not cfg.complete:
-            self.cloud_status.setText("Чтобы включить облачную модель, заполните адрес, ключ и модель.")
+            self.cloud_status.setText(tr("Чтобы включить облачную модель, заполните адрес, ключ и модель."))
             return
         if self.generating or self.agent_running:
-            self.cloud_status.setText("Дождитесь конца ответа или работы агента и сохраните ещё раз.")
+            self.cloud_status.setText(tr("Дождитесь конца ответа или работы агента и сохраните ещё раз."))
             return
         try:
             save_cloud_config(cfg)
         except OSError as exc:
-            self.cloud_status.setText(f"Не удалось сохранить настройки: {exc}")
+            self.cloud_status.setText(tr("Не удалось сохранить настройки: {exc}", exc=exc))
             return
         apply_cloud_config(cfg)
         self._switch_backend()
-        self._refresh_cloud_card("Сохранено." if self._is_cloud_backend() or not cfg.enabled
-                                 else "Сохранено, но облачная модель не подключилась.")
+        self._refresh_cloud_card(tr("Сохранено.") if self._is_cloud_backend() or not cfg.enabled
+                                 else tr("Сохранено, но облачная модель не подключилась."))
 
     def _switch_backend(self) -> None:
         """Rebuild the chat engine after the cloud settings changed (no restart)."""
@@ -3643,7 +3707,7 @@ class FluxionWindow(QMainWindow):
         try:
             backend, _gated = _startup_backend(self.settings)
         except Exception as exc:  # noqa: BLE001 — keep the old engine
-            self._append_banner(f"Не удалось сменить движок: {exc}")
+            self._append_banner(tr("Не удалось сменить движок: {exc}", exc=exc))
             return
         old = self.backend
         if old is not None and type(old) is not type(backend):
@@ -3687,10 +3751,10 @@ class FluxionWindow(QMainWindow):
             name.setWordWrap(True)
             row.addWidget(name, 1)
             meta = QLabel(
-                f"{entry.size_bytes / 1_000_000_000:.1f} ГБ"
-                + (f" · ~{entry.vram_gb:.0f} ГБ VRAM" if entry.vram_gb else "")
-                + (" · эмбеддинги" if entry.task == "embedding" else "")
-                + (" · по умолчанию" if entry.default else "")
+                tr("{value:.1f} ГБ", value=entry.size_bytes / 1_000_000_000)
+                + (tr(" · ~{vram_gb:.0f} ГБ VRAM", vram_gb=entry.vram_gb) if entry.vram_gb else "")
+                + (tr(" · эмбеддинги") if entry.task == "embedding" else "")
+                + (tr(" · по умолчанию") if entry.default else "")
             )
             meta.setObjectName("statusChip")
             row.addWidget(meta)
@@ -3762,12 +3826,12 @@ class FluxionWindow(QMainWindow):
         if gpu_gb > 0 and self.models_vram.findData(-1.0) < 0:
             # "my card": the detected memory, right after "any card"
             self._gpu_memory_gb = gpu_gb
-            self.models_vram.insertItem(1, f"Моя видеокарта ({gpu_gb:.0f} ГБ)", -1.0)
+            self.models_vram.insertItem(1, tr("Моя видеокарта ({gpu_gb:.0f} ГБ)", gpu_gb=gpu_gb), -1.0)
         if count <= 0:
             if error:
-                self.models_refresh_button.setToolTip(f"Обновить список. {error}")
+                self.models_refresh_button.setToolTip(tr("Обновить список. {error}", error=error))
             return
-        self.models_refresh_button.setToolTip("Обновить список и каталог с сайта")
+        self.models_refresh_button.setToolTip(tr("Обновить список и каталог с сайта"))
         if getattr(self, "_model_download_worker", None) is not None:
             return  # no rebuild under a running download; the next refresh does it
         shown = [entry for _card, entry in self._model_cards.values()]
@@ -3786,17 +3850,17 @@ class FluxionWindow(QMainWindow):
             if entry is None:
                 continue
             if mm.is_installed(model_id):
-                button.setText("Удалить")
+                button.setText(tr("Удалить"))
             elif not model_allowed(entry):
-                button.setText("Доступно в Pro")
+                button.setText(tr("Доступно в Pro"))
             else:
-                button.setText(f"Скачать ({entry.size_bytes / 1_000_000_000:.1f} ГБ)")
+                button.setText(tr("Скачать ({value:.1f} ГБ)", value=entry.size_bytes / 1_000_000_000))
         installed = mm.list_installed()
         if installed:
-            lines = [f"• {i.filename} — {i.size_bytes / 1_000_000_000:.2f} ГБ ({i.source or 'импорт'})" for i in installed]
-            self.models_installed.setText("Установлены:\n" + "\n".join(lines))
+            lines = [tr("• {filename} — {value:.2f} ГБ ({value2})", filename=i.filename, value=i.size_bytes / 1_000_000_000, value2=i.source or tr('импорт')) for i in installed]
+            self.models_installed.setText(tr("Установлены:\n") + "\n".join(lines))
         else:
-            self.models_installed.setText("Установленных моделей нет.")
+            self.models_installed.setText(tr("Установленных моделей нет."))
 
     def _on_model_button(self, model_id: str) -> None:
         from core.model_manager import model_allowed
@@ -3809,26 +3873,26 @@ class FluxionWindow(QMainWindow):
             return
         if mm.is_installed(model_id):
             answer = QMessageBox.question(
-                self, "Удалить модель", f"Удалить {entry.filename} из хранилища?",
+                self, tr("Удалить модель"), tr("Удалить {filename} из хранилища?", filename=entry.filename),
                 QMessageBox.Yes | QMessageBox.No,
             )
             if answer == QMessageBox.Yes:
                 mm.delete(entry.filename)
-                self.models_status.setText(f"Удалено: {entry.filename}")
+                self.models_status.setText(tr("Удалено: {filename}", filename=entry.filename))
                 self._refresh_models()
                 self._load_models()
             return
         if not model_allowed(entry):
             self.models_status.setText(
-                f"«{entry.name}» доступна в Fluxion Pro. "
-                "Активируйте лицензию: меню Помощь → Лицензия…"
+                tr("«{name}» доступна в Fluxion Pro. "
+                "Активируйте лицензию: меню Помощь → Лицензия…", name=entry.name)
             )
             return
         self._start_model_download(model_id)
 
     def _download_model_by_link(self) -> None:
         if getattr(self, "_model_download_worker", None) is not None:
-            self.models_status.setText("Дождитесь окончания текущей загрузки.")
+            self.models_status.setText(tr("Дождитесь окончания текущей загрузки."))
             return
         mm = getattr(self, "model_mgr", None)
         installed = {m.filename for m in mm.list_installed()} if mm is not None else set()
@@ -3842,7 +3906,7 @@ class FluxionWindow(QMainWindow):
             return
         self.models_progress.setVisible(True)
         self.models_progress.setRange(0, 0)
-        self.models_status.setText("Скачиваем модель… докачка поддерживается")
+        self.models_status.setText(tr("Скачиваем модель… докачка поддерживается"))
         for button in self._model_buttons.values():
             button.setEnabled(False)
         self._model_download_worker = ModelDownloadWorker(model_id, hf_file=hf_file)
@@ -3857,7 +3921,7 @@ class FluxionWindow(QMainWindow):
             self.models_progress.setRange(0, total)
             self.models_progress.setValue(done)
             self.models_status.setText(
-                f"Скачиваем модель… {done / 1e9:.1f} / {total / 1e9:.1f} ГБ"
+                tr("Скачиваем модель… {value:.1f} / {value2:.1f} ГБ", value=done / 1e9, value2=total / 1e9)
             )
         else:
             self.models_progress.setRange(0, 0)
@@ -3869,7 +3933,7 @@ class FluxionWindow(QMainWindow):
         self.models_progress.setVisible(False)
         for button in self._model_buttons.values():
             button.setEnabled(True)
-        self.models_status.setText(f"Модель загружена: {Path(path).name}")
+        self.models_status.setText(tr("Модель загружена: {value}", value=Path(path).name))
         self._refresh_models()
         try:
             entry_name = Path(path).name
@@ -3893,7 +3957,7 @@ class FluxionWindow(QMainWindow):
     def _import_model_disk(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
-        path, _ = QFileDialog.getOpenFileName(self, "Выберите GGUF-модель", "", "GGUF (*.gguf)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Выберите GGUF-модель"), "", "GGUF (*.gguf)")
         if not path:
             return
         self._start_model_import(path)
@@ -3904,7 +3968,7 @@ class FluxionWindow(QMainWindow):
     def _start_model_import(self, source_path: str | None) -> None:
         if getattr(self, "_model_import_worker", None) is not None:
             return
-        self.models_status.setText("Импорт…")
+        self.models_status.setText(tr("Импорт…"))
         self._model_import_worker = ModelImportWorker(source_path)
         self._model_import_worker.done.connect(self._on_model_import_done)
         self._model_import_worker.failed.connect(self._on_model_download_failed)
@@ -3920,19 +3984,19 @@ class FluxionWindow(QMainWindow):
     def _toggle_training_advanced(self, opened: bool) -> None:
         self.training_advanced.setVisible(opened)
         self.training_advanced_button.setText(
-            ("▾ " if opened else "▸ ") + "Дополнительные настройки"
+            ("▾ " if opened else "▸ ") + tr("Дополнительные настройки")
         )
 
     def _refresh_training_export_note(self) -> None:
         if os.environ.get("LLAMA_CPP_DIR", "") and Path(os.environ["LLAMA_CPP_DIR"]).is_dir():
             text = (
-                "После обучения модель соберётся в один файл и появится в списке "
-                "«Модель» в чате."
+                tr("После обучения модель соберётся в один файл и появится в списке "
+                "«Модель» в чате.")
             )
         else:
             text = (
-                "Для сборки нужна папка llama.cpp в переменной окружения LLAMA_CPP_DIR. "
-                "Без неё сохранится адаптер, а готовую модель можно собрать позже."
+                tr("Для сборки нужна папка llama.cpp в переменной окружения LLAMA_CPP_DIR. "
+                "Без неё сохранится адаптер, а готовую модель можно собрать позже.")
             )
         self.training_export_note.setText(text)
 
@@ -3940,8 +4004,8 @@ class FluxionWindow(QMainWindow):
         from PySide6.QtWidgets import QFileDialog
 
         path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите пресет обучения", str(Path.home()),
-            "Пресет Fluxion (*.json);;Все файлы (*.*)",
+            self, tr("Выберите пресет обучения"), str(Path.home()),
+            tr("Пресет Fluxion (*.json);;Все файлы (*.*)"),
         )
         if path:
             self._load_training_preset_file(path)
@@ -3953,8 +4017,8 @@ class FluxionWindow(QMainWindow):
         try:
             preset = load_preset(path)
         except PresetError as exc:
-            self.training_preset_chip.setText("пресет не загружен")
-            self.training_view.setHtml(f"<p><b>Пресет не загружен.</b> {html.escape(str(exc))}</p>")
+            self.training_preset_chip.setText(tr("пресет не загружен"))
+            self.training_view.setHtml(tr("<p><b>Пресет не загружен.</b> {value}</p>", value=html.escape(str(exc))))
             return False
         self._applying_training_preset = True
         try:
@@ -3970,11 +4034,11 @@ class FluxionWindow(QMainWindow):
         finally:
             self._applying_training_preset = False
         self._training_preset_path = path
-        self.training_preset_chip.setText(f"из файла: {preset.name}")
-        vram = f" Нужно от {preset.min_vram_gb:g} ГБ видеопамяти." if preset.min_vram_gb else ""
+        self.training_preset_chip.setText(tr("из файла: {name}", name=preset.name))
+        vram = tr(" Нужно от {min_vram_gb:g} ГБ видеопамяти.", min_vram_gb=preset.min_vram_gb) if preset.min_vram_gb else ""
         self.training_view.setHtml(
-            f"<p><b>Пресет «{html.escape(preset.name)}» загружен.</b>{vram}</p>"
-            f"<p>{html.escape(preset.description)}</p>"
+            tr("<p><b>Пресет «{value}» загружен.</b>{vram}</p>"
+            "<p>{value2}</p>", value=html.escape(preset.name), vram=vram, value2=html.escape(preset.description))
         )
         return True
 
@@ -3982,14 +4046,14 @@ class FluxionWindow(QMainWindow):
         if self._applying_training_preset or not self._training_preset_path:
             return
         self._training_preset_path = ""
-        self.training_preset_chip.setText("встроенный пресет")
+        self.training_preset_chip.setText(tr("встроенный пресет"))
 
     def _pick_dataset_file(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
         start = self.training_dataset.text().strip() or str(Path.home())
         path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите датасет", start, "JSONL (*.jsonl);;Все файлы (*.*)"
+            self, tr("Выберите датасет"), start, tr("JSONL (*.jsonl);;Все файлы (*.*)")
         )
         if path:
             self.training_dataset.setText(path)
@@ -4007,7 +4071,7 @@ class FluxionWindow(QMainWindow):
             return
         path = path.strip()
         if not path:
-            chip.setText("датасет: не выбран")
+            chip.setText(tr("датасет: не выбран"))
             state = "todo"
         else:
             file = Path(path)
@@ -4016,7 +4080,7 @@ class FluxionWindow(QMainWindow):
 
                 problem = check_dataset(file)
                 if problem:
-                    chip.setText("датасет: формат не распознан ⚠")
+                    chip.setText(tr("датасет: формат не распознан ⚠"))
                     chip.setToolTip(problem)
                     state = "warn"
                 else:
@@ -4024,12 +4088,12 @@ class FluxionWindow(QMainWindow):
 
                     count = f"{estimate_samples(file):,}".replace(",", " ")
                     chip.setText(
-                        f"датасет: {file.stat().st_size / 1_048_576:.1f} МБ · ~{count} примеров ✓"
+                        tr("датасет: {value:.1f} МБ · ~{count} примеров ✓", value=file.stat().st_size / 1_048_576, count=count)
                     )
                     chip.setToolTip("")
                     state = "ok"
             else:
-                chip.setText("датасет: файл не найден ⚠")
+                chip.setText(tr("датасет: файл не найден ⚠"))
                 state = "warn"
         chip.setProperty("state", state)
         chip.style().unpolish(chip)
@@ -4072,11 +4136,11 @@ class FluxionWindow(QMainWindow):
             widget.setEnabled(allowed)
         if allowed:
             self.training_subtitle.setText(
-                "QLoRA дообучение на вашем датасете (Pro). Готовая модель появится в списке моделей."
+                tr("QLoRA дообучение на вашем датасете (Pro). Готовая модель появится в списке моделей.")
             )
         else:
             self.training_subtitle.setText(
-                "QLoRA-обучение — Pro-функция. Активируйте лицензию: меню Помощь → Лицензия…"
+                tr("QLoRA-обучение — Pro-функция. Активируйте лицензию: меню Помощь → Лицензия…")
             )
         self._train_allowed = allowed
         self._refresh_training_steps()
@@ -4112,7 +4176,7 @@ class FluxionWindow(QMainWindow):
         env_py = detect_training_env(self._env_dir())
         if env_py:
             self.training_env_label.setText(
-                f"Окружение обучения: готово (venv: {Path(env_py).parent.parent.name})"
+                tr("Окружение обучения: готово (venv: {value})", value=Path(env_py).parent.parent.name)
             )
             self.training_install_button.setVisible(False)
             self.training_reinstall_button.setVisible(True)
@@ -4122,16 +4186,16 @@ class FluxionWindow(QMainWindow):
         trainer, name, _ = _detect_trainer(lambda message: None)
         if trainer is not None:
             self.training_env_label.setText(
-                f"Окружение обучения: системное Python ({name})"
+                tr("Окружение обучения: системное Python ({name})", name=name)
             )
             self.training_install_button.setVisible(False)
             self._env_ready = True
             self._refresh_training_steps()
             return
         self.training_env_label.setText(
-            "Окружение обучения не найдено. Нажмите кнопку — программа сама "
+            tr("Окружение обучения не найдено. Нажмите кнопку — программа сама "
             "проверит/установит Python 3.12 и развернёт venv "
-            "(несколько ГБ: torch, unsloth, peft, trl)."
+            "(несколько ГБ: torch, unsloth, peft, trl).")
         )
         self.training_install_button.setVisible(True)
         self._env_ready = False
@@ -4142,10 +4206,10 @@ class FluxionWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self,
-            "Переустановить окружение обучения?",
-            "Окружение обучения будет удалено и установлено заново: PyTorch с CUDA, "
+            tr("Переустановить окружение обучения?"),
+            tr("Окружение обучения будет удалено и установлено заново: PyTorch с CUDA, "
             "unsloth, peft, trl. Это несколько ГБ и может занять больше часа "
-            "(часть пакетов возьмётся из кэша pip).\n\nПродолжить?",
+            "(часть пакетов возьмётся из кэша pip).\n\nПродолжить?"),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -4169,18 +4233,18 @@ class FluxionWindow(QMainWindow):
         if host_python is None:
             answer = QMessageBox.question(
                 self,
-                "Python не найден",
-                "Для обучения нужен Python 3.12, он не найден на компьютере.\n\n"
+                tr("Python не найден"),
+                tr("Для обучения нужен Python 3.12, он не найден на компьютере.\n\n"
                 "Установить его автоматически через winget?\n"
                 "Python ставится для текущего пользователя, без окон установщика и без "
-                "запроса прав администратора; потребуется интернет.",
+                "запроса прав администратора; потребуется интернет."),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
                 self._training_log_html(
-                    "<b>Установка отменена: установите Python 3.11/3.12 вручную "
-                    "и повторите.</b>"
+                    tr("<b>Установка отменена: установите Python 3.11/3.12 вручную "
+                    "и повторите.</b>")
                 )
                 return
             auto_install = True
@@ -4188,13 +4252,13 @@ class FluxionWindow(QMainWindow):
         offline_wheels = find_offline_wheels()
         if offline_wheels is not None:
             self._training_log_html(
-                f"<b>Обнаружен офлайн-пак обучения: {html.escape(str(offline_wheels))}</b>"
+                tr("<b>Обнаружен офлайн-пак обучения: {value}</b>", value=html.escape(str(offline_wheels)))
             )
         self.env_installing = True
-        self._start_activity("Установка окружения обучения")
+        self._start_activity(tr("Установка окружения обучения"))
         self.training_install_button.setEnabled(False)
         self.training_reinstall_button.setEnabled(False)
-        self.training_view.setHtml("<p><b>Установка окружения обучения…</b></p>")
+        self.training_view.setHtml(tr("<p><b>Установка окружения обучения…</b></p>"))
         self._note_training_log_path()
         self.env_worker = EnvWorker(
             lambda log, stop_requested: install_training_environment(
@@ -4217,7 +4281,7 @@ class FluxionWindow(QMainWindow):
         self._stop_activity()
         self.training_install_button.setEnabled(True)
         self.training_reinstall_button.setEnabled(True)
-        self._on_training_log("Окружение обучения установлено.")
+        self._on_training_log(tr("Окружение обучения установлено."))
         self._refresh_training_env()
 
     def _on_env_install_failed(self, message: str) -> None:
@@ -4250,18 +4314,18 @@ class FluxionWindow(QMainWindow):
 
         if not feature_enabled("qlora"):
             self.training_view.setHtml(
-                "<p><b>QLoRA-обучение — Pro-функция.</b></p>"
-                "<p>Активируйте лицензию кнопкой «Лицензия» слева.</p>"
+                tr("<p><b>QLoRA-обучение — Pro-функция.</b></p>"
+                "<p>Активируйте лицензию кнопкой «Лицензия» слева.</p>")
             )
             return
         if self.settings is None:
             self.training_view.setHtml(
-                "<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>"
+                tr("<p>Движок не подключён. Запустите приложение через python -m desktop_browser.</p>")
             )
             return
         dataset = self.training_dataset.text().strip()
         if not dataset:
-            self.training_view.setHtml("<p><b>Укажите файл датасета (.jsonl).</b></p>")
+            self.training_view.setHtml(tr("<p><b>Укажите файл датасета (.jsonl).</b></p>"))
             return
         max_samples = self._confirm_dataset_size(dataset)
         if max_samples is None:
@@ -4284,8 +4348,8 @@ class FluxionWindow(QMainWindow):
         # One switch for the flag, the buttons and the activity bar: setting
         # the flag directly left the progress bar and the clock hidden.
         self._set_training_running(True)
-        self.training_view.setHtml(f"<p><b>Обучение запущено:</b> {html.escape(params.adapter_name)}</p>")
-        self._write_training_log_file(f"Обучение запущено: {params.adapter_name}")
+        self.training_view.setHtml(tr("<p><b>Обучение запущено:</b> {value}</p>", value=html.escape(params.adapter_name)))
+        self._write_training_log_file(tr("Обучение запущено: {adapter_name}", adapter_name=params.adapter_name))
         self._note_training_log_path()
         self._release_chat_model()
         pipeline = self.training_pipeline or self._default_training_pipeline()
@@ -4305,7 +4369,7 @@ class FluxionWindow(QMainWindow):
             unload()
         except Exception:  # noqa: BLE001 — training must not fail because of the chat model
             return
-        self._training_log_html("Модель чата выгружена из памяти на время обучения.")
+        self._training_log_html(tr("Модель чата выгружена из памяти на время обучения."))
 
     def _confirm_dataset_size(self, dataset: str) -> int | None:
         """Offer to cap a huge dataset; returns max samples or None to cancel."""
@@ -4319,18 +4383,18 @@ class FluxionWindow(QMainWindow):
             return 0
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
-        box.setWindowTitle("Большой датасет")
+        box.setWindowTitle(tr("Большой датасет"))
         box.setText(
-            f"В датасете около {estimate:,} примеров.".replace(",", " ")
-            + f"\n\nНа одной видеокарте {self.training_epochs.value()} эпох(и) по всему "
+            tr("В датасете около {estimate:,} примеров.", estimate=estimate).replace(",", " ")
+            + tr("\n\nНа одной видеокарте {value} эпох(и) по всему "
             "файлу займут очень долго (на 8 ГБ — сутки и больше), а подготовка данных "
             "потребует много оперативной памяти.\n\n"
-            f"Взять первые {SUGGESTED_SAMPLES:,} примеров? ".replace(",", " ")
-            + "Число можно поменять в поле «Макс. примеров»."
+            "Взять первые {SUGGESTED_SAMPLES:,} примеров? ", value=self.training_epochs.value(), SUGGESTED_SAMPLES=SUGGESTED_SAMPLES).replace(",", " ")
+            + tr("Число можно поменять в поле «Макс. примеров».")
         )
-        limit = box.addButton(f"Взять {SUGGESTED_SAMPLES:,}".replace(",", " "), QMessageBox.AcceptRole)
-        everything = box.addButton("Весь файл", QMessageBox.DestructiveRole)
-        box.addButton("Отмена", QMessageBox.RejectRole)
+        limit = box.addButton(tr("Взять {SUGGESTED_SAMPLES:,}", SUGGESTED_SAMPLES=SUGGESTED_SAMPLES).replace(",", " "), QMessageBox.AcceptRole)
+        everything = box.addButton(tr("Весь файл"), QMessageBox.DestructiveRole)
+        box.addButton(tr("Отмена"), QMessageBox.RejectRole)
         box.setDefaultButton(limit)
         box.exec()
         clicked = box.clickedButton()
@@ -4344,14 +4408,14 @@ class FluxionWindow(QMainWindow):
     def stop_training(self) -> None:
         if self.training_worker is not None and self.training_running:
             self.training_worker.stop()
-            self._on_training_log("Остановка после текущего этапа…")
+            self._on_training_log(tr("Остановка после текущего этапа…"))
 
     def _set_training_running(self, active: bool) -> None:
         self.training_running = active
         self.training_run_button.setEnabled(not active)
         self.training_stop_button.setVisible(active)
         if active:
-            self._start_activity("Обучение идёт")
+            self._start_activity(tr("Обучение идёт"))
         else:
             self.training_worker = None
             self._stop_activity()
@@ -4374,7 +4438,7 @@ class FluxionWindow(QMainWindow):
         self._close_training_log_file()
         from .crash import crash_dir
 
-        kind = "env-install" if "окружени" in title else "training"
+        kind = "env-install" if title == tr("Установка окружения обучения") else "training"
         stamp = time.strftime("%Y%m%d-%H%M%S")
         try:
             path = crash_dir() / f"{kind}-{stamp}.log"
@@ -4387,7 +4451,7 @@ class FluxionWindow(QMainWindow):
     def _note_training_log_path(self) -> None:
         if getattr(self, "_training_log_file", None) is not None:
             self._training_log_html(
-                "Журнал также пишется в файл: " + html.escape(str(self.training_log_path))
+                tr("Журнал также пишется в файл: ") + html.escape(str(self.training_log_path))
             )
 
     def _close_training_log_file(self) -> None:
@@ -4421,23 +4485,23 @@ class FluxionWindow(QMainWindow):
     def _format_span(seconds: float) -> str:
         seconds = int(seconds)
         if seconds < 60:
-            return f"{seconds} с"
+            return tr("{seconds} с", seconds=seconds)
         if seconds < 3600:
-            return f"{seconds // 60} мин {seconds % 60:02d} с"
-        return f"{seconds // 3600} ч {seconds % 3600 // 60:02d} мин"
+            return tr("{value} мин {value2:02d} с", value=seconds // 60, value2=seconds % 60)
+        return tr("{value} ч {value2:02d} мин", value=seconds // 3600, value2=seconds % 3600 // 60)
 
     def _tick_activity(self) -> None:
         """Refresh the clock: total time and how long the log has been silent."""
         now = time.monotonic()
         quiet = now - self._activity_last
         text = (
-            f"{self._activity_title} · {self._format_span(now - self._activity_started)} · "
-            f"последняя строка журнала — {self._format_span(quiet)} назад"
+            tr("{activity_title} · {value} · "
+            "последняя строка журнала — {value2} назад", activity_title=self._activity_title, value=self._format_span(now - self._activity_started), value2=self._format_span(quiet))
         )
         if quiet >= ACTIVITY_QUIET_WARNING:
             text += (
-                ". Долгий шаг без вывода (загрузка модели, сборка) — это нормально. "
-                "Если журнал молчит больше 30 минут, нажмите «Стоп»."
+                tr(". Долгий шаг без вывода (загрузка модели, сборка) — это нормально. "
+                "Если журнал молчит больше 30 минут, нажмите «Стоп».")
             )
         self.training_activity.setText(text)
 
@@ -4459,15 +4523,15 @@ class FluxionWindow(QMainWindow):
 
     def _on_training_done(self, result: dict) -> None:
         if result.get("cancelled"):
-            self._on_training_log("Остановлено пользователем.")
+            self._on_training_log(tr("Остановлено пользователем."))
         parts = [
-            f"Адаптер: {result.get('adapter', '—')}",
+            tr("Адаптер: {value}", value=result.get('adapter', '—')),
             f"Merged: {result.get('merged', '—')}",
             f"GGUF: {result.get('gguf', '—')}",
-            f"Ollama: {'создана' if result.get('created') else 'не создавалась'}",
-            f"Реестр: {'зарегистрирован' if result.get('registered') else 'нет'}",
+            tr("Ollama: {value}", value=tr('создана') if result.get('created') else tr('не создавалась')),
+            tr("Реестр: {value}", value=tr('зарегистрирован') if result.get('registered') else tr('нет')),
         ]
-        self._training_log_html("<b>Готово.</b> " + " | ".join(html.escape(p) for p in parts))
+        self._training_log_html(tr("<b>Готово.</b> ") + " | ".join(html.escape(p) for p in parts))
         if result.get("registered") and result.get("ollama_model"):
             try:
                 self._on_model_selected(result["ollama_model"])
@@ -4484,10 +4548,10 @@ class FluxionWindow(QMainWindow):
 
     def _load_models(self) -> None:
         if self.backend is None:
-            self._show_models_unavailable("Движок не подключён")
+            self._show_models_unavailable(tr("Движок не подключён"))
             return
         if self._is_cloud_backend():
-            self._show_models_unavailable("Облачная модель: сменить её можно на странице «Модели»")
+            self._show_models_unavailable(tr("Облачная модель: сменить её можно на странице «Модели»"))
             return
         if self._is_embedded_backend():
             self._show_local_models()
@@ -4495,7 +4559,7 @@ class FluxionWindow(QMainWindow):
         if self._model_worker is not None:
             return
         self.model_combo.setEnabled(False)
-        self.model_combo.setToolTip("Загрузка списка моделей...")
+        self.model_combo.setToolTip(tr("Загрузка списка моделей..."))
         self._model_worker = ModelListWorker(self.backend)
         self._model_worker.done.connect(self._on_models_loaded)
         self._model_worker.failed.connect(self._on_models_failed)
@@ -4535,7 +4599,7 @@ class FluxionWindow(QMainWindow):
         self.model_combo.blockSignals(False)
         self._applying_model = False
         self.model_combo.setEnabled(True)
-        self.model_combo.setToolTip("Модель Ollama для чата и агента")
+        self.model_combo.setToolTip(tr("Модель Ollama для чата и агента"))
 
     def _on_models_failed(self, message: str) -> None:
         self._show_models_unavailable(message)
@@ -4585,7 +4649,7 @@ class FluxionWindow(QMainWindow):
         self._applying_model = False
         self.model_combo.setEnabled(bool(models))
         self.model_combo.setToolTip(
-            "Модель для чата и агента" if models else "Скачайте модель на странице «Модели»"
+            tr("Модель для чата и агента") if models else tr("Скачайте модель на странице «Модели»")
         )
 
     def _set_gguf_path(self, path: str) -> None:
@@ -4656,7 +4720,7 @@ class FluxionWindow(QMainWindow):
         line = summary_line(statuses)
         if line:
             self._append_banner(
-                f"{line}. Нажмите «Состояние» слева внизу — там причина и кнопка «Исправить»."
+                tr("{line}. Нажмите «Состояние» слева внизу — там причина и кнопка «Исправить».", line=line)
             )
 
     def _append_banner(self, text: str) -> None:
@@ -4666,10 +4730,10 @@ class FluxionWindow(QMainWindow):
 
     def _start_status_check(self) -> None:
         if self.assistant is None:
-            self.status_label.setText("Движок: не подключён")
+            self.status_label.setText(tr("Движок: не подключён"))
             return
         model = self._status_model_name()
-        self.status_label.setText(f"Модель: {model} — проверка...")
+        self.status_label.setText(tr("Модель: {model} — проверка...", model=model))
         if self.backend is None:
             return
         # parented: a new check replaces self.status_worker while the old one may
@@ -4690,18 +4754,18 @@ class FluxionWindow(QMainWindow):
         """The model the engine actually uses: the GGUF file for llama.cpp
         (the "model" setting is an Ollama name and misled on llama.cpp)."""
         if self._is_cloud_backend():
-            return f"{getattr(self.backend, 'model', '')} (облако)"
+            return tr("{value} (облако)", value=getattr(self.backend, 'model', ''))
         path = getattr(self.backend, "model_path", None)
         if isinstance(path, str):
             if path and Path(path).is_file():
                 return Path(path).name
-            return "не скачана (страница «Модели»)"
+            return tr("не скачана (страница «Модели»)")
         return getattr(self.settings, "model", "")
 
     def _on_status_result(self, available: bool) -> None:
         model = self._status_model_name()
         state = "online" if available else "offline"
-        text = f"Модель: {model} — {state}" if model else f"Движок: {state}"
+        text = tr("Модель: {model} — {state}", model=model, state=state) if model else tr("Движок: {state}", state=state)
         self.status_label.setText(text)
         self.status_label.setProperty("state", state)
         self.style().unpolish(self.status_label)
@@ -4711,8 +4775,8 @@ class FluxionWindow(QMainWindow):
                 self.banners.clear()
             else:
                 self.banners.show_warning(
-                    "Модель недоступна: проверь Ollama или движок.",
-                    "Повторить",
+                    tr("Модель недоступна: проверь Ollama или движок."),
+                    tr("Повторить"),
                     self._load_models,
                 )
 
@@ -4777,7 +4841,7 @@ class FluxionWindow(QMainWindow):
         wants_agent = source is None and (agent_once or self.chat_agent_files.isChecked()
                                           or self.chat_plan.isChecked())
         if (self.agent_factory if wants_agent else self.assistant) is None:
-            self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
+            self._append_message("assistant", tr("Движок не подключён. Запустите приложение через python -m desktop_browser."))
             return
         self.prompt.clear()
         if wants_agent:
@@ -4818,16 +4882,16 @@ class FluxionWindow(QMainWindow):
             return
         if not feature_enabled(PRO_FEATURE):
             QMessageBox.information(
-                self, "Пакет на лазер",
-                "«Пакет на лазер» — функция Pro: DXF развёрток всех листовых деталей сборки, "
-                "разложенные по папкам толщин.\nАктивировать: меню «Помощь» → «Лицензия…».")
+                self, tr("Пакет на лазер"),
+                tr("«Пакет на лазер» — функция Pro: DXF развёрток всех листовых деталей сборки, "
+                "разложенные по папкам толщин.\nАктивировать: меню «Помощь» → «Лицензия…»."))
             return
         start = str(self.qsettings.value("report_dir", "") or "")
-        path, _ = QFileDialog.getOpenFileName(self, "Сборка КОМПАС-3D", start, "Сборки КОМПАС-3D (*.a3d)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Сборка КОМПАС-3D"), start, tr("Сборки КОМПАС-3D (*.a3d)"))
         if not path:
             return
         self.qsettings.setValue("report_dir", str(Path(path).parent))
-        out = QFileDialog.getExistingDirectory(self, "Папка для DXF (подпапки по толщинам создаются сами)",
+        out = QFileDialog.getExistingDirectory(self, tr("Папка для DXF (подпапки по толщинам создаются сами)"),
                                                str(default_out_dir(path).parent))
         if not out:
             return
@@ -4837,10 +4901,10 @@ class FluxionWindow(QMainWindow):
         from cad.laser import LaserJob
 
         self.pages.setCurrentIndex(PAGE_CHAT)
-        self._append_message("user", f"Пакет на лазер: {Path(assembly).name}")
-        self._append_message("assistant", "Обхожу сборку…")
+        self._append_message("user", tr("Пакет на лазер: {value}", value=Path(assembly).name))
+        self._append_message("assistant", tr("Обхожу сборку…"))
         self._laser_entry = self._messages[-1]
-        self._laser_entry["meta"] = "[КОМПАС-3D | DXFka | автоматический режим]" if auto else "[КОМПАС-3D | DXFka]"
+        self._laser_entry["meta"] = tr("[КОМПАС-3D | DXFka | автоматический режим]") if auto else tr("[КОМПАС-3D | DXFka]")
         self._set_generating(True)
         job = LaserJob(assembly, out_dir, auto=auto)
         self.laser_job = job
@@ -4875,38 +4939,40 @@ class FluxionWindow(QMainWindow):
             if kind == "LOG" and msg.get("level") in ("warning", "error"):
                 self._laser_say(("⚠ " if msg["level"] == "warning" else "✖ ") + msg["text"])
             elif kind == "PROGRESS" and msg.get("total"):
-                line = f"Деталь {msg['done']} из {msg['total']}"
-                self._laser_say(line, replace_last=bool(self._laser_lines) and self._laser_lines[-1].startswith("Деталь "))
+                line = tr("Деталь {done} из {total}", done=msg["done"], total=msg["total"])
+                replace = bool(self._laser_lines) and self._laser_lines[-1] == getattr(self, "_laser_progress", None)
+                self._laser_progress = line
+                self._laser_say(line, replace_last=replace)
             elif kind == "TRAVERSAL_DONE":
                 count = job.export(msg.get("parts") or [])
-                self._laser_say(f"В сборке деталей: {len(job.parts) + len(job.left_out)}; на лазер (из листа): "
-                                f"{count}; остальные пропущены.")
+                self._laser_say(tr("В сборке деталей: {value}; на лазер (из листа): "
+                                "{count}; остальные пропущены.", value=len(job.parts) + len(job.left_out), count=count))
                 if not count:
-                    self._finish_laser("Листовых деталей в сборке нет — DXF не нужен.")
+                    self._finish_laser(tr("Листовых деталей в сборке нет — DXF не нужен."))
                     return
             elif kind == "PAUSE":
                 self._laser_pause(msg.get("title", ""), msg.get("instruction", ""))
             elif kind == "ASK_THICKNESS":
                 value, ok = QInputDialog.getText(
-                    self, "Толщина детали", f"{msg.get('part', '')}\nТолщина, мм (пусто — пропустить деталь):",
+                    self, tr("Толщина детали"), tr("{value}\nТолщина, мм (пусто — пропустить деталь):", value=msg.get('part', '')),
                     text=msg.get("default", ""))
                 job.answer_thickness(value if ok else None)
             elif kind == "DONE":
-                self._finish_laser(msg.get("text", "Экспорт завершён."))
+                self._finish_laser(msg.get("text", tr("Экспорт завершён.")))
                 return
             elif kind == "FATAL":
-                self._finish_laser("✖ " + msg.get("text", "Ошибка DXFka."))
+                self._finish_laser("✖ " + msg.get("text", tr("Ошибка DXFka.")))
                 return
 
     def _laser_pause(self, title: str, instruction: str) -> None:
         """Manual step of DXFka: the designer checks the view in KOMPAS, then goes on."""
         box = QMessageBox(self)
-        box.setWindowTitle("Пакет на лазер")
+        box.setWindowTitle(tr("Пакет на лазер"))
         box.setText(title)
         box.setInformativeText(instruction)
-        go = box.addButton("Продолжить", QMessageBox.AcceptRole)
-        skip = box.addButton("Пропустить деталь", QMessageBox.RejectRole)
-        box.addButton("Остановить", QMessageBox.DestructiveRole)
+        go = box.addButton(tr("Продолжить"), QMessageBox.AcceptRole)
+        skip = box.addButton(tr("Пропустить деталь"), QMessageBox.RejectRole)
+        box.addButton(tr("Остановить"), QMessageBox.DestructiveRole)
         box.exec()
         clicked = box.clickedButton()
         job = self.laser_job
@@ -4925,13 +4991,13 @@ class FluxionWindow(QMainWindow):
         summary = thickness_summary(job.out_dir)
         lines = [text]
         if summary:
-            lines.append("По толщинам: " + "; ".join(f"{name} мм — {count} DXF" for name, count in summary) + ".")
-            lines.append(f"Папка: {job.out_dir}")
+            lines.append(tr("По толщинам: ") + "; ".join(tr("{name} мм — {count} DXF", name=name, count=count) for name, count in summary) + ".")
+            lines.append(tr("Папка: {out_dir}", out_dir=job.out_dir))
         self._laser_lines.append("\n".join(lines))
         self._laser_entry["text"] = "\n".join(self._laser_lines[-40:])
         if summary:
-            self._laser_entry["sources"] = [{"file": job.out_dir, "label": "Открыть папку с DXF"}]
-            self._laser_entry["sources_title"] = "Ссылки"
+            self._laser_entry["sources"] = [{"file": job.out_dir, "label": tr("Открыть папку с DXF")}]
+            self._laser_entry["sources_title"] = tr("Ссылки")
         self.laser_job = None
         self._set_generating(False)
         self._render_messages()
@@ -4944,25 +5010,25 @@ class FluxionWindow(QMainWindow):
 
         if feature_enabled(feature):
             return True
-        QMessageBox.information(self, title, text + "\nАктивировать: меню «Помощь» → «Лицензия…».")
+        QMessageBox.information(self, title, text + tr("\nАктивировать: меню «Помощь» → «Лицензия…»."))
         return False
 
     def _report_pro(self) -> bool:
         from cad.report import PRO_FEATURE
 
-        return self._pro_feature(PRO_FEATURE, "Ведомость и металлоёмкость", "«Ведомость и металлоёмкость сборки» — функция Pro: сводная ведомость, металлоёмкость, сварка, покраска и трудоёмкость сборки КОМПАС-3D в Excel, нормоконтроль перед отчётом, «Исправить в модели» и «Задать материал».")
+        return self._pro_feature(PRO_FEATURE, tr("Ведомость и металлоёмкость"), tr("«Ведомость и металлоёмкость сборки» — функция Pro: сводная ведомость, металлоёмкость, сварка, покраска и трудоёмкость сборки КОМПАС-3D в Excel, нормоконтроль перед отчётом, «Исправить в модели» и «Задать материал»."))
 
     def _acad_pro(self) -> bool:
         from cad.acad_check import PRO_FEATURE
 
-        return self._pro_feature(PRO_FEATURE, "Нормоконтроль AutoCAD", "«Нормоконтроль чертежа AutoCAD» — функция Pro: штамп, масштабы, шрифты, слои и размеры чертежа DWG/DXF по ЕСКД и СПДС, замечания в Excel.")
+        return self._pro_feature(PRO_FEATURE, tr("Нормоконтроль AutoCAD"), tr("«Нормоконтроль чертежа AutoCAD» — функция Pro: штамп, масштабы, шрифты, слои и размеры чертежа DWG/DXF по ЕСКД и СПДС, замечания в Excel."))
 
     def _archive_pro(self) -> bool:
         from rag.archive import PRO_FEATURE
 
-        return self._pro_feature(PRO_FEATURE, "Архив КД",
-                                 "«Архив КД» — функция Pro: поиск по архиву КД — чертежам, спецификациям и "
-                                 "моделям КОМПАС-3D, PDF и документам — с ответом и ссылками на файлы.")
+        return self._pro_feature(PRO_FEATURE, tr("Архив КД"),
+                                 tr("«Архив КД» — функция Pro: поиск по архиву КД — чертежам, спецификациям и "
+                                 "моделям КОМПАС-3D, PDF и документам — с ответом и ссылками на файлы."))
 
     def _open_archive(self) -> None:
         """Menu Инструменты → Архив КД: the archive folders and the update of its index."""
@@ -4982,8 +5048,8 @@ class FluxionWindow(QMainWindow):
         if not index.file_count:
             index.close()
             self.prompt.clear()
-            self._append_message("assistant", "Архив КД ещё не проиндексирован: Инструменты → «Архив КД (Pro)…», "
-                                              "добавьте папки архива и нажмите «Обновить индекс».")
+            self._append_message("assistant", tr("Архив КД ещё не проиндексирован: Инструменты → «Архив КД (Pro)…», "
+                                              "добавьте папки архива и нажмите «Обновить индекс»."))
             return None
         return index
 
@@ -4996,7 +5062,7 @@ class FluxionWindow(QMainWindow):
         if not self._report_pro():
             return
         start = str(self.qsettings.value("report_dir", "") or "")
-        path, _ = QFileDialog.getOpenFileName(self, "Сборка КОМПАС-3D", start, "Сборки КОМПАС-3D (*.a3d)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Сборка КОМПАС-3D"), start, tr("Сборки КОМПАС-3D (*.a3d)"))
         if path:
             self.qsettings.setValue("report_dir", str(Path(path).parent))
             self.start_assembly_report(path)
@@ -5005,10 +5071,10 @@ class FluxionWindow(QMainWindow):
         if not self._report_pro():
             return
         self.pages.setCurrentIndex(PAGE_CHAT)
-        self._append_message("user", f"Ведомость и металлоёмкость: {Path(path).name}")
+        self._append_message("user", tr("Ведомость и металлоёмкость: {value}", value=Path(path).name))
         self._append_message("assistant", "")
         entry = self._messages[-1]
-        entry["meta"] = "[КОМПАС-3D | сборка открыта только для чтения]"
+        entry["meta"] = tr("[КОМПАС-3D | сборка открыта только для чтения]")
         self._report_entry = entry
         self._set_generating(True)
         self._run_report_worker(path)
@@ -5044,23 +5110,23 @@ class FluxionWindow(QMainWindow):
                 report.save_decisions(result.top.file, report.decisions_from_marks(result, marks))
             fixes, self._pending_fixes = getattr(self, "_pending_fixes", None), None
             if fixes and result.top.file:  # the designer agreed: fix the model, then the report again
-                self._report_entry["text"] = "Исправляю модель…"
+                self._report_entry["text"] = tr("Исправляю модель…")
                 self._render_messages()
                 self._run_report_worker(result.top.file, fixes)
                 return
             if not made:
                 left = sum(1 for m in marks.values() if not m["checked"])
                 self._report_entry["text"] = (
-                    f"Отчёт не сформирован: не отмечено {left} из {len(marks)} спорных мест. Отметки сохранены.\n"
+                    tr("Отчёт не сформирован: не отмечено {left} из {n_marks} спорных мест. Отметки сохранены.\n", left=left, n_marks=len(marks))
                     + report.warnings_text(result))
                 self._report_entry["sources"] = report.report_links(result)
-                self._report_entry["sources_title"] = "Модели"
+                self._report_entry["sources_title"] = tr("Модели")
                 self._set_generating(False)
                 self._render_messages()
                 return
             if report.purchase_changed(result, marks):
                 # "bought or made here" changes the metal report and the welds: build it again
-                self._report_entry["text"] = "Пересчитываю с вашими отметками…"
+                self._report_entry["text"] = tr("Пересчитываю с вашими отметками…")
                 self._render_messages()
                 self._run_report_worker(result.top.file)
                 return
@@ -5069,12 +5135,12 @@ class FluxionWindow(QMainWindow):
         try:
             path = str(report.save_xlsx(result, report.default_path(result.top), source=source))
         except Exception as exc:  # the workbook open in Excel, no rights to the folder
-            self._on_report_failed(f"Не удалось сохранить отчёт: {exc}")
+            self._on_report_failed(tr("Не удалось сохранить отчёт: {exc}", exc=exc))
             return
         summary = report.summary_text(result)
-        self._report_entry["text"] = summary + f"\nОтчёт: {path}"
+        self._report_entry["text"] = summary + tr("\nОтчёт: {path}", path=path)
         self._report_entry["sources"] = report.report_links(result, path)
-        self._report_entry["sources_title"] = "Ссылки"
+        self._report_entry["sources_title"] = tr("Ссылки")
         self._set_generating(False)
         self._render_messages()
         self._save_memory()
@@ -5106,9 +5172,9 @@ class FluxionWindow(QMainWindow):
         if feature_enabled(PRO_FEATURE):
             return True
         QMessageBox.information(
-            self, "Мой стиль письма",
-            "«Мой стиль» — функция Pro: служебные и пояснительные записки, письма заказчикам "
-            "в вашей манере по вашим образцам.\nАктивировать: меню «Помощь» → «Лицензия…».")
+            self, tr("Мой стиль письма"),
+            tr("«Мой стиль» — функция Pro: служебные и пояснительные записки, письма заказчикам "
+            "в вашей манере по вашим образцам.\nАктивировать: меню «Помощь» → «Лицензия…»."))
         return False
 
     def _open_writing_style(self) -> bool:
@@ -5178,7 +5244,7 @@ class FluxionWindow(QMainWindow):
         if not self._acad_pro():
             return
         start = str(self.qsettings.value("acad_dir", "") or "")
-        path, _ = QFileDialog.getOpenFileName(self, "Чертёж AutoCAD", start, ACAD_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr("Чертёж AutoCAD"), start, ACAD_FILTER)
         if path:
             self.start_acad_check(path)
 
@@ -5191,10 +5257,10 @@ class FluxionWindow(QMainWindow):
             return
         self.qsettings.setValue("acad_dir", str(Path(path).parent))
         self.pages.setCurrentIndex(PAGE_CHAT)
-        self._append_message("user", f"Нормоконтроль: {Path(path).name}")
+        self._append_message("user", tr("Нормоконтроль: {value}", value=Path(path).name))
         self._append_message("assistant", "")
         self._acad_entry = self._messages[-1]
-        self._acad_entry["meta"] = "[AutoCAD | чертёж открыт только для чтения]"
+        self._acad_entry["meta"] = tr("[AutoCAD | чертёж открыт только для чтения]")
         self._set_generating(True)
         worker = AcadCheckWorker(path, self)
         self.acad_worker = worker
@@ -5222,10 +5288,10 @@ class FluxionWindow(QMainWindow):
             report.save_decisions(result.drawing.file, marks)  # marked once, not asked again
             if not made:
                 left = sum(1 for m in marks.values() if not m["checked"])
-                entry["text"] = (f"Отчёт не сформирован: не отмечено {left} из {len(marks)} замечаний. "
-                                 "Отметки сохранены.\n" + acad_check.warnings_text(result))
+                entry["text"] = (tr("Отчёт не сформирован: не отмечено {left} из {n_marks} замечаний. "
+                                 "Отметки сохранены.\n", left=left, n_marks=len(marks)) + acad_check.warnings_text(result))
                 entry["sources"] = report_links(result)
-                entry["sources_title"] = "Ссылки"
+                entry["sources_title"] = tr("Ссылки")
                 self._set_generating(False)
                 self._render_messages()
                 return
@@ -5234,12 +5300,12 @@ class FluxionWindow(QMainWindow):
         try:
             path = acad_check.save_xlsx(result, acad_check.default_path(result))
         except Exception as exc:  # the workbook open in Excel, no rights to the folder
-            self._on_acad_failed(f"Не удалось сохранить отчёт: {exc}")
+            self._on_acad_failed(tr("Не удалось сохранить отчёт: {exc}", exc=exc))
             return
         summary = acad_check.summary_text(result)
-        entry["text"] = summary + f"\nОтчёт: {path}"
+        entry["text"] = summary + tr("\nОтчёт: {path}", path=path)
         entry["sources"] = report_links(result, path)
-        entry["sources_title"] = "Ссылки"
+        entry["sources_title"] = tr("Ссылки")
         self._set_generating(False)
         self._render_messages()
         self._save_memory()
@@ -5267,12 +5333,12 @@ class FluxionWindow(QMainWindow):
         if not description:
             description, ok = QInputDialog.getMultiLineText(
                 self,
-                "Деталь в КОМПАС-3D",
-                "Опишите деталь, размеры в мм и материал — модель выберет шаблон "
+                tr("Деталь в КОМПАС-3D"),
+                tr("Опишите деталь, размеры в мм и материал — модель выберет шаблон "
                 "(пластина, фланец, втулка, вал, уголок, гайка; из листа со сгибами: уголок, кронштейн, "
                 "П- и Z-профиль, лоток или короб, полка с отбортовкой), КОМПАС построит её, "
                 "для листовых — и развёртку в DXF.\n"
-                "Чего не хватит, Fluxion спросит в чате.\n"
+                "Чего не хватит, Fluxion спросит в чате.\n")
                 + CAD_HINT,
             )
             description = description.strip()
@@ -5296,7 +5362,7 @@ class FluxionWindow(QMainWindow):
         self.history.append({"role": "user", "content": shown})
         if self.backend is None:
             self._calc_conversation = None
-            self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
+            self._append_message("assistant", tr("Движок не подключён. Запустите приложение через python -m desktop_browser."))
             return
         if not answer or self._calc_conversation is None:
             from calc.chat import Conversation
@@ -5304,7 +5370,7 @@ class FluxionWindow(QMainWindow):
             self._calc_conversation = Conversation(self.backend)
         self._append_message("assistant", "")
         self._calc_entry = self._messages[-1]
-        self._calc_entry["meta"] = "[Инженерный калькулятор | расчёт по формулам]"
+        self._calc_entry["meta"] = tr("[Инженерный калькулятор | расчёт по формулам]")
         self._start_thinking()
         self._set_generating(True)
         self.calc_worker = CalcWorker(self._calc_conversation, message, self)
@@ -5320,14 +5386,14 @@ class FluxionWindow(QMainWindow):
         self._notify_answer()
         self.calc_worker = None
         self._set_generating(False)
-        self.prompt.setPlaceholderText("Ответ про расчёт: недостающие данные… или «отмена»")
+        self.prompt.setPlaceholderText(tr("Ответ про расчёт: недостающие данные… или «отмена»"))
         self._render_messages()
         self._save_memory()
 
     def _on_calc_done(self, text: str, calc_kind: str, params: dict) -> None:
         if calc_kind:
             self._last_calc = (calc_kind, params)
-            text += "\nФормулы и отчёт: Инструменты → «Инженерный калькулятор…» — расчёт уже заполнен."
+            text += tr("\nФормулы и отчёт: Инструменты → «Инженерный калькулятор…» — расчёт уже заполнен.")
         self._calc_entry["text"] = text
         self.history.append({"role": "assistant", "content": text})
         self._notify_answer(text.splitlines()[0])
@@ -5358,7 +5424,7 @@ class FluxionWindow(QMainWindow):
         self.history.append({"role": "user", "content": shown})
         if self.backend is None:
             self._cad_conversation = None
-            self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
+            self._append_message("assistant", tr("Движок не подключён. Запустите приложение через python -m desktop_browser."))
             return
         if not answer or self._cad_conversation is None:
             from cad.text2cad import Conversation
@@ -5367,7 +5433,7 @@ class FluxionWindow(QMainWindow):
         self._append_message("assistant", "")
         # banners may be added to the chat meanwhile: keep the answer's entry
         self._cad_entry = self._messages[-1]
-        self._cad_entry["meta"] = "[КОМПАС-3D]"
+        self._cad_entry["meta"] = tr("[КОМПАС-3D]")
         self._start_thinking()
 
         self._set_generating(True)
@@ -5392,7 +5458,7 @@ class FluxionWindow(QMainWindow):
         """"без модели" in the meta line when the rules read the description (cad/quick.py)."""
         draft = getattr(self._cad_conversation, "draft", None)
         if draft is not None and getattr(draft, "source", "") == "rules":
-            self._cad_entry["meta"] = "[КОМПАС-3D | разобрано без модели]"
+            self._cad_entry["meta"] = tr("[КОМПАС-3D | разобрано без модели]")
 
     def _on_cad_asked(self, question: str) -> None:
         """Fluxion asks for what is missing; the next chat message is the answer."""
@@ -5402,7 +5468,7 @@ class FluxionWindow(QMainWindow):
         self._notify_answer()
         self.cad_worker = None
         self._set_generating(False)
-        self.prompt.setPlaceholderText("Ответ про деталь: размеры, материал… или «отмена»")
+        self.prompt.setPlaceholderText(tr("Ответ про деталь: размеры, материал… или «отмена»"))
         self._render_messages()
         self._save_memory()
 
@@ -5442,8 +5508,8 @@ class FluxionWindow(QMainWindow):
         model_id = voice_model_id(self.qsettings)
         if not is_installed(model_id):
             self._append_banner(
-                f"Для голосового ввода нужна модель распознавания речи ({speech_model(model_id).name}). "
-                "Скачайте её: меню «Модели» (Ctrl+M) → раздел «Распознавание речи»."
+                tr("Для голосового ввода нужна модель распознавания речи ({value}). "
+                "Скачайте её: меню «Модели» (Ctrl+M) → раздел «Распознавание речи».", value=speech_model(model_id).name)
             )
             return False
         self._stop_speaking()  # do not record Fluxion's own voice
@@ -5465,7 +5531,7 @@ class FluxionWindow(QMainWindow):
         self.voice_level.setVisible(active)
         if active:
             self._placeholder_before_voice = self.prompt.placeholderText()
-            self.prompt.setPlaceholderText("Говорите… пауза или Ctrl+Пробел — стоп")
+            self.prompt.setPlaceholderText(tr("Говорите… пауза или Ctrl+Пробел — стоп"))
         else:
             self.prompt.setPlaceholderText(placeholder or getattr(self, "_placeholder_before_voice", ""))
 
@@ -5475,14 +5541,14 @@ class FluxionWindow(QMainWindow):
     def _on_voice_recognizing(self) -> None:
         self.voice_level.setVisible(False)
         self.mic_button.setEnabled(False)
-        self.prompt.setPlaceholderText("Распознаю речь…")
+        self.prompt.setPlaceholderText(tr("Распознаю речь…"))
 
     def _on_voice_done(self, text: str) -> None:
         if self._hands_free:
             self._hands_free_heard(text)
             return
         if not text:
-            self._set_voice_recording(False, "Не расслышал — нажмите микрофон и скажите ещё раз")
+            self._set_voice_recording(False, tr("Не расслышал — нажмите микрофон и скажите ещё раз"))
             return
         self._set_voice_recording(False)
         current = self.prompt.text().strip()
@@ -5495,7 +5561,7 @@ class FluxionWindow(QMainWindow):
         if self._hands_free:
             self.set_hands_free(False)
         self._set_voice_recording(False)
-        self._append_banner(f"Голосовой ввод: {message}")
+        self._append_banner(tr("Голосовой ввод: {message}", message=message))
 
     def _on_voice_worker_finished(self, worker) -> None:
         # forget it before deleting: closeEvent waits on self.voice_worker
@@ -5547,12 +5613,12 @@ class FluxionWindow(QMainWindow):
             self._hands_free_silent += 1
             if self._hands_free_silent >= HANDS_FREE_SILENT_TURNS:
                 self.set_hands_free(False)
-                self._append_banner("Голосом без рук: выключено — речи не слышно.")
+                self._append_banner(tr("Голосом без рук: выключено — речи не слышно."))
             return  # the timer listens again
         self._hands_free_silent = 0
         if HANDS_FREE_STOP.match(text):
             self.set_hands_free(False)
-            self._append_banner("Голосом без рук: выключено по команде «стоп».")
+            self._append_banner(tr("Голосом без рук: выключено по команде «стоп»."))
             return
         self.prompt.setText(spoken_command(text))
         self.send_message()
@@ -5582,9 +5648,9 @@ class FluxionWindow(QMainWindow):
         on = self.speak_toggle.isChecked()
         self._refresh_voice_icons()
         self.speak_toggle.setToolTip(
-            "Ответы озвучиваются голосом Windows — нажмите, чтобы выключить"
+            tr("Ответы озвучиваются голосом Windows — нажмите, чтобы выключить")
             if on
-            else "Озвучивать ответы голосом Windows"
+            else tr("Озвучивать ответы голосом Windows")
         )
 
     def _on_speak_answers_toggled(self, checked: bool) -> None:
@@ -5672,32 +5738,32 @@ class FluxionWindow(QMainWindow):
         """Update the tooltip of the agent chip and its Pro/trial banner."""
         from licensing import feature_enabled, trial_remaining
 
-        base = "Сообщение выполнит агент с инструментами проекта. "
+        base = tr("Сообщение выполнит агент с инструментами проекта. ")
         checked = self.chat_agent_files.isChecked()
         if feature_enabled("agent_write"):
-            self.chat_agent_files.setToolTip(base + "Запись файлов разрешена (Pro).")
+            self.chat_agent_files.setToolTip(base + tr("Запись файлов разрешена (Pro)."))
             self.banners.dismiss_key("agent_write")
             return
         remaining = trial_remaining()
         if remaining > 0:
             note = (
-                f"Pro или триал: осталось {remaining} пробных правок — "
-                "каждая с подтверждением."
+                tr("Pro или триал: осталось {remaining} пробных правок — "
+                "каждая с подтверждением.", remaining=remaining)
             )
             self.chat_agent_files.setToolTip(base + note)
             if checked:
-                self.banners.show_warning(note, "Лицензия…", self._open_license_dialog, key="agent_write")
+                self.banners.show_warning(note, tr("Лицензия…"), self._open_license_dialog, key="agent_write")
             else:
                 self.banners.dismiss_key("agent_write")
             return
         self.chat_agent_files.setToolTip(
-            base + "Только чтение: запись файлов — Pro-функция, пробные правки израсходованы."
+            base + tr("Только чтение: запись файлов — Pro-функция, пробные правки израсходованы.")
         )
         if checked:
             self.banners.show_warning(
-                "Запись файлов — Pro-функция: агент работает только на чтение. "
-                "Активируйте лицензию: меню Помощь → Лицензия…",
-                "Лицензия…",
+                tr("Запись файлов — Pro-функция: агент работает только на чтение. "
+                "Активируйте лицензию: меню Помощь → Лицензия…"),
+                tr("Лицензия…"),
                 self._open_license_dialog,
                 key="agent_write",
             )
@@ -5712,11 +5778,11 @@ class FluxionWindow(QMainWindow):
         if checked:
             if self.agent_factory is None:
                 self.chat_agent_files.setChecked(False)
-                self._append_message("assistant", "Движок не подключён. Запустите приложение через python -m desktop_browser.")
+                self._append_message("assistant", tr("Движок не подключён. Запустите приложение через python -m desktop_browser."))
                 return
-            self.prompt.setPlaceholderText("Задача для агента: например, прочитай main.py и исправь баг...")
+            self.prompt.setPlaceholderText(tr("Задача для агента: например, прочитай main.py и исправь баг..."))
         else:
-            self.prompt.setPlaceholderText("Напишите сообщение...")
+            self.prompt.setPlaceholderText(tr("Напишите сообщение..."))
         self._refresh_agent_chip()
 
     def _send_agent_message(self, task: str, plan: bool = False, shown: str | None = None) -> None:
@@ -5755,7 +5821,7 @@ class FluxionWindow(QMainWindow):
             return
         if self.agent_factory is None:
             return
-        self._send_agent_message(PLAN_RUN_PREFIX + self._last_plan, shown="Выполнить план")
+        self._send_agent_message(PLAN_RUN_PREFIX + self._last_plan, shown=tr("Выполнить план"))
 
     def _on_chat_agent_step(self, step) -> None:
         if not self._messages:
@@ -5782,17 +5848,17 @@ class FluxionWindow(QMainWindow):
         if entry["text"]:
             fragments.append(entry["text"])
         if result.get("cancelled"):
-            fragments.append("(остановлено пользователем)")
+            fragments.append(tr("(остановлено пользователем)"))
         answer = result.get("final_answer") or ""
         if answer:
             if fragments:
                 fragments.append("")  # blank line between the steps and the answer
             fragments.append(answer)
             self.history.append({"role": "assistant", "content": answer})
-        entry["text"] = "\n".join(fragments) or "(пустой ответ)"
+        entry["text"] = "\n".join(fragments) or tr("(пустой ответ)")
         if answer:
             self._notify_answer(answer)
-        meta = ["агент", f"{result.get('iterations_used', 0)} итер."]
+        meta = [tr("агент"), tr("{value} итер.", value=result.get('iterations_used', 0))]
         verification = VERIFICATION_LABELS.get(result.get("verification", ""))
         if verification:
             meta.append(verification)
@@ -5830,9 +5896,9 @@ class FluxionWindow(QMainWindow):
                 and self.chat_agent_files.isChecked()
             )
             self.prompt.setPlaceholderText(
-                "Задача для агента: например, прочитай main.py и исправь баг..."
+                tr("Задача для агента: например, прочитай main.py и исправь баг...")
                 if agent_hint
-                else "Напишите сообщение..."
+                else tr("Напишите сообщение...")
             )
 
     # ── thinking indicator ────────────────────────────────────────────────
@@ -5862,14 +5928,14 @@ class FluxionWindow(QMainWindow):
         if strategy:
             parts.append(strategy.lower())
         if getattr(result, "rag_used", False):
-            parts.append(f"RAG: {len(getattr(result, 'rag_sources', []) or [])} источн.")
+            parts.append(tr("RAG: {value} источн.", value=len(getattr(result, 'rag_sources', []) or [])))
         if getattr(result, "web_used", False):
-            parts.append(f"web: {len(getattr(result, 'web_sources', []) or [])} источн.")
+            parts.append(tr("web: {value} источн.", value=len(getattr(result, 'web_sources', []) or [])))
             tier = getattr(getattr(self, "web_search", None), "provider_tier", "")
             if tier == "basic":
-                parts.append("поиск: базовый (один движок)")
+                parts.append(tr("поиск: базовый (один движок)"))
             elif tier == "enhanced":
-                parts.append("поиск: расширенный (SearXNG)")
+                parts.append(tr("поиск: расширенный (SearXNG)"))
         if parts:
             self._messages[-1]["meta"] = "[" + " | ".join(parts) + "]"
             self._render_messages()
@@ -5882,7 +5948,7 @@ class FluxionWindow(QMainWindow):
     def _maybe_show_fetch_notice(self) -> None:
         if getattr(self.web_search, "brief_mode", False):
             self.banners.show_warning(
-                "Lite-режим: страница в краткой выжимке. Полная — в Full-сборке.",
+                tr("Lite-режим: страница в краткой выжимке. Полная — в Full-сборке."),
                 key="fetch_lite",
             )
 
@@ -5900,7 +5966,7 @@ class FluxionWindow(QMainWindow):
     def _on_done(self) -> None:
         text = self._messages[-1]["text"]
         if not text.strip():
-            self._messages[-1]["text"] += "(пустой ответ)"
+            self._messages[-1]["text"] += tr("(пустой ответ)")
         else:
             self.history.append({"role": "assistant", "content": text})
             self._notify_answer()
@@ -5928,13 +5994,13 @@ class FluxionWindow(QMainWindow):
                 if entry["role"] == "banner":
                     parts.append(f"<p><i>⚠ {html.escape(entry['text'])}</i></p>")
                     continue
-                who = "Вы" if entry["role"] == "user" else "Fluxion"
+                who = tr("Вы") if entry["role"] == "user" else "Fluxion"
                 parts.append(f"<p><b>{who}</b></p>")
                 if entry["meta"]:
                     parts.append(f"<p><i>{html.escape(entry['meta'])}</i></p>")
                 if entry.get("thinking"):
                     spinner = "◐◓◑◒"[self._think_frame % 4]
-                    parts.append(f"<p><i>{spinner} Думаю…</i></p>")
+                    parts.append(tr("<p><i>{spinner} Думаю…</i></p>", spinner=spinner))
                     continue
                 from orchestrator.presentation import render_chat_html
 
@@ -5946,20 +6012,20 @@ class FluxionWindow(QMainWindow):
                         + f'<a href="{QUrl.fromLocalFile(s["file"]).toString()}">{html.escape(s["label"])}</a>'
                         for s in entry["sources"]
                     )
-                    title = html.escape(entry.get("sources_title", "Источники"))
+                    title = html.escape(entry.get("sources_title", tr("Источники")))
                     parts.append(f"<p><small><b>{title}:</b><br>{links}</small></p>")
                 last = index == len(self._messages) - 1
                 if entry["role"] != "user" and entry["text"].strip() and not (last and self.generating):
                     if index == self._speaking_index:
-                        icon, label = SPEAK_ICON_STOP, "Остановить озвучку"
+                        icon, label = SPEAK_ICON_STOP, tr("Остановить озвучку")
                     else:
-                        icon, label = SPEAK_ICON, "Озвучить"
+                        icon, label = SPEAK_ICON, tr("Озвучить")
                     parts.append(
                         f'<p><a href="{SPEAK_URL}{index}"><img src="{icon}" width="16" height="16"'
                         f' style="vertical-align: middle"> {label}</a></p>'
                     )
                 if entry is self._plan_entry and not self.generating:
-                    parts.append(f'<p><a href="{PLAN_RUN_URL}">▶ Выполнить план</a></p>')
+                    parts.append(tr('<p><a href="{PLAN_RUN_URL}">▶ Выполнить план</a></p>', PLAN_RUN_URL=PLAN_RUN_URL))
             content = "".join(parts)
         self._set_html_keeping_scroll(self.messages, content)
 
@@ -5970,12 +6036,12 @@ class FluxionWindow(QMainWindow):
         is_pro = lic is not None and lic.is_pro
         act = getattr(self, "act_license", None)
         if act is not None:
-            act.setText("Лицензия: PRO" if is_pro else "Лицензия: FREE")
+            act.setText(tr("Лицензия: PRO") if is_pro else tr("Лицензия: FREE"))
             act.setToolTip(lic.email if lic is not None else "")
         btn = getattr(self, "license_button", None)
         if btn is not None:
             btn.setText("PRO" if is_pro else "FREE")
-            btn.setToolTip(("Лицензия PRO: " + lic.email) if is_pro and lic.email else "Лицензия: FREE")
+            btn.setToolTip((tr("Лицензия PRO: ") + lic.email) if is_pro and lic.email else tr("Лицензия: FREE"))
             btn.setProperty("plan", "pro" if is_pro else "free")
             self.style().unpolish(btn)
             self.style().polish(btn)
@@ -5996,38 +6062,186 @@ class FluxionWindow(QMainWindow):
 
     # ── updates ──────────────────────────────────────────────────────────
 
-    def _check_updates(self) -> None:
-        self.statusBar().showMessage("Проверка обновлений…")
+    UPDATES_AUTO_KEY = "updates/auto"  # the automatic check at start, on by default
+    UPDATES_LAST_KEY = "updates/last_check"  # time.time() of the last automatic check
+    UPDATES_SKIP_KEY = "updates/skip_version"  # «Пропустить эту версию»
+
+    def _check_updates(self, auto: bool = False) -> None:
+        """Menu Помощь → Проверить обновления; *auto*: the background check at start, silent
+        without an update, without a connection and for a skipped version."""
+        if not auto:
+            self.statusBar().showMessage(tr("Проверка обновлений…"))
         self._update_worker = UpdateWorker(APP_VERSION)
-        self._update_worker.done.connect(self._on_update_result)
+        self._update_worker.done.connect(lambda info: self._on_update_result(info, auto=auto))
         self._update_worker.finished.connect(self._update_worker.deleteLater)
         self._update_worker.start()
 
-    def _on_update_result(self, info) -> None:
-        self.statusBar().showMessage("Готово", 3000)
+    def _auto_updates_enabled(self) -> bool:
+        return str(self.qsettings.value(self.UPDATES_AUTO_KEY, True)).lower() not in ("false", "0")
+
+    def auto_check_updates(self) -> bool:
+        """At start (main): the background check, at most once a day. Returns whether it started."""
+        from core.update import should_auto_check
+
+        if os.environ.get("FLUXION_NO_UPDATE_CHECK") == "1":
+            return False
+        if not should_auto_check(self.qsettings.value(self.UPDATES_LAST_KEY, 0), enabled=self._auto_updates_enabled()):
+            return False
+        self.qsettings.setValue(self.UPDATES_LAST_KEY, time.time())
+        self._check_updates(auto=True)
+        return True
+
+    def _on_update_result(self, info, auto: bool = False) -> None:
+        if not auto:
+            self.statusBar().showMessage(tr("Готово"), 3000)
         if info is None:
-            QMessageBox.warning(
-                self, "Обновления", "Не удалось проверить обновления: нет соединения с GitHub."
-            )
+            if not auto:
+                QMessageBox.warning(
+                    self, tr("Обновления"), tr("Не удалось проверить обновления: нет соединения с GitHub.")
+                )
             return
         if not info.is_newer:
-            QMessageBox.information(
-                self, "Обновления", f"У вас последняя версия — {info.current_version}."
-            )
+            if not auto:
+                QMessageBox.information(
+                    self, tr("Обновления"), tr("У вас последняя версия — {current_version}.", current_version=info.current_version)
+                )
             return
-        box = QMessageBox(self)
-        box.setWindowTitle("Доступна новая версия")
-        box.setText(f"Fluxion {info.latest_version} (у вас {info.current_version}).")
+        if auto and str(self.qsettings.value(self.UPDATES_SKIP_KEY, "") or "") == info.latest_version:
+            return
+        self._show_update_dialog(info)
+
+    def _can_update_in_place(self, info) -> bool:
+        """«Обновить сейчас»: a copy from the installer and a release with the installer and its checksum."""
+        from core.app_paths import is_installed
+
+        return bool(info.installer_url and info.sha256_url) and is_installed()
+
+    def _show_update_dialog(self, info) -> None:
+        in_place = self._can_update_in_place(info)
+        title = tr("Fluxion {latest_version} (у вас {current_version}).",
+                   latest_version=info.latest_version, current_version=info.current_version)
+        parts = [f"<b>{html.escape(title)}</b>"]
         notes = info.release_notes.strip()
         if notes:
-            box.setInformativeText(notes[:1500])
-        open_btn = box.addButton("Открыть страницу загрузки", QMessageBox.AcceptRole)
-        box.addButton("Позже", QMessageBox.RejectRole)
+            parts.append(f"<p><b>{html.escape(tr('Что нового:'))}</b><br>"
+                         + html.escape(notes[:1500]).replace("\n", "<br>") + "</p>")
+        # the site gives FluxionSetup.exe; the GitHub release page stays as a second way
+        links = [f'<a href="{SITE_URL}#download">{html.escape(tr("Скачать с сайта"))}</a>']
+        if info.release_url:
+            links.append(f'<a href="{html.escape(info.release_url)}">{html.escape(tr("Страница на GitHub"))}</a>')
+        parts.append("<p>" + " · ".join(links) + "</p>")
+        if not in_place:
+            parts.append("<p>" + html.escape(
+                tr("Эта копия Fluxion не установлена установщиком: скачайте новую версию с сайта.")) + "</p>")
+
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("Доступна новая версия"))
+        box.setTextFormat(Qt.RichText)
+        box.setText("".join(parts))
+        label = box.findChild(QLabel, "qt_msgbox_label")
+        if label is not None:
+            label.setOpenExternalLinks(True)
+            label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        auto_box = QCheckBox(tr("Проверять обновления автоматически"))
+        auto_box.setChecked(self._auto_updates_enabled())
+        box.setCheckBox(auto_box)
+        main_btn = box.addButton(tr("Обновить сейчас") if in_place else tr("Скачать с сайта"), QMessageBox.AcceptRole)
+        skip_btn = box.addButton(tr("Пропустить эту версию"), QMessageBox.ActionRole)
+        box.addButton(tr("Позже"), QMessageBox.RejectRole)
         box.exec()
-        if box.clickedButton() is open_btn and info.release_url:
-            QDesktopServices.openUrl(QUrl(info.release_url))
+        self.qsettings.setValue(self.UPDATES_AUTO_KEY, auto_box.isChecked())
+        clicked = box.clickedButton()
+        if clicked is skip_btn:
+            self.qsettings.setValue(self.UPDATES_SKIP_KEY, info.latest_version)
+        elif clicked is main_btn:
+            if in_place:
+                self._start_update(info)
+            else:
+                QDesktopServices.openUrl(QUrl(SITE_URL + "#download"))
+
+    def _start_update(self, info) -> None:
+        """«Обновить сейчас»: download and check the installer, then run it and quit."""
+        from PySide6.QtWidgets import QProgressDialog
+
+        dialog = QProgressDialog(tr("Загрузка обновления…"), tr("Отмена"), 0, 100, self)
+        dialog.setWindowTitle(tr("Обновления"))
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+        worker = InstallerDownloadWorker(info, self)
+        self._installer_worker = worker
+
+        def on_progress(done: int, total: int) -> None:
+            if total:
+                dialog.setMaximum(100)
+                dialog.setValue(min(99, int(done * 100 / total)))
+            else:
+                dialog.setMaximum(0)  # size unknown: a busy bar
+
+        worker.progress.connect(on_progress)
+        dialog.canceled.connect(worker.cancel)
+        worker.failed.connect(lambda kind: self._on_update_failed(kind, dialog))
+        worker.done.connect(lambda path: self._on_installer_ready(path, dialog))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_update_failed(self, kind: str, dialog=None) -> None:
+        if dialog is not None:
+            dialog.reset()
+        if kind == "cancelled":
+            return
+        if kind == "checksum_mismatch":
+            text = tr("Контрольная сумма установщика не совпала — файл повреждён или подменён. Обновление отменено.")
+        elif kind == "checksum_missing":
+            text = tr("В выпуске нет контрольной суммы установщика — обновление отменено. Скачайте новую версию с сайта.")
+        else:
+            text = tr("Не удалось загрузить обновление: {error}", error=kind.partition(":")[2] or kind)
+        QMessageBox.warning(self, tr("Обновления"), text)
+
+    def _on_installer_ready(self, path: str, dialog=None) -> None:
+        """The checked installer: run it silently (it closes Fluxion and starts the new one) and quit."""
+        from core.update import launch_installer
+
+        if dialog is not None:
+            dialog.reset()
+        try:
+            launch_installer(path)
+        except OSError as exc:
+            QMessageBox.warning(self, tr("Обновления"), tr("Не удалось запустить установщик: {error}", error=exc))
+            return
+        self.close()
+        QApplication.quit()
 
     # ── theme ────────────────────────────────────────────────────────────
+
+    def choose_language(self, code: str) -> None:
+        """Menu Вид → Язык / Language: remember the language, offer a restart to apply it."""
+        for other, act in self.language_actions.items():
+            act.setChecked(other == code)
+        self.qsettings.setValue(LANGUAGE_SETTING, code)
+        if code == language():
+            return
+        # the new language speaks in the question: the window itself is still in the old one
+        catalog = load_catalog(code)
+        title = catalog.get("Язык интерфейса", "Язык интерфейса")
+        text = catalog.get("Язык сменится после перезапуска Fluxion. Перезапустить сейчас?",
+                           "Язык сменится после перезапуска Fluxion. Перезапустить сейчас?")
+        answer = QMessageBox.question(self, title, text, QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if answer == QMessageBox.Yes:
+            self.restart_app()
+
+    def restart_app(self) -> None:
+        """Start a new Fluxion and close this one."""
+        from PySide6.QtCore import QProcess
+
+        if getattr(sys, "frozen", False):
+            program, args = sys.executable, sys.argv[1:]
+        else:
+            program, args = sys.executable, ["-m", "desktop_browser", *sys.argv[1:]]
+        started = QProcess.startDetached(program, args, str(APP_ROOT))
+        if started[0] if isinstance(started, tuple) else started:
+            self.close()
+            QApplication.quit()
 
     def toggle_theme(self) -> None:
         self.apply_theme(LIGHT if self.theme.name == "dark" else DARK)
@@ -6036,7 +6250,7 @@ class FluxionWindow(QMainWindow):
         self.theme = theme
         self.qsettings.setValue("theme", theme.name)
         if hasattr(self, "act_theme"):
-            self.act_theme.setText("Светлая тема" if theme.name == "dark" else "Тёмная тема")
+            self.act_theme.setText(tr("Светлая тема") if theme.name == "dark" else tr("Тёмная тема"))
 
         mono_font = '"JetBrains Mono", Consolas, monospace'
         ui_font = '"Space Grotesk", "Segoe UI", sans-serif'
@@ -6324,7 +6538,7 @@ def main() -> int:
         except Exception as exc:
             rag_service = None
             window = FluxionWindow()
-            window.status_label.setText(f"Ошибка движка: {exc}")
+            window.status_label.setText(tr("Ошибка движка: {exc}", exc=exc))
         window.show()
 
         if (
@@ -6364,6 +6578,9 @@ def main() -> int:
             if os.environ.get("FLUXION_SMOKE_VOICE"):
                 result = result or _voice_smoke_check(os.environ["FLUXION_SMOKE_VOICE"])
         else:
+            # updates: in the background a little after start, at most once a day (Помощь → Проверить обновления)
+            if getattr(sys, "frozen", False):
+                QTimer.singleShot(15000, window.auto_check_updates)
             result = app.exec()
 
         window.deleteLater()

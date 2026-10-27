@@ -2,27 +2,22 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from core.config import Settings
 from orchestrator import Assistant
 
 
 def _absolutize_data_paths(settings: Settings) -> None:
-    """Anchor relative data folders of a frozen build to the exe folder.
+    """Anchor relative data folders of a frozen build to the user data folder.
 
     The working directory of an exe is arbitrary (a shortcut, an archiver's
     temp folder), so ``data``, the index and cloned repos must not follow it.
+    They go to %LOCALAPPDATA%\\Fluxion, or next to the exe in portable mode
+    (core/app_paths.py).
     """
     if not getattr(sys, "frozen", False):
         return
-    base = Path(sys.executable).resolve().parent
-
-    def anchored(value: str) -> str:
-        path = Path(value)
-        if not value or path.is_absolute():
-            return value
-        return str(base / path)
+    from core.app_paths import anchor as anchored
 
     settings.paths.data_dir = anchored(settings.paths.data_dir)
     settings.paths.repos_dir = anchored(settings.paths.repos_dir)

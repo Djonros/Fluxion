@@ -23,8 +23,9 @@ from PySide6.QtWidgets import (
 )
 
 from orchestrator import writing_style
+from .i18n import tr
 
-FILE_FILTER = "Документы (*.pdf *.docx *.txt *.md);;Все файлы (*.*)"
+FILE_FILTER = tr("Документы (*.pdf *.docx *.txt *.md);;Все файлы (*.*)")
 
 
 class StyleWorker(QThread):
@@ -42,7 +43,7 @@ class StyleWorker(QThread):
         except writing_style.WritingStyleError as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
-            self.failed.emit(f"Ошибка: {exc}")
+            self.failed.emit(tr("Ошибка: {exc}", exc=exc))
 
 
 class WritingStyleDialog(QDialog):
@@ -54,21 +55,21 @@ class WritingStyleDialog(QDialog):
         self.data_dir = Path(data_dir)
         self.style = writing_style.load(self.data_dir)
         self.worker: StyleWorker | None = None
-        self.setWindowTitle("Мой стиль письма")
+        self.setWindowTitle(tr("Мой стиль письма"))
         self.resize(980, 720)
         box = QVBoxLayout(self)
 
         intro = QLabel(
-            "Добавьте 3–10 своих текстов: служебные и пояснительные записки, письма заказчикам. "
+            tr("Добавьте 3–10 своих текстов: служебные и пояснительные записки, письма заказчикам. "
             "Fluxion опишет вашу манеру — обращения, обороты, построение, оформление — и с включённым "
-            "«✍ Мой стиль» в чате будет писать так же. Описание можно поправить руками."
+            "«✍ Мой стиль» в чате будет писать так же. Описание можно поправить руками.")
         )
         intro.setWordWrap(True)
         intro.setObjectName("subtitle")
         box.addWidget(intro)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Вид текста", "Образец", "Начало"])
+        self.table.setHorizontalHeaderLabels([tr("Вид текста"), tr("Образец"), tr("Начало")])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -79,17 +80,17 @@ class WritingStyleDialog(QDialog):
         box.addWidget(self.table, 1)
 
         sample_row = QHBoxLayout()
-        add_files = QPushButton("Добавить файлы…")
+        add_files = QPushButton(tr("Добавить файлы…"))
         add_files.clicked.connect(self._add_files)
         sample_row.addWidget(add_files)
-        paste = QPushButton("Вставить текст…")
+        paste = QPushButton(tr("Вставить текст…"))
         paste.clicked.connect(self._paste)
         sample_row.addWidget(paste)
-        remove = QPushButton("Удалить")
+        remove = QPushButton(tr("Удалить"))
         remove.clicked.connect(self._remove)
         sample_row.addWidget(remove)
         sample_row.addStretch(1)
-        self.analyze_button = QPushButton("Составить описание стиля")
+        self.analyze_button = QPushButton(tr("Составить описание стиля"))
         self.analyze_button.setObjectName("sendButton")
         self.analyze_button.clicked.connect(self._analyze)
         sample_row.addWidget(self.analyze_button)
@@ -99,9 +100,9 @@ class WritingStyleDialog(QDialog):
         self.status.setWordWrap(True)
         self.status.setObjectName("subtitle")
         box.addWidget(self.status)
-        box.addWidget(QLabel("Описание вашего стиля:"))
+        box.addWidget(QLabel(tr("Описание вашего стиля:")))
         self.profile = QPlainTextEdit()
-        self.profile.setPlaceholderText("Появится после «Составить описание стиля». Можно написать и самому.")
+        self.profile.setPlaceholderText(tr("Появится после «Составить описание стиля». Можно написать и самому."))
         self.profile.setPlainText(self.style.profile)
         box.addWidget(self.profile, 1)
 
@@ -110,10 +111,10 @@ class WritingStyleDialog(QDialog):
 
         bottom.addWidget(help_button(self, "moy-stil"))
         bottom.addStretch(1)
-        close = QPushButton("Закрыть")
+        close = QPushButton(tr("Закрыть"))
         close.clicked.connect(self.reject)
         bottom.addWidget(close)
-        self.save_button = QPushButton("Сохранить")
+        self.save_button = QPushButton(tr("Сохранить"))
         self.save_button.setObjectName("sendButton")
         self.save_button.clicked.connect(self._save)
         bottom.addWidget(self.save_button)
@@ -149,7 +150,7 @@ class WritingStyleDialog(QDialog):
         return out
 
     def _add_files(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(self, "Ваши тексты", str(Path.home()), FILE_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, tr("Ваши тексты"), str(Path.home()), FILE_FILTER)
         failed = []
         for path in paths:
             try:
@@ -158,16 +159,16 @@ class WritingStyleDialog(QDialog):
                 failed.append(f"{Path(path).name}: {exc}")
                 continue
             if len(sample.text) < writing_style.MIN_SAMPLE_CHARS:
-                failed.append(f"{Path(path).name}: текста почти нет (скан без распознавания?)")
+                failed.append(tr("{value}: текста почти нет (скан без распознавания?)", value=Path(path).name))
                 continue
             self._add_row(sample)
         if failed:
-            self.status.setText("Не прочитаны:\n" + "\n".join(failed))
+            self.status.setText(tr("Не прочитаны:\n") + "\n".join(failed))
 
     def _paste(self) -> None:
-        text, ok = QInputDialog.getMultiLineText(self, "Вставить текст", "Текст письма или записки:")
+        text, ok = QInputDialog.getMultiLineText(self, tr("Вставить текст"), tr("Текст письма или записки:"))
         if ok and text.strip():
-            self._add_row(writing_style.Sample("Вставленный текст", writing_style.detect_kind(text[:400]),
+            self._add_row(writing_style.Sample(tr("Вставленный текст"), writing_style.detect_kind(text[:400]),
                                                text.strip()))
 
     def _remove(self) -> None:
@@ -179,13 +180,13 @@ class WritingStyleDialog(QDialog):
     # ── the profile ──────────────────────────────────────────────────────
     def _analyze(self) -> None:
         if self.backend is None:
-            QMessageBox.warning(self, "Мой стиль письма", "Модель не подключена: выберите модель в чате.")
+            QMessageBox.warning(self, tr("Мой стиль письма"), tr("Модель не подключена: выберите модель в чате."))
             return
         if not self.style.samples:
-            QMessageBox.information(self, "Мой стиль письма", "Сначала добавьте свои тексты.")
+            QMessageBox.information(self, tr("Мой стиль письма"), tr("Сначала добавьте свои тексты."))
             return
         self.analyze_button.setEnabled(False)
-        self.status.setText("Модель читает образцы… Это займёт от нескольких секунд до пары минут.")
+        self.status.setText(tr("Модель читает образцы… Это займёт от нескольких секунд до пары минут."))
         self.worker = StyleWorker(self.samples(), self.backend, self)
         self.worker.done.connect(self._done)
         self.worker.failed.connect(self._failed)
@@ -194,7 +195,7 @@ class WritingStyleDialog(QDialog):
 
     def _done(self, profile: str) -> None:
         self.profile.setPlainText(profile)
-        self.status.setText("Готово. Проверьте описание, поправьте, если нужно, и нажмите «Сохранить».")
+        self.status.setText(tr("Готово. Проверьте описание, поправьте, если нужно, и нажмите «Сохранить»."))
 
     def _failed(self, message: str) -> None:
         self.status.setText(message)

@@ -125,6 +125,13 @@ if (Test-Path $translations) {
 $after = Get-DirMB $appDir
 Write-Host "[lite] installed size after trim: $after MB (saved $([math]::Round($before - $after, 1)) MB)" -ForegroundColor Green
 
+# --- optional code signing of the exe (FLUXION_SIGN_THUMBPRINT / FLUXION_SIGNTOOL_CMD,
+#     see scripts\build_installer.ps1): before packing, so the .7z gets it too ---
+if ($env:FLUXION_SIGN_THUMBPRINT -or $env:FLUXION_SIGNTOOL_CMD) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build_installer.ps1") -SignOnly (Join-Path $appDir "FluxionBrowserLite.exe")
+    if ($LASTEXITCODE -ne 0) { throw "Signing FluxionBrowserLite.exe failed with code $LASTEXITCODE" }
+}
+
 # --- 3) pack ---
 if ($NoPack) {
     Write-Host "[lite] -NoPack: app folder ready, archive skipped: $appDir" -ForegroundColor Green

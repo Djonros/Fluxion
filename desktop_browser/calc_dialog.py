@@ -36,6 +36,7 @@ from calc import fields as F
 from calc import report
 from calc import strength as strength_mod
 from calc.core import CalcError
+from .i18n import tr
 
 MANUAL_PAGE = "inzhenernyi-kalkulyator"
 PROFILE_EXAMPLES = ("швеллер 16", "двутавр 20", "труба 80х40х3", "труба 60х60х4", "труба 57х3,5",
@@ -74,7 +75,7 @@ def draw_frame(result: calc.Result, width: int = 760) -> QImage:
         c = pt(x, y)
         painter.drawPolygon(QPolygonF([c, QPointF(c.x() - 5, c.y() - 10), QPointF(c.x() + 5, c.y() - 10)]))
     painter.setPen(QColor("#222"))
-    legend = [("#1565C0", "с большим запасом"), ("#2E7D32", "проходит"), ("#B45309", "мало"), ("#C62828", "не проходит")]
+    legend = [("#1565C0", tr("с большим запасом")), ("#2E7D32", tr("проходит")), ("#B45309", tr("мало")), ("#C62828", tr("не проходит"))]
     x = 40
     for color, text in legend:
         painter.setPen(QPen(QColor(color), 4))
@@ -82,7 +83,7 @@ def draw_frame(result: calc.Result, width: int = 760) -> QImage:
         painter.setPen(QColor("#222"))
         painter.drawText(QPointF(x + 24, height - 14), text)
         x += 150
-    painter.drawText(QPointF(40, 18), "Вид сверху: кружки — опоры (оси, сцепка), треугольники — грузы; спереди слева")
+    painter.drawText(QPointF(40, 18), tr("Вид сверху: кружки — опоры (оси, сцепка), треугольники — грузы; спереди слева"))
     painter.end()
     return image
 
@@ -141,10 +142,10 @@ def draw_diagram(result: calc.Result, width: int = 760, height: int = 330) -> QI
             painter.drawPolygon(QPolygonF([QPointF(x, beam_y + 2), QPointF(x - 8, beam_y + 16),
                                            QPointF(x + 8, beam_y + 16)]))
         painter.drawText(QPointF(x - 12, beam_y + 30), calc.fmt(position))
-    painter.drawText(QPointF(4, beam_y + 4), "Балка")
+    painter.drawText(QPointF(4, beam_y + 4), tr("Балка"))
     band = (height - 80) / 2
-    plot(data["M"], 80, band - 14, "#1565C0", "M", "кН·м", down_positive=True)
-    plot(data["f"], 80 + band, band - 14, "#B45309", "Прогиб", "мм", down_positive=True)
+    plot(data["M"], 80, band - 14, "#1565C0", "M", tr("кН·м"), down_positive=True)
+    plot(data["f"], 80 + band, band - 14, "#B45309", tr("Прогиб"), tr("мм"), down_positive=True)
     painter.end()
     return image
 
@@ -167,7 +168,7 @@ class CalcTab(QWidget):
         form_box = QWidget()
         form = QFormLayout(form_box)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        self.more = QCheckBox("Ещё параметры")
+        self.more = QCheckBox(tr("Ещё параметры"))
         advanced_rows = []
         for f in self.module.FIELDS:
             widget = self._widget(f)
@@ -186,7 +187,7 @@ class CalcTab(QWidget):
             label.setVisible(False)
             widget.setVisible(False)
         self.more.toggled.connect(lambda on: [(l.setVisible(on), w.setVisible(on)) for l, w in advanced_rows])
-        button = QPushButton("Рассчитать")
+        button = QPushButton(tr("Рассчитать"))
         button.setDefault(True)
         button.clicked.connect(self.run)
         form.addRow(button)
@@ -196,7 +197,7 @@ class CalcTab(QWidget):
         splitter.addWidget(scroll)
         self.view = QTextBrowser()
         self.view.setOpenExternalLinks(False)
-        self.view.setPlaceholderText("Заполните поля со звёздочкой и нажмите «Рассчитать».")
+        self.view.setPlaceholderText(tr("Заполните поля со звёздочкой и нажмите «Рассчитать»."))
         splitter.addWidget(self.view)
         splitter.setSizes([380, 620])
         self._diagram = ""
@@ -269,7 +270,7 @@ class CalcTab(QWidget):
             self.result = self.module.calculate(self.values())
         except CalcError as exc:
             self.result = None
-            self.view.setHtml(f"<p style='color:#C62828'><b>Не получается посчитать:</b> {report._e(exc)}</p>")
+            self.view.setHtml(tr("<p style='color:#C62828'><b>Не получается посчитать:</b> {value}</p>", value=report._e(exc)))
             self.owner.update_buttons()
             return
         self._diagram = ""
@@ -286,12 +287,12 @@ class CalcTab(QWidget):
 class CalcDialog(QDialog):
     def __init__(self, parent=None, start: tuple[str, dict] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Инженерный калькулятор")
+        self.setWindowTitle(tr("Инженерный калькулятор"))
         self.resize(1100, 720)
         box = QVBoxLayout(self)
-        intro = QLabel("Расчёт по формулам: сварные швы, болты, балки, рама прицепа целиком, сжатые стойки, гибка листа, "
+        intro = QLabel(tr("Расчёт по формулам: сварные швы, болты, балки, рама прицепа целиком, сжатые стойки, гибка листа, "
                        "валы. В чате — «/расчёт» и вопрос своими словами. Нагрузки можно в кгс и тс. Не считаются: "
-                       "стеснённое кручение швеллеров, пространственная работа кузова, усталость сварных узлов.")
+                       "стеснённое кручение швеллеров, пространственная работа кузова, усталость сварных узлов."))
         intro.setWordWrap(True)
         intro.setObjectName("subtitle")
         box.addWidget(intro)
@@ -308,11 +309,11 @@ class CalcDialog(QDialog):
 
         row.addWidget(help_button(self, MANUAL_PAGE))
         row.addStretch(1)
-        self.excel = QPushButton("Отчёт в Excel (Pro)…")
+        self.excel = QPushButton(tr("Отчёт в Excel (Pro)…"))
         self.excel.clicked.connect(lambda: self.save("xlsx"))
-        self.pdf = QPushButton("Отчёт в PDF (Pro)…")
+        self.pdf = QPushButton(tr("Отчёт в PDF (Pro)…"))
         self.pdf.clicked.connect(lambda: self.save("pdf"))
-        close = QPushButton("Закрыть")
+        close = QPushButton(tr("Закрыть"))
         close.clicked.connect(self.accept)
         for b in (self.excel, self.pdf, close):
             row.addWidget(b)
@@ -341,14 +342,14 @@ class CalcDialog(QDialog):
         if result is None:
             return
         if not feature_enabled(calc.PRO_FEATURE):
-            QMessageBox.information(self, "Отчёт расчёта",
-                                    "Отчёт в Excel и PDF — функция Pro: исходные данные, формулы с подстановкой, "
+            QMessageBox.information(self, tr("Отчёт расчёта"),
+                                    tr("Отчёт в Excel и PDF — функция Pro: исходные данные, формулы с подстановкой, "
                                     "проверки, вывод и эпюры для балок. Сами расчёты бесплатны.\n"
-                                    "Активировать: меню «Помощь» → «Лицензия…».")
+                                    "Активировать: меню «Помощь» → «Лицензия…»."))
             return
         name = result.title.split(":")[0] + (".xlsx" if fmt == "xlsx" else ".pdf")
         flt = "Excel (*.xlsx)" if fmt == "xlsx" else "PDF (*.pdf)"
-        path, _ = QFileDialog.getSaveFileName(self, "Сохранить отчёт", name, flt)
+        path, _ = QFileDialog.getSaveFileName(self, tr("Сохранить отчёт"), name, flt)
         if not path:
             return
         try:
@@ -357,7 +358,7 @@ class CalcDialog(QDialog):
             else:
                 report.save_pdf(result, Path(path), self.current._diagram)
         except OSError as exc:
-            QMessageBox.warning(self, "Отчёт расчёта", f"Не удалось сохранить: {exc}")
+            QMessageBox.warning(self, tr("Отчёт расчёта"), tr("Не удалось сохранить: {exc}", exc=exc))
             return
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices

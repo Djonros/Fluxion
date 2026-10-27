@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -12,11 +11,9 @@ _MAX_SESSIONS = 50
 
 
 def _base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).resolve().parent
-    else:
-        base = Path(__file__).resolve().parent.parent
-    return base / "data"
+    from core.app_paths import data_dir
+
+    return data_dir()
 
 
 def chats_path() -> Path:

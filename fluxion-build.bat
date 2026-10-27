@@ -14,7 +14,9 @@ cd /d "%~dp0"
 ::  Сборку выполняет fluxion-update.bat --build-only: те же проверки перед
 ::  сборкой (PyInstaller, движок llama.cpp, 7-Zip) и после неё (exe на месте,
 ::  библиотеки движка внутри). Результат: dist\FluxionBrowserLite\, архивы для
-::  раздачи - в dist\artifacts\.
+::  раздачи - в dist\artifacts\. Если установлен Inno Setup
+::  (winget install JRSoftware.InnoSetup --scope user), там же появится
+::  установщик FluxionSetup-<версия>.exe и его контрольная сумма .sha256.
 :: ============================================================================
 
 if not exist "fluxion-update.bat" goto :no_updater
