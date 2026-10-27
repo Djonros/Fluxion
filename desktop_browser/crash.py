@@ -23,11 +23,9 @@ _native_log = None  # kept open: faulthandler writes to it when the process dies
 
 
 def _base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).resolve().parent
-    else:
-        base = Path(__file__).resolve().parent.parent
-    return base / "data"
+    from core.app_paths import data_dir
+
+    return data_dir()
 
 
 def crash_dir() -> Path:

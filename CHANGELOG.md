@@ -5,6 +5,17 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- The installer `FluxionSetup-<version>.exe` (Inno Setup, `installer/fluxion.iss`): per user, no administrator rights, into `%LOCALAPPDATA%\Programs\Fluxion`; the Start menu, a desktop shortcut on request, an entry in «Установленные приложения», «Запустить Fluxion» at the end. A new version installs over the old one and closes a running Fluxion; `/VERYSILENT /SUPPRESSMSGBOXES` for an unattended update. Uninstalling removes the program and asks whether to remove the data too (never in silent mode; the licence stays). `scripts/build_installer.ps1` builds it after `build_lite.ps1` with a `.sha256` next to it; `fluxion-build.bat --lite` does it when Inno Setup is installed (otherwise says how: `winget install JRSoftware.InnoSetup --scope user`), and `fluxion-release.bat` attaches it to the release. The site and the README offer the installer first, the `.7z` as the portable version.
+- «Инструкция по инструментам»: the page «Установка и обновление».
+- Помощь → «О Fluxion» works: the version, a link to the site djonros.github.io/Fluxion, the data folder and «Открыть сайт». «Доступна новая версия» opens the download section of the site (the installer is there); the GitHub release page is the second button. The installer's entry in «Установленные приложения» links to the site too.
+
+### Changed
+- An installed Fluxion keeps the user's data out of the program folder (`core/app_paths.py`): chats, indexes, logs, the web cache, SearXNG settings and a user `config/config.yaml` are in `%LOCALAPPDATA%\Fluxion` (`data`, `config`), next to the models and the training environment. The first start of the new version copies `data` and `config` from next to the exe there once (the old folders stay; the training environment is used where it is). A file `portable.txt` next to the exe keeps everything in the exe folder, as before. Runs from the sources are unchanged.
+- `fluxion-update.bat` says it is a developer tool and refuses an archive with the same or an older `APP_VERSION` than the folder has (`--force` accepts it): a stale `Fluxion-main-fixed.zip` in Downloads rolled the code back.
+
 ## [0.20.0] — 2026-10-27
 
 ### Changed

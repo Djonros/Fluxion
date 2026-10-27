@@ -163,10 +163,15 @@ def _system_pythons() -> list[str]:
 
 def _fluxion_envs() -> list[str]:
     """Python of Fluxion's own training environments (frozen build)."""
+    from core.app_paths import data_dir
+
     exe_dir = Path(sys.executable).resolve().parent
     local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     found = []
-    for env_dir in (exe_dir / "data" / "training_env", local / "Fluxion" / "training_env"):
+    env_dirs = dict.fromkeys(
+        (exe_dir / "data" / "training_env", data_dir() / "training_env", local / "Fluxion" / "training_env")
+    )
+    for env_dir in env_dirs:
         for relative in _VENV_PYTHON_PATHS:
             candidate = env_dir / relative
             if candidate.is_file():

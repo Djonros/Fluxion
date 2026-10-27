@@ -60,7 +60,9 @@
   };
 
   const newest = (assets, kind) => {
-    const re = new RegExp(`^FluxionBrowser-${kind}-.*\\.7z$`, "i");
+    const re = kind === "Setup"
+      ? /^FluxionSetup-.*\.exe$/i
+      : new RegExp(`^FluxionBrowser-${kind}-.*\\.7z$`, "i");
     return assets
       .filter((a) => re.test(a.name))
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
@@ -75,16 +77,20 @@
   const applyRelease = (release) => {
     const assets = Array.isArray(release.assets) ? release.assets : [];
     const version = String(release.tag_name || "").replace(/^v/i, "");
+    const setup = newest(assets, "Setup");
     const lite = newest(assets, "Lite");
     const full = newest(assets, "Full");
 
-    if (lite) {
-      setBuild("Lite", lite.browser_download_url, size(lite.size));
+    if (lite) setBuild("Lite", lite.browser_download_url, size(lite.size));
+    // the installer is the main download; a release without it falls back to the .7z
+    const main = setup || lite;
+    if (main) {
+      setBuild("Setup", main.browser_download_url, size(main.size));
       const primary = document.getElementById("dl-primary");
-      if (primary) primary.href = lite.browser_download_url;
+      if (primary) primary.href = main.browser_download_url;
       const note = document.getElementById("dl-primary-note");
       if (note) {
-        note.textContent = `Версия ${version}, ${size(lite.size)}. Windows 10 и 11, 64 бит`;
+        note.textContent = `Версия ${version}, ${size(main.size)}. Windows 10 и 11, 64 бит`;
       }
     }
 

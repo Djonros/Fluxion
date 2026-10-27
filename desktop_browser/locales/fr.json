@@ -749,5 +749,11 @@
  "КОМПАС-3D": "KOMPAS-3D",
  "Начало работы": "Prise en main",
  "Расчёты": "Calculs",
- "Чат и документы": "Chat et documents"
+ "Чат и документы": "Chat et documents",
+ "Версия {version}": "Version {version}",
+ "Сайт: {link}": "Site web : {link}",
+ "Данные: {path}": "Données : {path}",
+ "Открыть сайт": "Ouvrir le site",
+ "Скачать с сайта": "Télécharger depuis le site",
+ "Страница на GitHub": "Page sur GitHub"
 }

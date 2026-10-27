@@ -221,6 +221,29 @@ def test_frozen_build_anchors_relative_data_paths(tmp_path, monkeypatch):
     exe = tmp_path / "app" / "FluxionBrowserLite.exe"
     exe.parent.mkdir()
     exe.write_bytes(b"")
+    monkeypatch.delenv("FLUXION_HOME", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    settings = Settings()
+    _absolutize_data_paths(settings)
+    base = tmp_path / "local" / "Fluxion"
+    assert Path(settings.paths.data_dir) == base / "data"
+    assert Path(settings.paths.repos_dir) == base / "data" / "repos"
+    assert Path(settings.rag.chroma_dir) == base / "data" / "chroma"
+    assert Path(settings.paths.data_dir).is_absolute()
+
+
+def test_portable_build_anchors_data_paths_to_exe_folder(tmp_path, monkeypatch):
+    import sys
+
+    from desktop_browser.engine import _absolutize_data_paths
+
+    exe = tmp_path / "app" / "FluxionBrowserLite.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"")
+    (exe.parent / "portable.txt").write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(exe))
     settings = Settings()

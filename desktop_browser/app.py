@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from cli.theme import DARK, LIGHT, Theme
 from core.language import LANG_NAMES, matches_language, resolve_target
 from licensing.store import load_activation
-from . import APP_VERSION
+from . import APP_VERSION, SITE_URL
 from .banner import BrandBanner
 from .i18n import LANGUAGES, SETTING_KEY as LANGUAGE_SETTING, language, load_catalog, tr
 from .browser import create_browser_panel
@@ -2286,8 +2286,30 @@ class FluxionWindow(QMainWindow):
         self.act_license.triggered.connect(self._open_license_dialog)
         m_help.addAction(self.act_license)
         act_about = QAction(tr("О Fluxion"), self)
-        # act_about.triggered.connect(self._show_about)
+        act_about.triggered.connect(self._show_about)
         m_help.addAction(act_about)
+
+    def _show_about(self) -> None:
+        """Menu Помощь → О Fluxion: the version, the site, the folder of the user's data."""
+        from core.app_paths import data_dir
+
+        site = SITE_URL.split("://", 1)[-1].rstrip("/")
+        version = tr("Версия {version}", version=APP_VERSION)
+        site_line = tr("Сайт: {link}", link=f'<a href="{SITE_URL}">{site}</a>')
+        data_line = tr("Данные: {path}", path=html.escape(str(data_dir())))
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("О Fluxion"))
+        box.setTextFormat(Qt.RichText)
+        box.setText(f"<b>Fluxion</b><br>{version}<br>{site_line}<br>{data_line}")
+        label = box.findChild(QLabel, "qt_msgbox_label")
+        if label is not None:
+            label.setOpenExternalLinks(True)
+            label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        site_btn = box.addButton(tr("Открыть сайт"), QMessageBox.ActionRole)
+        box.addButton(tr("Закрыть"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is site_btn:
+            QDesktopServices.openUrl(QUrl(SITE_URL))
 
     def _sync_nav(self, index: int) -> None:
         """Sidebar shows the open page; none is lit for pages from the menu."""
@@ -6032,10 +6054,15 @@ class FluxionWindow(QMainWindow):
         notes = info.release_notes.strip()
         if notes:
             box.setInformativeText(notes[:1500])
-        open_btn = box.addButton(tr("Открыть страницу загрузки"), QMessageBox.AcceptRole)
+        # the site gives FluxionSetup.exe; the GitHub release page stays as a second way
+        site_btn = box.addButton(tr("Скачать с сайта"), QMessageBox.AcceptRole)
+        github_btn = box.addButton(tr("Страница на GitHub"), QMessageBox.ActionRole) if info.release_url else None
         box.addButton(tr("Позже"), QMessageBox.RejectRole)
         box.exec()
-        if box.clickedButton() is open_btn and info.release_url:
+        clicked = box.clickedButton()
+        if clicked is site_btn:
+            QDesktopServices.openUrl(QUrl(SITE_URL + "#download"))
+        elif github_btn is not None and clicked is github_btn:
             QDesktopServices.openUrl(QUrl(info.release_url))
 
     # ── theme ────────────────────────────────────────────────────────────

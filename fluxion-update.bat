@@ -1,7 +1,9 @@
 @echo off
+:: ТОЛЬКО ДЛЯ РАЗРАБОТЧИКА: обновление папки с исходниками из архива и сборка exe.
+:: Пользователи обновляют Fluxion установщиком FluxionSetup.exe или в программе.
 chcp 65001 >nul 2>&1
 setlocal EnableExtensions
-title Fluxion - обновление
+title Fluxion - обновление исходников (для разработчика)
 
 :: cmd reads a running .bat from disk by byte offset. Step 3 copies a new
 :: fluxion-update.bat over this very file, so we first re-launch from a temp
@@ -30,6 +32,8 @@ cd /d "%APPDIR%"
 ::    fluxion-update.bat путь\к\архиву.zip - или перетащите архив на батник мышкой
 ::    fluxion-update.bat --rollback       - вернуть версию из последней резервной копии
 ::    fluxion-update.bat --build-only     - только пересобрать exe, без обновления
+::    --force   принять архив с той же или более старой версией, чем сейчас
+::              (без него такой архив отклоняется: он откатил бы код назад)
 ::
 ::  Параметры сборки, чтобы не отвечать на вопрос в конце:
 ::    --build        пересобрать Lite         --build-full   пересобрать Full
@@ -42,7 +46,9 @@ cd /d "%APPDIR%"
 ::       continue_config.json НЕ перезаписываются; .env, модели и venv не трогаются
 ::    4. проверка: валидация бенчмарка и тесты агента
 ::    5. при ошибке - предложение откатить всё обратно
-::    6. пересборка exe: Lite или Full, через scripts\build_lite.ps1 / build_full.ps1
+::    6. пересборка exe: Lite или Full, через scripts\build_lite.ps1 / build_full.ps1,
+::       и установщик FluxionSetup-<версия>.exe (scripts\build_installer.ps1,
+::       если установлен Inno Setup)
 :: ============================================================================
 
 for %%I in ("%APPDIR%") do set "PARENT=%%~dpI"
@@ -51,8 +57,11 @@ set "BACKUP_PREFIX=%PARENT%%APPNAME%-backup-"
 set "ZIPNAME=Fluxion-main-fixed.zip"
 
 echo ============================================================
-echo    FLUXION - обновление
+echo    FLUXION - обновление исходников (для разработчика)
 echo ============================================================
+echo  Это инструмент разработчика: он заменяет код в этой папке.
+echo  Обычные пользователи обновляют Fluxion установщиком
+echo  FluxionSetup.exe или через «Проверить обновления» в программе.
 echo.
 
 if not exist "%APPDIR%\orchestrator\agent.py" (
@@ -64,8 +73,10 @@ if not exist "%APPDIR%\orchestrator\agent.py" (
 set "MODE=update"
 set "ARG_ZIP="
 set "BUILD_CHOICE="
+set "FORCE="
 :parse_args
 if "%~1"=="" goto :args_done
+if /i "%~1"=="--force" (set "FORCE=1" & shift & goto :parse_args)
 if /i "%~1"=="--rollback" (set "MODE=rollback" & shift & goto :parse_args)
 if /i "%~1"=="--build-only" (set "MODE=build" & shift & goto :parse_args)
 if /i "%~1"=="--build" (set "BUILD_CHOICE=lite" & shift & goto :parse_args)
@@ -104,6 +115,29 @@ goto :fail
 :zip_ok
 echo Архив:     %ZIP%
 echo Программа: %APPDIR%
+
+:: An archive with the same or an older APP_VERSION would roll the code back
+:: (a stale Fluxion-main-fixed.zip in Downloads): refused unless --force.
+:: Exit code: 0 newer, 3 same or older, 4 version not readable.
+powershell -NoProfile -Command "function V([string]$t) { if ($t -match 'APP_VERSION\s*=\s*.([0-9]+(\.[0-9]+){1,3}).') { [version]$Matches[1] } else { $null } }; try { Add-Type -AssemblyName System.IO.Compression.FileSystem; $z = [IO.Compression.ZipFile]::OpenRead($env:ZIP); $e = $z.Entries | Where-Object { $_.FullName -match '(^|[\\/])desktop_browser[\\/]__init__\.py$' } | Select-Object -First 1; if (-not $e) { $z.Dispose(); exit 4 }; $r = New-Object IO.StreamReader($e.Open()); $new = V $r.ReadToEnd(); $r.Close(); $z.Dispose(); $cur = V (Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $env:APPDIR 'desktop_browser\__init__.py')); if (-not $new -or -not $cur) { exit 4 }; Write-Host ('Версии:    в архиве ' + $new + ', сейчас ' + $cur); if ($new -le $cur) { exit 3 }; exit 0 } catch { exit 4 }"
+if errorlevel 4 goto :zip_version_unknown
+if errorlevel 3 goto :zip_version_old
+goto :zip_version_ok
+:zip_version_unknown
+echo [!] Не удалось прочитать версию из архива (desktop_browser\__init__.py).
+if defined FORCE goto :zip_version_ok
+echo     Если архив точно новее, запустите с параметром --force.
+goto :fail
+:zip_version_old
+if defined FORCE (
+    echo [!] В архиве та же или более старая версия - продолжаю: указан --force.
+    goto :zip_version_ok
+)
+echo [ОШИБКА] В архиве та же или более старая версия, чем сейчас в папке.
+echo          Обновление откатило бы код назад. Скачайте свежий архив,
+echo          или, если это сделано намеренно, запустите с параметром --force.
+goto :fail
+:zip_version_ok
 echo.
 echo Перед продолжением закройте Fluxion: приложение, сервер и CLI.
 choice /c YN /m "Начать обновление"
@@ -244,6 +278,13 @@ echo.
 echo Сборка Lite... это 5-15 минут, окно не закрывайте.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%APPDIR%\scripts\build_lite.ps1" %PACKARG%
 if errorlevel 1 goto :build_failed
+:: the installer from the fresh Lite folder; skipped (with a hint) without Inno Setup
+if not exist "%APPDIR%\scripts\build_installer.ps1" goto :setup_done
+echo.
+echo Сборка установщика FluxionSetup.exe...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%APPDIR%\scripts\build_installer.ps1"
+if errorlevel 1 set "SETUP_FAILED=1"
+:setup_done
 if not "%BUILD_CHOICE%"=="full" goto :build_check
 echo.
 echo Сборка Full поверх свежего Lite...
@@ -319,6 +360,8 @@ if defined BACKUP echo  Откатить код:     fluxion-update.bat --rollba
 if defined BUILT echo  Новый exe:        %EXE%
 if defined BUILT if "%BUILD_CHOICE%"=="full" echo  Архивы для раздачи: %APPDIR%\dist\artifacts
 if defined BUILT if not defined PACKARG if not "%BUILD_CHOICE%"=="full" echo  Архив для раздачи: %APPDIR%\dist\artifacts
+if defined BUILT if exist "%APPDIR%\dist\artifacts\FluxionSetup-*.exe" echo  Установщик:       %APPDIR%\dist\artifacts\FluxionSetup-*.exe
+if defined SETUP_FAILED echo  [!] Установщик FluxionSetup.exe не собран - причина в выводе выше.
 if defined NOENGINE echo  [!] В сборке нет библиотек llama.cpp - exe не сможет запускать модели.
 if defined BUILD_FAILED echo  Сборка exe не удалась. Повторить: fluxion-update.bat --build-only
 if not defined BUILT if not defined BUILD_FAILED echo  exe не пересобран. Пересобрать позже: fluxion-update.bat --build-only

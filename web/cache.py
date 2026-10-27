@@ -15,7 +15,10 @@ class WebCache:
     """Simple SQLite cache mapping URL → (title, content, timestamp)."""
 
     def __init__(self, db_path: str = _DEFAULT_DB, default_ttl: int = 86400):
-        self.db_path = Path(db_path)
+        from core.app_paths import anchor
+
+        # a frozen build: the user data folder, not the working directory
+        self.db_path = Path(anchor(db_path))
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.default_ttl = default_ttl
         self._init_db()
