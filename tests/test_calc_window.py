@@ -25,12 +25,16 @@ def test_every_tab_calculates(app):
     from desktop_browser.calc_dialog import CalcDialog
 
     dialog = CalcDialog()
-    assert [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())] == ["Швы", "Болты", "Балки", "Гибка", "Валы"]
+    assert [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())] == ["Швы", "Болты", "Балки", "Рама", "Стойки", "Гибка",
+                                                                                    "Валы"]
     filled = {
         "weld": {"force": "50 кН", "leg": "6", "length": "200"},
         "bolt": {"diameter": "М16", "shear": "40 кН", "count": "4", "plates": "8"},
         "beam": {"length": "6 м", "supports": "1500; 4500", "loads": "20 кН в 0; 5 кН/м", "profile": "труба 100х50х4"},
         "bend": {"thickness": "3", "flanges": "30; 60; 30", "bend_length": "500"},
+        "frame": {"length": "6 м", "width": "1000", "axles": "1500; 4500", "spar": "швеллер 16", "cross": "труба 60х40х3",
+                  "body_load": "3 тс", "drawbar": "1500"},
+        "column": {"force": "50 кН", "length": "2 м", "profile": "труба 60х60х3"},
         "shaft": {"diameter": "40", "torque": "400 Н·м", "moment": "300 Н·м"},
     }
     for kind, values in filled.items():
@@ -42,7 +46,7 @@ def test_every_tab_calculates(app):
         assert tab.result is not None, kind
         assert tab.result.verdict() in tab.view.toPlainText()
         assert dialog.excel.isEnabled() and dialog.pdf.isEnabled()
-    assert dialog.pages["beam"]._diagram.endswith(".png")
+    assert dialog.pages["beam"]._diagram.endswith(".png") and dialog.pages["frame"]._diagram.endswith(".png")
     dialog.tabs.setCurrentWidget(dialog.pages["weld"])
     dialog.pages["weld"].set_values({"leg": "0"})
     dialog.pages["weld"].run()

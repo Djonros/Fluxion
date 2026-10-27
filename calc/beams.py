@@ -8,6 +8,9 @@ length, with hinged supports and fixed ends anywhere.  The checks
     σ = kд·Mmax/Wx ≤ σт/[n],   τ = kд·Qmax·Sx/(Ix·s) ≤ 0,58·σт/[n]
     f ≤ l/[f] for each span, 2·l/[f] for an overhang (СП 20.13330, табл. Д.1)
 The deflection is from the loads as given (without kд).
+With the distance between the restraints of the compressed flange an open
+section is checked for lateral-torsional buckling, with the bearing length of
+the forces and supports — for the local stress in the web (calc/stability.py).
 
 Supports: «500; 4500» — hinges at 500 and 4500 mm; «заделка 0» — a fixed end.
 Loads: «20 кН в 1500» — a force at 1500 mm; «5 кН/м» — along the whole beam;
@@ -21,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import sections, units
+from . import linear, sections, stability, units
 from . import strength as strength_mod
 from .core import CalcError, Result, fmt
 from .fields import BOOL, MATERIAL, PROFILE, TEXT, Field, common_fields, read
@@ -44,6 +47,10 @@ FIELDS = [
     Field("self_weight", "Учесть собственный вес", BOOL, True),
     Field("deflection", "Допустимый прогиб: пролёт /", units.NUMBER, 250.0,
           hint="f ≤ l/250 по умолчанию; СП 20.13330 даёт 1/150–1/250"),
+    Field("lateral", "Раскрепления сжатого пояса через", units.LENGTH, 0.0,
+          hint="шаг поперечин, мм — для проверки общей устойчивости швеллера и двутавра; 0 — не проверять"),
+    Field("bearing", "Длина опирания сил и опор b", units.LENGTH, 0.0,
+          hint="мм, на которой сила или опора давит на полку — для местного напряжения в стенке; 0 — не проверять"),
     *common_fields(1.5),
 ]
 
@@ -186,11 +193,10 @@ def solve(length: float, supports: list[tuple[float, str]], loads: list[Load], e
     free = [i for i in range(2 * n) if i not in set(fixed_dofs)]
     u = np.zeros(2 * n)
     try:
-        sub = K[np.ix_(free, free)]
-        if np.linalg.cond(sub) > 1e14:
-            raise np.linalg.LinAlgError
-        u[free] = np.linalg.solve(sub, F[free])
-    except np.linalg.LinAlgError:
+        u[free] = linear.solve(K[np.ix_(free, free)], F[free])
+        if np.abs(u[0::2]).max() > 1e7:   # a mechanism: metres of sag
+            raise linear.Singular
+    except linear.Singular:
         raise CalcError("балка не закреплена: нужны хотя бы две опоры или заделка") from None
     reaction = K @ u - F
     moment = np.zeros(n)
@@ -278,6 +284,7 @@ def _calculate(v: dict, inputs: list, section: sections.Section, material, sugge
     result.step(f"Наибольший прогиб ({where})", "f", "", f, "мм")
     result.check(f"Прогиб ({where})", f, limit, "мм", 1.0,
                  f"{'2·' if overhang else ''}l/{fmt(v['deflection'])}")
+    _stability(result, v, section, s, sol, user_loads, count, kd, n_req, m_max)
     result.tables.append(("Реакции опор", ["Опора, мм", "Тип", "Реакция, кН", "Момент, кН·м"],
                           [[fmt(p), kind, fmt(r / 1e3), fmt(m / 1e6) if kind == FIXED else ""]
                            for p, kind, r, m in sol.reactions]))
@@ -285,12 +292,47 @@ def _calculate(v: dict, inputs: list, section: sections.Section, material, sugge
                       "f": sol.deflection.tolist(), "supports": supports}
     result.notes.append(section.describe())
     result.notes.append(s.describe())
-    if section.family in sections.OPEN:
-        result.notes.append("Общая устойчивость (боковое выпучивание) открытого профиля не проверялась: "
-                            "сжатый пояс должен быть раскреплён поперечинами")
+    if section.open and not v["lateral"]:
+        result.notes.append("Общая устойчивость (боковое выпучивание) открытого профиля не проверялась: задайте шаг "
+                            "раскреплений сжатого пояса (поперечин)")
     if suggest:
         _suggest(result, v, section, s, n_req)
     return result
+
+
+def c1_of(loads: list[Load]) -> tuple[float, str]:
+    """C1 of the lateral-torsional buckling by the loads: a single force — 1,35, moments — 1,0, else 1,13."""
+    forces = [l for l in loads if l.kind == "force"]
+    if any(l.kind == "moment" for l in loads):
+        return stability.C1["равномерный момент"], "равномерный момент"
+    if len(forces) == 1 and not any(l.kind == "line" for l in loads):
+        return stability.C1["сила в середине"], "сила в середине"
+    return stability.C1["распределённая нагрузка"], "распределённая нагрузка"
+
+
+def _stability(result: Result, v: dict, section: sections.Section, s, sol: "Solution", loads: list[Load],
+               count: float, kd: float, n_req: float, m_max: float) -> None:
+    if v["lateral"] and section.open:
+        c1, case = c1_of(loads)
+        lef = v["lateral"]
+        result.step(f"Критический момент ({case}: C1 = {fmt(c1)}, lef = {fmt(lef)} мм)",
+                    "Mcr = C1·π²·E·Iy/lef²·√(Iw/Iy + lef²·G·J/(π²·E·Iy))", "",
+                    stability.critical_moment(section, lef, s.elastic, c1) / 1e6, "кН·м")
+        phi1, phib = stability.phi_b(section, lef, s.elastic, s.yield_, c1)
+        half = "·0,5 (швеллер)" if section.family != sections.I_BEAM else ""
+        result.step(f"Коэффициент устойчивости при изгибе (φ1 = Mcr/(Wx·σт){half} = {fmt(phi1)})",
+                    "φb (СП 16, прил. Ж)", "", phib, "")
+        result.check("Общая устойчивость (изгибно-крутильная)", kd * m_max / 1e6, phib * section.wx * s.yield_ / 1e6,
+                     "кН·м", n_req, "φb·Wx·σт")
+    if v["bearing"] and section.family not in (sections.STRIP, sections.ROUND):
+        forces = [l.value / count for l in loads if l.kind == "force"]
+        reactions = [abs(r) for _, _, r, _ in sol.reactions]
+        force = max(forces + reactions)
+        lef = stability.local_length(section, v["bearing"])
+        sigma = result.step("Местное напряжение в стенке", "σloc = kд·F/(tw·lef), lef = b + 2·tf",
+                            f"{fmt(kd)}·{fmt(force)}/({fmt(section.web)}·{fmt(lef)})",
+                            kd * stability.local_stress(section, force, v["bearing"]), "МПа")
+        result.check("Местное напряжение под силой или опорой", sigma, s.yield_, "МПа", n_req, "σт")
 
 
 def _suggest(result: Result, v: dict, section: sections.Section, s, n_req: float) -> None:

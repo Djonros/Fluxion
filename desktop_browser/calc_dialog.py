@@ -42,9 +42,56 @@ PROFILE_EXAMPLES = ("швеллер 16", "двутавр 20", "труба 80х40
                     "гнутый швеллер 100х50х4", "полоса 100х10", "круг 40")
 
 
+def draw_frame(result: calc.Result, width: int = 760) -> QImage:
+    """A trailer frame from above: the members coloured by how loaded they are, the axles, the loads."""
+    data = result.diagram or {}
+    members = data.get("members") or []
+    xs = [m[0] for m in members] + [m[2] for m in members]
+    ys = [m[1] for m in members] + [m[3] for m in members]
+    span_x, span_y = (max(xs) - min(xs)) or 1.0, (max(ys) - min(ys)) or 1.0
+    scale = min((width - 80) / span_x, 220 / span_y)
+    height = int(span_y * scale) + 110
+    image = QImage(width, height, QImage.Format_ARGB32)
+    image.fill(QColor("white"))
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setFont(QFont("Segoe UI", 8))
+
+    def pt(x: float, y: float) -> QPointF:
+        return QPointF(40 + (x - min(xs)) * scale, 40 + (y - min(ys)) * scale)
+
+    for x1, y1, x2, y2, ratio in members:
+        color = "#1565C0" if ratio <= 1 / 3 else "#2E7D32" if ratio <= 1 else "#B45309" if ratio <= 1.5 else "#C62828"
+        painter.setPen(QPen(QColor(color), 4, Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(pt(x1, y1), pt(x2, y2))
+    painter.setPen(QPen(QColor("#333"), 1.5))
+    painter.setBrush(QColor("#ddd"))
+    for x, y in data.get("supports", []):
+        c = pt(x, y)
+        painter.drawEllipse(c, 7, 7)
+    painter.setBrush(QColor("#C62828"))
+    for x, y in data.get("loads", []):
+        c = pt(x, y)
+        painter.drawPolygon(QPolygonF([c, QPointF(c.x() - 5, c.y() - 10), QPointF(c.x() + 5, c.y() - 10)]))
+    painter.setPen(QColor("#222"))
+    legend = [("#1565C0", "с большим запасом"), ("#2E7D32", "проходит"), ("#B45309", "мало"), ("#C62828", "не проходит")]
+    x = 40
+    for color, text in legend:
+        painter.setPen(QPen(QColor(color), 4))
+        painter.drawLine(QPointF(x, height - 18), QPointF(x + 18, height - 18))
+        painter.setPen(QColor("#222"))
+        painter.drawText(QPointF(x + 24, height - 14), text)
+        x += 150
+    painter.drawText(QPointF(40, 18), "Вид сверху: кружки — опоры (оси, сцепка), треугольники — грузы; спереди слева")
+    painter.end()
+    return image
+
+
 def draw_diagram(result: calc.Result, width: int = 760, height: int = 330) -> QImage:
     """The beam with its supports, the bending moment and the deflection, one under another."""
     data = result.diagram or {}
+    if data.get("type") == "frame":
+        return draw_frame(result, width)
     image = QImage(width, height, QImage.Format_ARGB32)
     image.fill(QColor("white"))
     xs = data.get("x") or []
@@ -242,8 +289,9 @@ class CalcDialog(QDialog):
         self.setWindowTitle("Инженерный калькулятор")
         self.resize(1100, 720)
         box = QVBoxLayout(self)
-        intro = QLabel("Расчёт по формулам: сварные швы, болты, балки и рамы, гибка листа, валы. "
-                       "В чате — «/расчёт» и вопрос своими словами. Нагрузки можно в кгс и тс.")
+        intro = QLabel("Расчёт по формулам: сварные швы, болты, балки, рама прицепа целиком, сжатые стойки, гибка листа, "
+                       "валы. В чате — «/расчёт» и вопрос своими словами. Нагрузки можно в кгс и тс. Не считаются: "
+                       "стеснённое кручение швеллеров, пространственная работа кузова, усталость сварных узлов.")
         intro.setWordWrap(True)
         intro.setObjectName("subtitle")
         box.addWidget(intro)

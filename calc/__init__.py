@@ -1,4 +1,5 @@
-"""Инженерный калькулятор: welds, bolts, beams, sheet bending, shafts — by formulas, not by the model.
+"""Инженерный калькулятор: welds, bolts, beams, trailer frames, compressed members, sheet bending,
+shafts — by formulas, not by the model.
 
 Each calculation is a module with ``FIELDS`` (its inputs) and ``calculate(raw)``
 that takes raw values (numbers or texts with units: "5 тс", "200 мм") and
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from . import beams, bending, bolts, shafts, welds
+from . import beams, bending, bolts, columns, frames, shafts, welds
 from .core import CalcError, Result, fmt
 
 PRO_FEATURE = "calc_report"
@@ -24,6 +25,8 @@ CALCS: dict[str, tuple[str, ModuleType]] = {
     welds.KIND: ("Швы", welds),
     bolts.KIND: ("Болты", bolts),
     beams.KIND: ("Балки", beams),
+    frames.KIND: ("Рама", frames),
+    columns.KIND: ("Стойки", columns),
     bending.KIND: ("Гибка", bending),
     shafts.KIND: ("Валы", shafts),
 }

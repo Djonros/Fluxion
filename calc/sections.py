@@ -9,6 +9,11 @@ bent channel is a polygon with its arcs split into short chords: area, inertia
 and the static moment of the half above the neutral axis come out exact to a
 fraction of a percent.
 
+For torsion and stability each section also knows: J (St Venant torsion
+constant; Bredt's for closed tubes), Wt (τ = T/Wt), Iw (warping constant, open
+sections), the flange thickness and the buckling curve of СП 16 (табл. 7:
+a — tubes, b — I-beams, strips, rounds, c — channels).
+
 A profile is named as it is said: «швеллер 16», «16У», «двутавр 20»,
 «труба 80х40х3», «труба 57х3,5», «гнутый швеллер 100х50х4», «полоса 100х10»
 (100 — the height in the plane of bending), «круг 40».
@@ -85,6 +90,20 @@ class Section:
     web_y: float
     mass: float = 0.0  # kg/m of steel by the table; 0 — from the area and the density
     sizes: tuple = ()
+    j: float = 0.0     # mm⁴, torsion constant
+    wt: float = 0.0    # mm³, τ = T/Wt
+    iw: float = 0.0    # mm⁶, warping constant (0 — closed or solid: no lateral-torsional buckling)
+    tf: float = 0.0    # mm, the flange (or the wall) under a concentrated load
+    curve: str = "b"   # buckling curve, СП 16 табл. 7
+
+    @property
+    def open(self) -> bool:
+        return self.family in OPEN and self.iw > 0
+
+    @property
+    def i_min(self) -> float:
+        """The least radius of gyration, mm."""
+        return math.sqrt(min(self.ix, self.iy) / self.area)
 
     def mass_per_m(self, density: float = 7.85) -> float:
         return self.mass if self.mass and abs(density - 7.85) < 0.05 else self.area * density / 1000
@@ -92,7 +111,7 @@ class Section:
     def turned(self) -> "Section":
         """The same section bent about its other axis (a tube lying flat, a channel on its back)."""
         return replace(self, name=self.name + " (плашмя)", h=self.b, b=self.h, ix=self.iy, wx=self.wy, sx=self.sy,
-                       web=self.web_y, iy=self.ix, wy=self.wx, sy=self.sx, web_y=self.web)
+                       web=self.web_y, iy=self.ix, wy=self.wx, sy=self.sx, web_y=self.web, iw=0.0)
 
     def describe(self) -> str:
         return (f"{self.name}: A {fmt(self.area / 100)} см², Ix {fmt(self.ix / 1e4)} см⁴, Wx {fmt(self.wx / 1e3)} см³, "
@@ -105,8 +124,20 @@ def _rolled(name: str, family: str, row: tuple) -> Section:
         sy, web_y = 2 * t * (b / 2) ** 2 / 2, 2 * t   # two flanges, half of each beyond the axis
     else:
         sy, web_y = 2 * t * b ** 2 / 8, 2 * t         # approximate: the flanges as rectangles
+    # St Venant torsion of thin rectangles with the factor of rolled profiles (1,2 I-beam, 1,12 channel)
+    eta = 1.2 if family == I_BEAM else 1.12
+    j = eta / 3 * (2 * b * t ** 3 + (h - 2 * t) * s ** 3)
+    if family == I_BEAM:
+        iw = iy * 1e4 * (h - t) ** 2 / 4
+    else:
+        iw = _channel_warping(h - t, b - s / 2, t, s)
     return Section(name, family, h, b, a * 100, ix * 1e4, wx * 1e3, sx * 1e3, s, iy * 1e4, wy * 1e3, sy, web_y,
-                   mass, (h, b, s, t))
+                   mass, (h, b, s, t), j, j / t, iw, t, "b" if family == I_BEAM else "c")
+
+
+def _channel_warping(hm: float, bm: float, tf: float, tw: float) -> float:
+    """Iw of a channel by its centre lines: tf·b³·h²/12·(3·b·tf + 2·h·tw)/(6·b·tf + h·tw)."""
+    return tf * bm ** 3 * hm ** 2 / 12 * (3 * bm * tf + 2 * hm * tw) / (6 * bm * tf + hm * tw)
 
 
 # ── polygons ────────────────────────────────────────────────────────────────
@@ -192,8 +223,13 @@ def rect_tube(h: float, b: float, t: float) -> Section:
         raise CalcError(f"труба {fmt(h)}х{fmt(b)}х{fmt(t)}: стенка не помещается")
     r = 2 * t   # ГОСТ 30245: outer radius about 2t
     name = f"труба {fmt(h)}х{fmt(b)}х{fmt(t)}" if h != b else f"труба {fmt(h)}х{fmt(b)}х{fmt(t)}"
-    return _from_polygons(name, RECT_TUBE, _rounded_rect(b, h, r), [_rounded_rect(b - 2 * t, h - 2 * t, r - t)],
-                          2 * t, 2 * t, (h, b, t))
+    section = _from_polygons(name, RECT_TUBE, _rounded_rect(b, h, r), [_rounded_rect(b - 2 * t, h - 2 * t, r - t)],
+                             2 * t, 2 * t, (h, b, t))
+    # Bredt: the area and the length of the centre line of the wall
+    rm = r - t / 2
+    am = (h - t) * (b - t) - (4 - math.pi) * rm ** 2
+    perimeter = 2 * (h - t + b - t) - (8 - 2 * math.pi) * rm
+    return replace(section, j=4 * am ** 2 * t / perimeter, wt=2 * am * t, tf=t, curve="a")
 
 
 def round_tube(d: float, t: float) -> Section:
@@ -204,27 +240,31 @@ def round_tube(d: float, t: float) -> Section:
     i = math.pi * (d ** 4 - d0 ** 4) / 64
     s = (d ** 3 - d0 ** 3) / 12
     return Section(f"труба {fmt(d)}х{fmt(t)}", ROUND_TUBE, d, d, area, i, i / (d / 2), s, 2 * t, i, i / (d / 2), s,
-                   2 * t, 0.0, (d, t))
+                   2 * t, 0.0, (d, t), 2 * i, 2 * i / (d / 2), 0.0, t, "a")
 
 
 def bent_channel(h: float, b: float, t: float) -> Section:
     if not (t > 0 and 2 * t < h and 2 * t < b):
         raise CalcError(f"гнутый швеллер {fmt(h)}х{fmt(b)}х{fmt(t)}: стенка не помещается")
-    return _from_polygons(f"гнутый швеллер {fmt(h)}х{fmt(b)}х{fmt(t)}", BENT_CHANNEL, _channel_outline(h, b, t, t), [],
-                          t, 2 * t, (h, b, t))
+    section = _from_polygons(f"гнутый швеллер {fmt(h)}х{fmt(b)}х{fmt(t)}", BENT_CHANNEL, _channel_outline(h, b, t, t),
+                             [], t, 2 * t, (h, b, t))
+    j = t ** 3 / 3 * (h - t + 2 * (b - t / 2))
+    return replace(section, j=j, wt=j / t, iw=_channel_warping(h - t, b - t / 2, t, t), tf=t, curve="c")
 
 
 def strip(h: float, b: float) -> Section:
     area = b * h
+    long, short = max(h, b), min(h, b)
+    j = long * short ** 3 / 3 * (1 - 0.63 * short / long)
     return Section(f"полоса {fmt(h)}х{fmt(b)}", STRIP, h, b, area, b * h ** 3 / 12, b * h ** 2 / 6, b * h ** 2 / 8, b,
-                   h * b ** 3 / 12, h * b ** 2 / 6, h * b ** 2 / 8, h, 0.0, (h, b))
+                   h * b ** 3 / 12, h * b ** 2 / 6, h * b ** 2 / 8, h, 0.0, (h, b), j, j / short, 0.0, b, "b")
 
 
 def solid_round(d: float) -> Section:
     i = math.pi * d ** 4 / 64
     s = d ** 3 / 12
     return Section(f"круг {fmt(d)}", ROUND, d, d, math.pi * d ** 2 / 4, i, i / (d / 2), s, d, i, i / (d / 2), s, d,
-                   0.0, (d,))
+                   0.0, (d,), 2 * i, math.pi * d ** 3 / 16, 0.0, d, "b")
 
 
 # ── names ───────────────────────────────────────────────────────────────────

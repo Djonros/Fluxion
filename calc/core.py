@@ -30,7 +30,7 @@ def fmt(value: float, digits: int = 3) -> str:
         return str(value or "")
     if math.isinf(value):
         return "∞"
-    if value == 0:
+    if abs(value) < 1e-9:   # the round-off of a solver, not a value
         return "0"
     magnitude = math.floor(math.log10(abs(value)))
     decimals = max(0, digits - 1 - magnitude)
