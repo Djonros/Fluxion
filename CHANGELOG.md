@@ -5,7 +5,7 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.1] — 2026-10-27
 
 ### Added
 - «Забыть проект» (chat menu ⋮ and the «Проект» menu): a new chat that refers to nothing — the conversation starts over, the project folder is unselected and its index is not searched for answers (`Assistant.use_project`), «Мой стиль» is off; the agent says there is no folder instead of working anywhere. Nothing is deleted: the index stays on disk, and picking the folder again (or indexing) brings the project back. Kept between runs.
