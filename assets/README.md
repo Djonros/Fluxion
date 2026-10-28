@@ -8,9 +8,11 @@
 
 Производные:
 
-- `docs/assets/images/favicon.png` — 256×256 (центр-кроп icon.png)
+- `docs/assets/images/favicon.png` — 256×256 с прозрачным фоном (из `icon-mark.png`)
 - `docs/assets/images/logo.png` — 96×96, шапка docs-сайта
 - `docs/assets/images/banner.png` — 1000px, hero docs-сайта
-- `extension/media/icon.png` — 256×256, иконка VS Code extension
+- `extension/media/icon.png` — 256×256 с прозрачным фоном (из `icon-mark.png`), иконка VS Code extension
 - `extension/media/sidebar-icon.svg` — старая монохромная иконка сайдбара
-- `icon-256.png` — квадратный 256×256 (из `icon.ico`), значок окна; единственный файл из `assets`, который попадает в exe
+- `icon-mark.png` — звёздный знак ∞ на прозрачном фоне, исходник значка приложения
+- `icon.ico` — значок exe и установщика (16–256 px, из `icon-mark.png`)
+- `icon-256.png` — квадратный 256×256 с прозрачным фоном (из `icon-mark.png`): значок окна и favicon сайта; единственный файл из `assets`, который попадает в exe
