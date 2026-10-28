@@ -6575,18 +6575,23 @@ class FluxionWindow(QMainWindow):
         text2 = "#94A3B8" if theme.name == "dark" else "#64748B"
         accent = "#00E5FF"
         primary = "#7B2FFF"
+        # selected text and rows: white on deep violet, dark text on pale violet; cyan stays
+        # for links and focus frames (white on cyan could not be read)
+        sel_bg = "#4B2A8F" if theme.name == "dark" else "#D8C7FF"
+        sel_fg = "#FFFFFF" if theme.name == "dark" else "#0F172A"
         ok = "#B4FF39" if theme.name == "dark" else "#2E7D00"  # lime is unreadable on white
         err = "#FF5C5C"
         self._icon_colors = {"fg": text2, "on": accent, "rec": err}
 
         self.setStyleSheet(f"""
+            QWidget {{ selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
             QMainWindow, QWidget#page {{ background: {bg0}; color: {text1}; font-family: {ui_font}; font-size: 14px; }}
 
             /* Диалоги: окна инструментов наследуют этот стиль, но не фон окна — без этого
                светлые кнопки тёмной темы терялись на светлом системном фоне */
             QDialog {{ background: {bg0}; color: {text1}; font-family: {ui_font}; }}
             QDialog QLabel, QDialog QCheckBox, QDialog QRadioButton, QDialog QGroupBox {{ color: {text1}; }}
-            QDialog QPlainTextEdit, QDialog QListWidget, QDialog QTableWidget, QDialog QTreeWidget {{ background: {bg1}; color: {text1}; border: 1px solid {border}; border-radius: 6px; selection-background-color: {accent}; }}
+            QDialog QPlainTextEdit, QDialog QListWidget, QDialog QTableWidget, QDialog QTreeWidget {{ background: {bg1}; color: {text1}; border: 1px solid {border}; border-radius: 6px; selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
             QDialog QScrollArea, QDialog QScrollArea > QWidget > QWidget {{ background: transparent; }}
             QDialog QTabWidget::pane {{ border: 1px solid {border}; background: {bg0}; }}
             QDialog QTabBar::tab {{ background: {bg2}; color: {text2}; padding: 6px 14px; border: 1px solid {border}; }}
@@ -6612,10 +6617,10 @@ class FluxionWindow(QMainWindow):
             QLabel#pageTitle {{ color: {text1}; font-size: 20px; font-weight: 600; }}
 
             /* Инпуты и контролы */
-            QComboBox, QSpinBox, QLineEdit {{ background: {bg2}; color: {text1}; border: 1px solid {border}; border-radius: 6px; padding: 6px 10px; font-family: {ui_font}; selection-background-color: {accent}; }}
+            QComboBox, QSpinBox, QLineEdit {{ background: {bg2}; color: {text1}; border: 1px solid {border}; border-radius: 6px; padding: 6px 10px; font-family: {ui_font}; selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
             QComboBox:focus, QSpinBox:focus, QLineEdit:focus {{ border-color: {accent}; }}
             QComboBox:disabled {{ color: {text2}; }}
-            QComboBox QAbstractItemView {{ background: {bg1}; color: {text1}; border: 1px solid {border}; selection-background-color: {accent}; }}
+            QComboBox QAbstractItemView {{ background: {bg1}; color: {text1}; border: 1px solid {border}; selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
 
             /* Кнопки */
             QPushButton {{ border: none; border-radius: 6px; padding: 8px 14px; color: {text1}; background: transparent; }}
@@ -6637,7 +6642,7 @@ class FluxionWindow(QMainWindow):
             QTextBrowser#messages pre {{ background: {bg2}; border-radius: 6px; padding: 10px; font-family: {mono_font}; font-size: 13px; }}
             QFrame#composer {{ background: {bg1}; border: 1px solid {border}; border-radius: 6px; }}
             QFrame#composer QLineEdit {{ background: transparent; border: none; padding: 6px; }}
-            QFrame#composer QPlainTextEdit {{ background: transparent; color: {text1}; border: none; padding: 2px 4px; font-family: {ui_font}; selection-background-color: {accent}; }}
+            QFrame#composer QPlainTextEdit {{ background: transparent; color: {text1}; border: none; padding: 2px 4px; font-family: {ui_font}; selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
             QToolButton#composerIcon {{ background: transparent; border: none; border-radius: 6px; padding: 5px; }}
             QToolButton#composerIcon:hover {{ background: {bg2}; }}
             QToolButton#composerIcon[recording="true"] {{ background: {bg2}; border: 1px solid {err}; }}
@@ -6719,7 +6724,7 @@ class FluxionWindow(QMainWindow):
             /* Браузер-панель */
             QWidget#webPanel {{ background: {bg1}; border: 1px solid {border}; border-radius: 6px; }}
             QLabel#webPanelHeader {{ color: {text2}; }}
-            QLineEdit#webAddress {{ background: {bg2}; color: {text1}; border: 1px solid {border}; border-radius: 6px; padding: 6px 10px; selection-background-color: {accent}; }}
+            QLineEdit#webAddress {{ background: {bg2}; color: {text1}; border: 1px solid {border}; border-radius: 6px; padding: 6px 10px; selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
             QPushButton#webNavButton {{ background: {bg2}; color: {text1}; border: 1px solid {border}; border-radius: 6px; padding: 6px 10px; text-align: center; min-width: 24px; }}
             QPushButton#webNavButton:hover {{ border-color: {accent}; }}
             QSplitter::handle {{ background: {border}; width: 3px; }}
