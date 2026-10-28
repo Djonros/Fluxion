@@ -216,18 +216,24 @@ def test_theme_toggle_persists(qapp, tmp_path):
 
 
 class FakeAgent:
-    def __init__(self, steps, result, delay=0.0):
+    """*gate*: after the first step the agent waits for it — a test can press «Стоп»
+    between the steps however slow the machine is."""
+
+    def __init__(self, steps, result, delay=0.0, gate=None):
         self.steps = steps
         self.result = result
         self.delay = delay
+        self.gate = gate
         self.last_result = result
         self.task = None
 
     def run_iter(self, task, context=""):
         self.task = task
-        for step in self.steps:
+        for i, step in enumerate(self.steps):
             if self.delay:
                 time.sleep(self.delay)
+            if i and self.gate is not None:
+                self.gate.wait(10)
             yield step
         return self.result
 
@@ -248,11 +254,11 @@ def _agent_result(success=True, answer="Готово", iterations=2):
     return SimpleNamespace(success=success, final_answer=answer, iterations_used=iterations)
 
 
-def _agent_window(qapp, tmp_path, steps, result, delay=0.0):
+def _agent_window(qapp, tmp_path, steps, result, delay=0.0, gate=None):
     created = []
 
     def factory(task, allow_write, max_iter):
-        agent = FakeAgent(steps, result, delay=delay)
+        agent = FakeAgent(steps, result, delay=delay, gate=gate)
         agent.task = task
         agent.allow_write = allow_write
         agent.max_iter = max_iter
@@ -295,23 +301,27 @@ def test_agent_streams_steps(qapp, tmp_path, monkeypatch):
 
 
 def test_agent_stop_between_steps(qapp, tmp_path):
+    import threading
+
     steps = [
         _step(1, tool="read_file", args="a.py", observation="x"),
         _step(2, tool="read_file", args="b.py", observation="y"),
         _step(3, tool="finish", args="done"),
     ]
-    window, _ = _agent_window(qapp, tmp_path, steps, _agent_result(), delay=0.05)
+    gate = threading.Event()  # the agent holds after the first step until «Стоп» is pressed
+    window, _ = _agent_window(qapp, tmp_path, steps, _agent_result(), gate=gate)
     window.chat_agent_files.setChecked(True)
     window.prompt.setText("Задача")
     window.send_message()
 
-    deadline = time.time() + 5
+    deadline = time.time() + 10
     while "a.py" not in window.messages.toPlainText() and time.time() < deadline:
         qapp.processEvents()
         time.sleep(0.01)
 
     window.stop_generation()
-    _drain(qapp, window)
+    gate.set()
+    _drain(qapp, window, timeout=10)
 
     assert not window.generating
     text = window.messages.toPlainText()

@@ -302,7 +302,7 @@ class CalcDialog(QDialog):
             tab = CalcTab(kind, self)
             self.pages[kind] = tab
             self.tabs.addTab(tab, title)
-        self.tabs.currentChanged.connect(lambda _: self.update_buttons())
+        self.tabs.currentChanged.connect(self._on_tab_changed)  # a bound method: the tabs emit while closing
         box.addWidget(self.tabs)
         row = QHBoxLayout()
         from .manual import help_button
@@ -326,11 +326,16 @@ class CalcDialog(QDialog):
                 self.pages[kind].run()
         self.update_buttons()
 
+    def _on_tab_changed(self, _index: int) -> None:
+        self.update_buttons()
+
     @property
     def current(self) -> CalcTab:
         return self.tabs.currentWidget()
 
     def update_buttons(self) -> None:
+        if not hasattr(self, "excel") or self.current is None:   # while the window is built or closed
+            return
         ready = self.current.result is not None
         self.excel.setEnabled(ready)
         self.pdf.setEnabled(ready)

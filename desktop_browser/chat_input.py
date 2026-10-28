@@ -27,7 +27,9 @@ class ChatInput(QPlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.WidgetWidth)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.document().documentLayout().documentSizeChanged.connect(lambda _size: self._fit())
+        # a bound method, not a lambda: Qt drops the connection with the widget, while a lambda
+        # would be called by a document still emitting during teardown, on a deleted widget
+        self.document().documentLayout().documentSizeChanged.connect(self._on_document_size)
         self._fit()
 
     # ── the QLineEdit methods the window uses ─────────────────────────────
@@ -55,6 +57,9 @@ class ChatInput(QPlainTextEdit):
         super().keyPressEvent(event)
 
     # ── height: one line empty, up to MAX_LINES, then a scroll bar ────────
+
+    def _on_document_size(self, _size) -> None:
+        self._fit()
 
     def _line_height(self) -> int:
         return self.fontMetrics().lineSpacing()

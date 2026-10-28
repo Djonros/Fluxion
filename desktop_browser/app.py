@@ -6506,6 +6506,13 @@ class FluxionWindow(QMainWindow):
             self.agent_worker.wait(2000)
         if self.index_worker is not None and self.indexing:
             self.index_worker.wait(5000)
+        for name in ("calc_worker", "cad_worker"):   # «/расчёт» and «/компас»: the model may still be reading
+            worker = getattr(self, name, None)
+            if worker is not None:
+                try:
+                    worker.wait(5000)
+                except RuntimeError:   # already deleted by deleteLater
+                    pass
         if getattr(self, "_update_worker", None) is not None:
             self._update_worker.wait(5000)
         if getattr(self, "_model_download_worker", None) is not None:
