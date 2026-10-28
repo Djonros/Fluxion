@@ -50,7 +50,16 @@ from . import APP_VERSION, SITE_URL
 from .banner import BrandBanner
 from .i18n import LANGUAGES, SETTING_KEY as LANGUAGE_SETTING, language, load_catalog, tr
 from .browser import create_browser_panel
-from .memory import delete_session, load_sessions, save_session, session_title
+from .memory import (
+    clear_sessions,
+    day_group,
+    delete_sessions,
+    load_sessions,
+    rename_session,
+    save_session,
+    search_sessions,
+    session_title,
+)
 from .runtime import TEMP_RUN_WARNING, is_temp_run
 from .training import TrainingError, TrainingParams, run_pipeline
 
@@ -1846,6 +1855,7 @@ class FluxionWindow(QMainWindow):
         self._think_timer.timeout.connect(self._on_think_tick)
         self._sessions: list[dict] = []
         self._session_id: str | None = None
+        self._saved_state: tuple | None = None  # the open chat as last saved or loaded
         self.worker: ChatWorker | None = None
         self.status_worker: StatusWorker | None = None
         self.agent_worker: AgentWorker | None = None
@@ -1918,68 +1928,322 @@ class FluxionWindow(QMainWindow):
     def _restore_memory(self) -> None:
         self._sessions = load_sessions()
         if self._sessions:
-            self._load_session(self._sessions[-1])
+            self._load_session(self._sessions[-1], restore=False)
         self._refresh_chat_selector()
 
-    def _load_session(self, session: dict) -> None:
+    def _load_session(self, session: dict, restore: bool = True) -> None:
+        """Show a saved chat; it goes on from where it stopped.
+
+        With *restore* the chips, the model and the project folder of the chat
+        come back too (a click in the history; not at start, when the window
+        keeps what was chosen last)."""
         self._session_id = session["id"]
         self.history = [dict(m) for m in session["messages"]]
-        self._messages = [
+        view = session.get("view")
+        self._messages = [dict(m) for m in view] if view else [
             {"role": m["role"], "text": m["content"], "meta": ""} for m in self.history
         ]
+        self._plan_entry = None
+        self._saved_state = self._chat_state()
         self._render_messages()
+        if restore:
+            mode = session.get("mode") or {}
+            if hasattr(self, "chat_agent_files"):
+                # without the engine the chip would only say «Движок не подключён» into this chat
+                self.chat_agent_files.setChecked(bool(mode.get("agent_files")) and self.agent_factory is not None)
+                self.chat_plan.setChecked(bool(mode.get("plan")))
+            self._restore_chat_model(session.get("model") or "")
+            self._restore_chat_project(session.get("project") or "")
+
+    def _chat_model(self) -> str:
+        """The model of the chat: the GGUF file of the built-in engine or the model name."""
+        if self.settings is None:
+            return ""
+        if self._is_embedded_backend():
+            return str(getattr(self.settings, "gguf_path", "") or "")
+        return str(getattr(self.settings, "model", "") or "")
+
+    def _restore_chat_model(self, model: str) -> None:
+        if not model or model == self._chat_model() or not hasattr(self, "model_combo"):
+            return
+        combo = self.model_combo
+        for i in range(combo.count()):
+            data = str(combo.itemData(i) or "")
+            if combo.itemText(i) == model or (data and self._same_path(data, model)):
+                combo.setCurrentIndex(i)
+                self._on_model_selected(combo.itemText(i))
+                return
+        self.statusBar().showMessage(tr("Модели этого чата нет в списке: {model}", model=Path(model).name), 6000)
+
+    def _chat_project(self) -> str:
+        if self._project_forgotten() or not hasattr(self, "project_path"):
+            return ""
+        return self.project_path.text().strip()
+
+    def _restore_chat_project(self, folder: str) -> None:
+        """The chat was held in another project folder: offer to open it again."""
+        if not folder or not hasattr(self, "project_path") or self._same_path(folder, self._chat_project()):
+            return
+        if not Path(folder).is_dir():
+            self.statusBar().showMessage(tr("Папки проекта этого чата больше нет: {path}", path=folder), 8000)
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("Папка проекта"),
+            tr("Этот чат вёлся в папке проекта:\n{path}\n\nОткрыть эту папку?", path=folder),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.project_path.setText(folder)
+        self.qsettings.setValue("project_path", folder)
+        self._set_project_forgotten(False)
+        self._refresh_git_button()
+
+    def _chat_view(self) -> list[dict]:
+        return [
+            {k: v for k, v in entry.items() if k in ("role", "text", "meta", "sources", "sources_title")}
+            for entry in self._messages
+            if not entry.get("thinking")
+        ]
+
+    def _chat_state(self) -> tuple:
+        return (len(self.history), self.history[-1:], len(self._messages),
+                self._messages[-1].get("text") if self._messages else None)
 
     def _save_memory(self) -> None:
+        """Save the open chat; a chat only looked at is not saved again.
+
+        So it keeps its place in the list and its folder, even when the offer
+        to open that folder was declined."""
         if not self.history:
             return
+        if self._session_id is not None and self._chat_state() == self._saved_state:
+            return
         self._session_id = self._session_id or uuid.uuid4().hex
+        view = self._chat_view()
         session = {
             "id": self._session_id,
             "title": session_title(self.history),
             "updated": time.time(),
             "messages": [dict(m) for m in self.history],
+            "view": view,
+            "mode": {
+                "agent_files": hasattr(self, "chat_agent_files") and self.chat_agent_files.isChecked(),
+                "plan": hasattr(self, "chat_plan") and self.chat_plan.isChecked(),
+            },
+            "model": self._chat_model(),
+            "project": self._chat_project(),
         }
         self._sessions = save_session(session)
+        self._saved_state = self._chat_state()
         self._refresh_chat_selector()
 
-    def _refresh_chat_selector(self) -> None:
-        selector = getattr(self, "chat_selector", None)
-        if selector is None:
-            return
-        selector.blockSignals(True)
-        selector.clear()
-        current_known = any(s["id"] == self._session_id for s in self._sessions)
-        if self._session_id is not None and not current_known:
-            selector.addItem(tr("Текущий чат"), None)
-            selector.setCurrentIndex(0)
-        for s in reversed(self._sessions):
-            selector.addItem(s["title"], s["id"])
-            if s["id"] == self._session_id:
-                selector.setCurrentIndex(selector.count() - 1)
-        selector.blockSignals(False)
+    # ── chat history (sidebar) ───────────────────────────────────────────
 
-    def _on_chat_selected(self, index: int) -> None:
-        if self.generating or self.agent_running:
-            self._refresh_chat_selector()
+    def _history_panel(self) -> QWidget:
+        """Под «Чат» и «Проект»: поиск, «+ Новый чат» и список прошлых чатов."""
+        from PySide6.QtWidgets import QAbstractItemView
+
+        panel = QWidget()
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(0, 12, 0, 0)
+        box.setSpacing(6)
+        head = QHBoxLayout()
+        label = QLabel(tr("История"))
+        label.setObjectName("historyTitle")
+        head.addWidget(label)
+        head.addStretch()
+        new_button = QToolButton()
+        new_button.setText("+")
+        new_button.setObjectName("iconButton")
+        new_button.setToolTip(tr("Новый чат (Ctrl+N)"))
+        new_button.clicked.connect(self.new_chat)
+        head.addWidget(new_button)
+        box.addLayout(head)
+        self.history_search = QLineEdit()
+        self.history_search.setPlaceholderText(tr("Поиск по чатам"))
+        self.history_search.setClearButtonEnabled(True)
+        self.history_search.textChanged.connect(lambda _text: self._refresh_chat_selector())
+        box.addWidget(self.history_search)
+        self.history_list = QListWidget()
+        self.history_list.setObjectName("historyList")
+        self.history_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.history_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.history_list.setTextElideMode(Qt.ElideRight)
+        self.history_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.history_list.customContextMenuRequested.connect(self._history_menu)
+        self.history_list.itemClicked.connect(self._on_history_clicked)
+        self.history_list.itemDoubleClicked.connect(lambda item: self._rename_chat(item.data(Qt.UserRole)))
+        delete_key = QShortcut(QKeySequence.Delete, self.history_list)
+        delete_key.setContext(Qt.WidgetShortcut)
+        delete_key.activated.connect(self._delete_selected_chats)
+        box.addWidget(self.history_list, 1)
+        return panel
+
+    def _refresh_chat_selector(self) -> None:
+        """Fill the history list: the newest first, under «Сегодня / Вчера / Раньше»."""
+        listing = getattr(self, "history_list", None)
+        if listing is None:
             return
-        session_id = self.chat_selector.itemData(index)
-        if session_id is None or session_id == self._session_id:
+        query = self.history_search.text() if hasattr(self, "history_search") else ""
+        sessions = search_sessions(self._sessions, query)
+        headings = {"today": tr("Сегодня"), "yesterday": tr("Вчера"), "earlier": tr("Раньше")}
+        listing.blockSignals(True)
+        listing.clear()
+        group = None
+        for s in reversed(sessions):
+            day = day_group(s["updated"])
+            if day != group:
+                group = day
+                heading = QListWidgetItem(headings[day])
+                heading.setFlags(Qt.NoItemFlags)
+                font = heading.font()
+                font.setBold(True)
+                heading.setFont(font)
+                listing.addItem(heading)
+            item = QListWidgetItem(s["title"])
+            item.setData(Qt.UserRole, s["id"])
+            item.setToolTip(s["title"])
+            listing.addItem(item)
+            if s["id"] == self._session_id:
+                item.setSelected(True)
+                listing.setCurrentItem(item)
+        if not sessions:
+            empty = QListWidgetItem(tr("Ничего не найдено") if query.strip() else tr("Пока нет чатов"))
+            empty.setFlags(Qt.NoItemFlags)
+            listing.addItem(empty)
+        listing.blockSignals(False)
+
+    def _selected_chat_ids(self) -> list[str]:
+        listing = getattr(self, "history_list", None)
+        if listing is None:
+            return []
+        return [i.data(Qt.UserRole) for i in listing.selectedItems() if i.data(Qt.UserRole)]
+
+    def _on_history_clicked(self, item: QListWidgetItem) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.keyboardModifiers() & (Qt.ControlModifier | Qt.ShiftModifier):
+            return  # picking several chats to delete, not opening one
+        self._open_chat(item.data(Qt.UserRole))
+
+    def _open_chat(self, session_id: str | None) -> None:
+        if not session_id or session_id == self._session_id:
+            self.pages.setCurrentIndex(PAGE_CHAT)
+            return
+        if self.generating or self.agent_running:
+            self.statusBar().showMessage(tr("Дождитесь конца ответа, потом откройте другой чат"), 5000)
+            self._refresh_chat_selector()
             return
         self._save_memory()
         session = next((s for s in self._sessions if s["id"] == session_id), None)
-        if session:
-            self._load_session(session)
-            self._refresh_chat_selector()
-
-    def _new_topic(self) -> None:
-        if self.generating or self.agent_running:
+        if session is None:
             return
-        self._save_memory()
+        self._stop_thinking()
+        self._cad_conversation = None
+        self._calc_conversation = None
+        self._load_session(session)
+        self._refresh_chat_selector()
+        self.pages.setCurrentIndex(PAGE_CHAT)
+
+    def _on_chat_selected(self, index: int) -> None:
+        item = self.history_list.item(index) if hasattr(self, "history_list") else None
+        if item is not None:
+            self._open_chat(item.data(Qt.UserRole))
+
+    def _history_menu(self, pos: QPoint) -> None:
+        item = self.history_list.itemAt(pos)
+        session_id = item.data(Qt.UserRole) if item is not None else None
+        if session_id and not item.isSelected():
+            self.history_list.clearSelection()
+            item.setSelected(True)
+        ids = self._selected_chat_ids()
+        menu = QMenu(self.history_list)
+        if session_id:
+            menu.addAction(tr("Открыть"), lambda: self._open_chat(session_id)).setEnabled(len(ids) == 1)
+            menu.addAction(tr("Переименовать…"), lambda: self._rename_chat(session_id)).setEnabled(len(ids) == 1)
+            menu.addSeparator()
+            label = tr("Удалить") if len(ids) == 1 else tr("Удалить выбранные ({n})", n=len(ids))
+            menu.addAction(label, self._delete_selected_chats)
+            menu.addSeparator()
+        menu.addAction(tr("Очистить всю историю…"), self._clear_history).setEnabled(bool(self._sessions))
+        menu.exec(self.history_list.viewport().mapToGlobal(pos))
+
+    def _rename_chat(self, session_id: str | None) -> None:
+        session = next((s for s in self._sessions if s["id"] == session_id), None)
+        if session is None:
+            return
+        title, ok = QInputDialog.getText(
+            self, tr("Переименовать чат"),
+            tr("Название (пусто — по первому вопросу):"), text=session["title"],
+        )
+        if not ok:
+            return
+        self._sessions = rename_session(session_id, title)
+        self._refresh_chat_selector()
+
+    def _delete_chats(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        if self._session_id in ids and (self.generating or self.agent_running):
+            self.statusBar().showMessage(tr("Дождитесь конца ответа, потом удалите этот чат"), 5000)
+            return
+        if len(ids) == 1:
+            title = next((s["title"] for s in self._sessions if s["id"] == ids[0]), "")
+            question = tr("Удалить чат «{title}» из истории?", title=title)
+        else:
+            question = tr("Удалить из истории выбранные чаты: {n}?", n=len(ids))
+        answer = QMessageBox.question(self, tr("Удалить чат"), question, QMessageBox.Yes | QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        self._sessions = delete_sessions(ids)
+        if self._session_id in ids:
+            self._start_empty_chat()
+        self._refresh_chat_selector()
+
+    def _delete_selected_chats(self) -> None:
+        self._delete_chats(self._selected_chat_ids())
+
+    def _delete_current_chat(self) -> None:
+        if self._session_id is not None:
+            self._delete_chats([self._session_id])
+
+    def _clear_history(self) -> None:
+        """Chat menu ⋮ and the history list: every saved chat is deleted from disk."""
+        if not self._sessions and not self.history:
+            return
+        if self.generating or self.agent_running:
+            self.statusBar().showMessage(tr("Дождитесь конца ответа, потом очистите историю"), 5000)
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("Очистить всю историю"),
+            tr("Удалить все чаты ({n}) из истории? Это нельзя отменить. Проект и его индекс не затрагиваются.",
+               n=len(self._sessions)),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._sessions = clear_sessions()
+        self._start_empty_chat()
+        self._refresh_chat_selector()
+        self.statusBar().showMessage(tr("История чатов очищена"), 5000)
+
+    def _start_empty_chat(self) -> None:
         self._session_id = None
         self.history = []
         self._messages = []
+        self._plan_entry = None
+        self._cad_conversation = None
+        self._calc_conversation = None
+        self._stop_thinking()
         self._render_messages()
-        self._refresh_chat_selector()
+
+    def _new_topic(self) -> None:
+        self.new_chat()
 
     def _export_current_chat(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -2008,31 +2272,11 @@ class FluxionWindow(QMainWindow):
             return
         self._append_banner(tr("Чат экспортирован: {path}", path=path))
 
-    def _delete_current_chat(self) -> None:
-        if self._session_id is None:
-            return
-        answer = QMessageBox.question(
-            self,
-            tr("Удалить чат"),
-            tr("Удалить текущий чат из истории?"),
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if answer != QMessageBox.Yes:
-            return
-        self._sessions = delete_session(self._session_id)
-        self._session_id = None
-        self.history = []
-        self._messages = []
-        self._render_messages()
-        self._refresh_chat_selector()
-
     def new_chat(self) -> None:
+        if self.generating or self.agent_running:
+            return
         self._save_memory()
-        self._session_id = None
-        self.history = []
-        self._messages = []
-        self._stop_thinking()
-        self._render_messages()
+        self._start_empty_chat()
         self._refresh_chat_selector()
 
     def _project_forgotten(self) -> bool:
@@ -2179,7 +2423,7 @@ class FluxionWindow(QMainWindow):
             if index == PAGE_CHAT:
                 button.setChecked(True)
 
-        sidebar_layout.addStretch()
+        sidebar_layout.addWidget(self._history_panel(), 1)
 
         self.pages.addWidget(self._chat_page())
         self.pages.addWidget(self._project_page())
@@ -2518,6 +2762,8 @@ class FluxionWindow(QMainWindow):
         act_new.triggered.connect(self.new_chat)
         act_export = kebab_menu.addAction(tr("Экспорт чата в .md…"))
         act_export.triggered.connect(self.export_chat_md)
+        act_clear = kebab_menu.addAction(tr("Очистить всю историю…"))
+        act_clear.triggered.connect(self._clear_history)
         kebab_menu.addSeparator()
         act_forget = kebab_menu.addAction(tr("Забыть проект"))
         act_forget.setToolTip(tr("Новый чат без проекта: модель не ищет ответы в файлах проекта"))
@@ -6356,6 +6602,11 @@ class FluxionWindow(QMainWindow):
             QPushButton[nav="true"] {{ border: none; border-radius: 6px; padding: 8px 12px; text-align: left; background: transparent; color: {text1}; }}
             QPushButton[nav="true"]:hover {{ background: {bg2}; }}
             QPushButton[nav="true"]:checked {{ background: {bg2}; color: {accent}; font-weight: 600; border-left: 2px solid {accent}; }}
+            QLabel#historyTitle {{ color: {text2}; font-size: 12px; font-weight: 600; }}
+            QListWidget#historyList {{ background: transparent; color: {text1}; border: none; outline: none; }}
+            QListWidget#historyList::item {{ padding: 5px 6px; border-radius: 6px; }}
+            QListWidget#historyList::item:hover {{ background: {bg2}; }}
+            QListWidget#historyList::item:selected {{ background: {bg2}; color: {accent}; }}
 
             /* Заголовки */
             QLabel#pageTitle {{ color: {text1}; font-size: 20px; font-weight: 600; }}
