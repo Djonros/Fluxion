@@ -5,10 +5,16 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.22.0] — 2026-10-28
 
 ### Added
 - Russian API providers in «Облачная модель по API» (Pro): ProxyAPI, VseGPT, AITunnel, BotHub, GigaChat (Сбер), YandexGPT (Yandex Cloud) and Cloud.ru Foundation Models — paid in roubles, no VPN. Picking a provider fills the address and an example model and shows where to get the key. GigaChat's authorization key is exchanged for its 30-minute access token and renewed by itself (`core/gigachat.py`); its requests trust the system certificates («Сертификаты Минцифры») besides certifi's, `FLUXION_GIGACHAT_SCOPE` sets a corporate scope. A page «Облачная модель по API» in the Инструкция.
+
+### Fixed
+- The chat input and the engineering calculator connected Qt signals to lambdas; a signal emitted while the window was being closed called them on a deleted widget and could crash the program at exit. They are bound methods now, and Qt drops the connection with the widget.
+
+### Changed
+- The site offers the Fluxion Mobile download (the newest `mobile-v*` release) next to the Windows build.
 
 ## [0.21.1] — 2026-10-27
 
