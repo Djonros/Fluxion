@@ -3566,7 +3566,8 @@ class FluxionWindow(QMainWindow):
         title = QLabel(
             tr('<b>Облачная модель по API</b> <span style="color:#8B4BFF; font-weight:600;">PRO</span>'
             '<br><span style="color:#94A3B8;">Чат и агент работают через модель провайдера: '
-            "OpenRouter, Groq, Together, OpenAI или любой OpenAI-совместимый адрес (vLLM, LM Studio). "
+            "OpenRouter, Groq, Together, OpenAI, российские ProxyAPI, VseGPT, AITunnel, BotHub, "
+            "GigaChat, YandexGPT, Cloud.ru или любой OpenAI-совместимый адрес (vLLM, LM Studio). "
             "Вопросы и фрагменты кода из них уходят провайдеру, токены оплачиваются у него.</span>")
         )
         title.setTextFormat(Qt.RichText)
@@ -3646,6 +3647,7 @@ class FluxionWindow(QMainWindow):
         provider = provider_by_key(str(self.cloud_provider.currentData() or ""))
         if provider.base_url:
             self.cloud_base_url.setText(provider.base_url)
+        self._refresh_cloud_card(tr(provider.hint) if provider.hint else "")
         # A model id of one provider rarely exists at another: suggest one.
         self.cloud_model.clear()
         if provider.example_model:

@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .config import GenerationSettings, Settings
+from .gigachat import auth_headers, request_kwargs
 from .inference import ModelBackend
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,8 @@ class APIBackend(ModelBackend):
         )
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        # GigaChat: the key is exchanged for a 30-minute token (core/gigachat.py)
+        return {**auth_headers(self.base_url, self.api_key), "Content-Type": "application/json"}
 
     def _payload(
         self,
@@ -100,6 +99,7 @@ class APIBackend(ModelBackend):
             json=payload,
             headers=self._headers(),
             timeout=self.timeout,
+            **request_kwargs(self.base_url),
         )
         if r.status_code != 200:
             raise RuntimeError(f"API request failed ({r.status_code}): {r.text[:300]}")
@@ -117,6 +117,7 @@ class APIBackend(ModelBackend):
             json=payload,
             headers=self._headers(),
             timeout=None,
+            **request_kwargs(self.base_url),
         ) as r:
             if r.status_code != 200:
                 raise RuntimeError(f"API stream failed ({r.status_code}): {r.text[:300]}")

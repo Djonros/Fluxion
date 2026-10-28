@@ -226,3 +226,85 @@ def test_cloud_section_saves_and_switches_engine(make_window, monkeypatch):
     window._cloud_save()
     assert type(window.backend).__name__ != "APIBackend"
     assert "FLUXION_API_KEY" not in os.environ
+
+
+# ── Russian providers and GigaChat ───────────────────────────────────────
+
+def test_russian_providers_are_in_the_list():
+    keys = [p.key for p in cloud_api.PROVIDERS]
+    for key in ("proxyapi", "vsegpt", "aitunnel", "bothub", "gigachat", "yandex", "cloudru"):
+        assert key in keys
+        provider = cloud_api.provider_by_key(key)
+        assert provider.base_url.startswith("https://") and provider.example_model and provider.hint
+        assert cloud_api.provider_for_url(provider.base_url + "/") is provider
+    assert keys[-1] == "custom" and len(keys) == len(set(keys))
+
+
+@pytest.fixture()
+def gigachat():
+    from core import gigachat as module
+
+    module.forget_tokens()
+    yield module
+    module.forget_tokens()
+
+
+def test_gigachat_key_is_exchanged_for_a_token_once(monkeypatch, gigachat):
+    import time
+
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url == gigachat.OAUTH_URL:
+            return _Resp(200, {"access_token": "tok-1", "expires_at": int((time.time() + 1800) * 1000)})
+        return _Resp(200, {"choices": [{"message": {"content": "p"}}]})
+
+    monkeypatch.setattr(gigachat.httpx, "post", fake_post)
+    monkeypatch.setattr(cloud_api.httpx, "post", fake_post)
+    cfg = _cfg(provider="gigachat", base_url="https://api.giga.chat/v1", api_key="QmFzZTY0a2V5", model="GigaChat-2")
+    assert cloud_api.check_connection(cfg)[0]
+    assert cloud_api.check_connection(cfg)[0]
+    oauth = [kw for url, kw in calls if url == gigachat.OAUTH_URL]
+    assert len(oauth) == 1   # the token is kept for its 30 minutes
+    assert oauth[0]["headers"]["Authorization"] == "Basic QmFzZTY0a2V5"
+    assert oauth[0]["data"] == {"scope": "GIGACHAT_API_PERS"} and oauth[0]["headers"]["RqUID"]
+    chat = [kw for url, kw in calls if url != gigachat.OAUTH_URL]
+    assert chat[0]["headers"]["Authorization"] == "Bearer tok-1" and "verify" in chat[0]
+
+
+def test_gigachat_token_is_renewed_when_it_expires(monkeypatch, gigachat):
+    import time
+
+    tokens = iter(["old", "new"])
+    monkeypatch.setattr(
+        gigachat.httpx, "post",
+        lambda url, **kw: _Resp(200, {"access_token": next(tokens), "expires_at": int(time.time() * 1000)}),
+    )
+    assert gigachat.access_token("k") == "old"
+    assert gigachat.access_token("k") == "new"
+
+
+def test_gigachat_refused_key_is_explained(monkeypatch, gigachat):
+    monkeypatch.setattr(gigachat.httpx, "post", lambda url, **kw: _Resp(401, text="bad credentials"))
+    cfg = _cfg(base_url="https://api.giga.chat/v1", model="GigaChat-2")
+    ok, message = cloud_api.check_connection(cfg)
+    assert not ok and "ключ авторизации" in message and "401" in message
+    with pytest.raises(RuntimeError, match="GigaChat"):
+        cloud_api.list_models(cfg)
+
+
+def test_other_providers_send_the_key_as_is():
+    from core.gigachat import auth_headers, is_gigachat, request_kwargs
+
+    assert auth_headers("https://api.proxyapi.ru/v1", "sk-1") == {"Authorization": "Bearer sk-1"}
+    assert request_kwargs("https://api.vsegpt.ru/v1") == {}
+    assert is_gigachat("https://gigachat.devices.sberbank.ru/api/v1") and not is_gigachat("https://evilgiga.chat/v1")
+
+
+def test_provider_hint_is_shown(make_window):
+    window = make_window()
+    window.cloud_provider.setCurrentIndex(window.cloud_provider.findData("yandex"))
+    assert window.cloud_base_url.text() == "https://llm.api.cloud.yandex.net/v1"
+    assert window.cloud_model.currentText() == "gpt://<folder_id>/yandexgpt/latest"
+    assert "folder_id" in window.cloud_status.text()

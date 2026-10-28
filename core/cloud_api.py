@@ -16,6 +16,8 @@ from pathlib import Path
 
 import httpx
 
+from .gigachat import GigaChatAuthError, auth_headers, request_kwargs
+
 
 @dataclass(frozen=True)
 class Provider:
@@ -23,6 +25,7 @@ class Provider:
     name: str
     base_url: str
     example_model: str
+    hint: str = ""  # where to get the key and what the model id looks like
 
 
 PROVIDERS: tuple[Provider, ...] = (
@@ -30,6 +33,25 @@ PROVIDERS: tuple[Provider, ...] = (
     Provider("groq", "Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
     Provider("together", "Together AI", "https://api.together.xyz/v1", "Qwen/Qwen2.5-Coder-32B-Instruct"),
     Provider("openai", "OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+    # Russian routers and clouds: paid in roubles by a Russian card, work without a VPN.
+    Provider("proxyapi", "ProxyAPI (РФ)", "https://api.proxyapi.ru/v1", "openai/gpt-4o-mini",
+             "Ключ — в console.proxyapi.ru. Модели пишутся с вендором: openai/…, anthropic/…, google/…"),
+    Provider("vsegpt", "VseGPT (РФ)", "https://api.vsegpt.ru/v1", "openai/gpt-4o-mini",
+             "Ключ — на vsegpt.ru в разделе API. Модели пишутся с вендором: openai/…, anthropic/…"),
+    Provider("aitunnel", "AITunnel (РФ)", "https://api.aitunnel.ru/v1", "gpt-4o-mini",
+             "Ключ — в личном кабинете aitunnel.ru. Полный список — кнопка «Список моделей»."),
+    Provider("bothub", "BotHub (РФ)", "https://bothub.chat/api/v2/openai/v1", "gpt-4o-mini",
+             "Ключ — на bothub.chat в разделе для разработчиков."),
+    Provider("gigachat", "GigaChat (Сбер)", "https://api.giga.chat/v1", "GigaChat-2",
+             "Ключ авторизации — на developers.sber.ru (GigaChat API); токен Fluxion получает сам. "
+             "Нужны «Сертификаты Минцифры» (gosuslugi.ru/crt). Модели: GigaChat-2, GigaChat-2-Pro, GigaChat-2-Max."),
+    Provider("yandex", "YandexGPT (Yandex Cloud)", "https://llm.api.cloud.yandex.net/v1",
+             "gpt://<folder_id>/yandexgpt/latest",
+             "API-ключ сервисного аккаунта с ролью ai.languageModels.user. "
+             "В модели замените <folder_id> на ID каталога Yandex Cloud."),
+    Provider("cloudru", "Cloud.ru Foundation Models", "https://foundation-models.api.cloud.ru/v1",
+             "ai-sage/GigaChat3-10B-A1.8B",
+             "API-ключ — в консоли Cloud.ru (Evolution → Foundation Models). Есть Qwen, GigaChat, DeepSeek."),
     Provider("custom", "Свой адрес (vLLM, LM Studio…)", "", ""),
 )
 
@@ -162,9 +184,12 @@ def check_connection(cfg: CloudConfig, timeout: float = 15.0) -> tuple[bool, str
                 "messages": [{"role": "user", "content": "ping"}],
                 "max_tokens": 1,
             },
-            headers={"Authorization": f"Bearer {cfg.api_key.strip()}"},
+            headers=auth_headers(cfg.base_url, cfg.api_key),
             timeout=timeout,
+            **request_kwargs(cfg.base_url),
         )
+    except GigaChatAuthError as exc:
+        return False, str(exc)
     except httpx.HTTPError as exc:
         return False, f"Нет связи с {cfg.base_url}: {exc}"
     if r.status_code == 200:
@@ -185,9 +210,12 @@ def list_models(cfg: CloudConfig, timeout: float = 15.0) -> list[str]:
     """Model ids from the provider's /models (raises RuntimeError on failure)."""
     if not cfg.base_url.strip():
         raise RuntimeError("Укажите адрес API.")
-    headers = {"Authorization": f"Bearer {cfg.api_key.strip()}"} if cfg.api_key.strip() else {}
     try:
-        r = httpx.get(cfg.base_url.strip().rstrip("/") + "/models", headers=headers, timeout=timeout)
+        headers = auth_headers(cfg.base_url, cfg.api_key)
+        r = httpx.get(cfg.base_url.strip().rstrip("/") + "/models", headers=headers, timeout=timeout,
+                      **request_kwargs(cfg.base_url))
+    except GigaChatAuthError as exc:
+        raise RuntimeError(str(exc)) from exc
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Нет связи с {cfg.base_url}: {exc}") from exc
     if r.status_code != 200:
