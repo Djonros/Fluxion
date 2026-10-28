@@ -5,6 +5,21 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] — 2026-10-28
+
+### Added
+- Chat history in the sidebar under «Чат»/«Проект» (`desktop_browser/memory.py`): the saved chats under «Сегодня / Вчера / Раньше», a search over names and messages, «+» for a new chat. A click opens a chat to go on with it — its messages with their sources, the chat chips, the model, and an offer to open its project folder. Rename by double click or the context menu (an empty name returns to the first question); delete one or several chats (Ctrl/Shift) with confirmation, Delete key; «Очистить всю историю…» in the list and in the chat menu ⋮. `chats.json` keeps the view, mode, model and folder of each chat, is written through a temporary file and holds up to 500 chats (was 50); the old format is read. A chat only looked at is not saved again, so it keeps its place and its folder. «Забыть проект» keeps the history. Translations for the 7 languages, a section in the Инструкция.
+- The documentation site has the «Инструкция» of the program: `scripts/mkdocs_manual.py` adds the pages of `desktop_browser/manual` while the site is built, in the same sections, so the site says what the program says.
+
+### Changed
+- New app icon: the starry infinity sign on a transparent background — the exe and the installer (`assets/icon.ico`, 16–256 px), the window, the favicons of the site and the docs, the VS Code extension; a new banner for the README, the docs and the site preview.
+- The documentation site looks like the website (dark night-sky theme by default, violet and cyan, Golos Text and Unbounded, the new logo) and is brought up to the program: quick start, installation, FAQ and troubleshooting describe the installer, the one-click update, the chat history and the data folders; developer pages are under «Для разработчиков».
+
+### Fixed
+- Selected rows, combo box items and selected text in the dark theme were drawn on cyan with white text (contrast about 1.3:1) — the materials catalog, the grades in the calculator, the lists and tables of the tools, the chat input. The selection is deep violet with white text (light theme: pale violet with dark text), whatever the Windows accent colour.
+- The default chat title was stored in a broken encoding («Р§Р°С‚»).
+- The banner and the button icons on the documentation home page showed as raw text; links to sections with Russian headings did not work.
+
 ## [0.22.0] — 2026-10-28
 
 ### Added
