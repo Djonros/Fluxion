@@ -1,6 +1,7 @@
 site_name: Fluxion
-site_description: Локальный AI-ассистент для вайб-кодинга на Python
+site_description: "Локальный AI-помощник для кода, текстов, документов и КОМПАС-3D — документация"
 site_author: Djonros
+site_url: https://djonros.github.io/Fluxion/docs/
 
 # Internal notes (test logs, roadmap, video script) are kept in the repo
 # but not published on the documentation site.
@@ -12,19 +13,25 @@ theme:
   language: ru
   logo: assets/images/logo.png
   favicon: assets/images/favicon.png
+  # dark first, as on the website; the colours are in assets/stylesheets/fluxion.css
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      toggle:
-        icon: material/brightness-7
-        name: Переключить на тёмную тему
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Переключить на светлую тему
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Переключить на тёмную тему
+  font:
+    text: Golos Text
+    code: Roboto Mono
   features:
     - navigation.tabs
     - navigation.sections
@@ -33,8 +40,15 @@ theme:
     - content.code.copy
     - content.tabs.link
 
+extra_css:
+  - assets/stylesheets/fluxion.css
+
 markdown_extensions:
   - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - admonition
   - pymdownx.details
   - pymdownx.superfences
@@ -45,26 +59,39 @@ markdown_extensions:
       alternate_style: true
   - toc:
       permalink: true
+      # anchors from Russian headings: #где-хранятся-данные, not #_1
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+
+# The «Инструкция» is filled from the program's manual (desktop_browser/manual)
+# by scripts/mkdocs_manual.py while the site is built.
+hooks:
+  - scripts/mkdocs_manual.py
 
 nav:
   - Главная: index.md
+  - ← На главную: https://djonros.github.io/Fluxion/
   - Установка: install.md
   - Быстрый старт: quick-start.md
-  - Конфигурация: configuration.md
-  - Руководства:
-      - Чат в приложении: guides/chat.md
+  - Инструкция: []
+  - Подробно:
       - Модели: guides/models.md
+      - Детали в КОМПАС-3D: guides/kompas.md
+      - Лицензия Pro: guides/licensing.md
+  - Помощь:
+      - FAQ: faq.md
+      - Решение проблем: troubleshooting.md
+      - Приватность: privacy.md
+      - Privacy (English): privacy-en.md
+  - Для разработчиков:
+      - Запуск из исходников: from-source.md
+      - Конфигурация: configuration.md
+      - API сервер: api.md
+      - Деплой (Docker): deployment.md
       - RAG по коду: guides/rag.md
       - ReAct-агент: guides/agent.md
       - Веб-поиск: guides/web-search.md
       - VS Code extension: guides/vscode.md
       - QLoRA-дообучение: guides/finetune.md
-      - Детали в КОМПАС-3D: guides/kompas.md
       - Eval (HumanEval / MBPP): guides/eval.md
-      - Лицензия Pro: guides/licensing.md
-  - API сервер: api.md
-  - Деплой (Docker): deployment.md
-  - Решение проблем: troubleshooting.md
-  - FAQ: faq.md
-  - Приватность: privacy.md
-  - Privacy (English): privacy-en.md

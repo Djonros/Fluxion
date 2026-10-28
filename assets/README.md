@@ -4,13 +4,13 @@
 
 - `logo.png` — вордмарк «F-L-U-X-I-O-N» с лентой-∞ вместо X
 - `icon.png` — знак бесконечности на звёздном фоне
-- `banner.png` — вордмарк, уменьшенный до 1000px (для README/docs)
+- `banner.png` — 1200×630: знак ∞ из `icon-mark.png` и «F-L-U-X-I-O-N» на фоне сайта #0B1620 (README, docs, og-image сайта)
 
 Производные:
 
 - `docs/assets/images/favicon.png` — 256×256 с прозрачным фоном (из `icon-mark.png`)
-- `docs/assets/images/logo.png` — 96×96, шапка docs-сайта
-- `docs/assets/images/banner.png` — 1000px, hero docs-сайта
+- `docs/assets/images/logo.png` — знак ∞ высотой 128 px (из `icon-mark.png`), шапка docs-сайта
+- `docs/assets/images/banner.png` — копия `banner.png`, hero docs-сайта
 - `extension/media/icon.png` — 256×256 с прозрачным фоном (из `icon-mark.png`), иконка VS Code extension
 - `extension/media/sidebar-icon.svg` — старая монохромная иконка сайдбара
 - `icon-mark.png` — звёздный знак ∞ на прозрачном фоне, исходник значка приложения

@@ -11,6 +11,8 @@ on:
       - "website/**"
       - "docs/**"
       - "mkdocs.yml"
+      - "desktop_browser/manual/**"   # the «Инструкция» of the docs (scripts/mkdocs_manual.py)
+      - "scripts/mkdocs_manual.py"
       - "presets/**"
       - "assets/**"
       - "core/model_manager.py"
