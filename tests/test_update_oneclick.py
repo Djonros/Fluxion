@@ -274,3 +274,40 @@ def test_failed_update_messages(window, monkeypatch):
     window._on_update_failed("checksum_mismatch")
     window._on_update_failed("network:timeout")
     assert len(texts) == 2 and "Контрольная сумма" in texts[0] and "timeout" in texts[1]
+
+
+def test_the_window_closes_for_the_installer_after_an_update_check(window, monkeypatch):
+    """0.22–0.23 crashed in closeEvent: the finished UpdateWorker was deleted (deleteLater) but
+    still waited on, so the window did not close for the installer."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtGui import QCloseEvent
+
+    monkeypatch.setattr(upd, "check_for_updates", lambda *a, **k: None, raising=False)
+    window._check_updates(auto=True)
+    worker = window._update_worker
+    worker.wait(10000)
+    QCoreApplication.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert window._update_worker is None
+    window.closeEvent(QCloseEvent())  # no RuntimeError
+
+    class Deleted:
+        def wait(self, ms):
+            raise RuntimeError("Internal C++ object (UpdateWorker) already deleted.")
+
+    window._update_worker = Deleted()
+    window.closeEvent(QCloseEvent())  # an already deleted worker is skipped
+
+
+def test_fluxion_waits_for_the_installer(monkeypatch):
+    """Started while FluxionSetup.exe copies its files (a shortcut mid-update), Fluxion loaded
+    half-copied PySide6 and crashed («shiboken6\libshiboken does not exist»): it waits now."""
+    import run_desktop_browser as launcher
+
+    states = iter([True, True, False])
+    slept = []
+    assert launcher.wait_for_setup(running=lambda: next(states), sleep=slept.append) is True
+    assert slept == [0.5, 0.5]
+    assert launcher.wait_for_setup(timeout=1, running=lambda: True, sleep=lambda s: None) is False
+    iss = (Path(__file__).resolve().parents[1] / "installer" / "fluxion.iss").read_text(encoding="utf-8")
+    assert f"SetupMutex={launcher.SETUP_MUTEX}," in iss

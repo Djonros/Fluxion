@@ -9,6 +9,8 @@
   material, zero mass, a sheet bent too tight or thicker than its material.
 - «Технологичность» (cad/dfma.py): the fasteners by type and size, hints to
   bring their range down, twin details. Advice: it does not hold the report up.
+- «Смета» (cad/estimate.py): the cost of the product by the norms and prices of
+  the plant (recommended ones until corrected).
 
 Quantities: identical components (same designation, name, material, mass and
 file) of one assembly are one line; the quantity on the product multiplies the
@@ -581,6 +583,12 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
     _paint_sheet(sheet, report, bold, head_fill)
     _work_sheet(sheet, report, bold, head_fill, section_fill)
     _dfma_sheet(sheet, report, bold, head_fill, wrap)
+    try:
+        from . import estimate
+
+        estimate.write_sheet(sheet, estimate.build(report), bold, head_fill, wrap)
+    except Exception as exc:  # unreadable norms must not stop the report
+        sheet("Смета", ["Смета не составлена"], [80]).append([str(exc)])
 
     ws = sheet("Предупреждения", ["Уровень", "Замечание", "Обозначение и наименование", "Что будет и что сделать",
                                    "Где", "Кол. на изделие", "Проверено", "Файл"], [12, 32, 46, 70, 40, 10, 11, 60])
@@ -780,6 +788,12 @@ def summary_text(report: Report, path: Path | None = None) -> str:
         for r in report.remarks:
             counts[r["problem"]] = counts.get(r["problem"], 0) + 1
         lines.append("Предупреждения: " + "; ".join(f"{k.lower()} — {v}" for k, v in counts.items()) + ".")
+    try:
+        from . import estimate
+
+        lines.append(estimate.summary_line(estimate.build(report)))
+    except Exception:  # unreadable norms must not stop the report
+        pass
     if report.fastener_rows or report.advice:
         sizes = len(report.fastener_rows)
         topics: OrderedDict[str, int] = OrderedDict()

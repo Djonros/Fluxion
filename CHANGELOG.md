@@ -5,6 +5,16 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- «Смета» of an assembly report (`cad/estimate.py`, Pro): metal by material × ₽/kg with the waste of its sortament, fasteners and bought units apiece by name (a fastener without a price by its mass), work by operation — sheet cutting per sheet detail, bending per bend of the build tree, welding per metre of seam brought to a 6 mm leg (the time grows as the square of the leg), painting per m², fitting per detail, assembly per component — × the rate, overhead and profit. A sheet «Смета» in the workbook (the batch size is an input cell: the totals follow) with «Не задано» for what has no price or norm, a line in the chat; an operation the report cannot measure says «нет данных» instead of a guess.
+- «Нормы и цены завода» (Инструменты, Pro; `desktop_browser/norms_dialog.py`): the norms the estimate is built on, kept in `%APPDATA%\Fluxion\plant_norms.json`. Fluxion starts from recommended ones (enlarged typical general machine-building time norms, average metal prices of 2026); every value can be corrected, a corrected one is highlighted, «Вернуть рекомендуемые» puts a row or everything back; export to Excel and import. The estimate says whether it is built on the recommended norms or the plant's. A page «Смета изделия и нормы завода» in the Инструкция.
+- «Сравнить версии сборки» (Инструменты, Pro; `cad/compare.py`): two versions of a product — assemblies read like the report, or snapshots of earlier reports (every assembly report now saves «… - снимок.json» next to its workbook) — and a workbook «… - изменения.xlsx»: the totals «было → стало» (mass, positions, welds, painting, hours, cost, metal by material, fasteners by size), every added, removed and changed position (quantity on the product, material, mass, section, designation, model file) and the bought ones on a sheet of their own; a line in the chat. Components are matched by designation without the change notice («792720.2801010 Изм2» is 792720.2801010), else by name and file. Checked on the 792720 trailer and its «Изм2».
+
+### Fixed
+- The one-click update: the window raised in `closeEvent` on an update worker already deleted (0.22–0.24) and did not close for the installer. Fluxion started while the installer copies its files (a shortcut, a second copy) loaded half-copied PySide6 and crashed («shiboken6\libshiboken does not exist»): the installer holds `SetupMutex`, and Fluxion waits for it, up to three minutes.
+
 ## [0.24.0] — 2026-10-31
 
 ### Added

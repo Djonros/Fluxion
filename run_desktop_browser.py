@@ -28,7 +28,53 @@ def _prepare_config() -> None:
             os.environ["AI_AGENT_CONFIG"] = bundled
 
 
+SETUP_MUTEX = "FluxionSetupRunning"  # SetupMutex of installer/fluxion.iss
+SETUP_WAIT_S = 180
+
+
+def setup_running() -> bool:
+    """FluxionSetup.exe is installing: its files may be half-copied."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        for name in (SETUP_MUTEX, "Global\\" + SETUP_MUTEX):
+            handle = kernel32.OpenMutexW(0x00100000, False, name)  # SYNCHRONIZE
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def wait_for_setup(timeout: float = SETUP_WAIT_S, step: float = 0.5, running=setup_running, sleep=None) -> bool:
+    """Wait until the installer is done (the restart after a one-click update starts
+    while Setup is finishing; a shortcut can be clicked mid-update). True: free to start."""
+    import time
+
+    sleep = sleep or time.sleep
+    waited = 0.0
+    while running():
+        if waited >= timeout:
+            return False
+        sleep(step)
+        waited += step
+    return True
+
+
 def main() -> int:
+    if not wait_for_setup():
+        if sys.platform == "win32":
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(
+                None, "Fluxion обновляется. Дождитесь конца установки и запустите программу снова.\n\n"
+                      "Fluxion is being updated. Wait for the installation to finish and start it again.",
+                "Fluxion", 0x40)
+        return 1
     from core.app_paths import migrate_legacy_data
 
     # data of an earlier build next to the exe -> %LOCALAPPDATA%\Fluxion (once)

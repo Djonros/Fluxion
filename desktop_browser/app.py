@@ -2611,6 +2611,14 @@ class FluxionWindow(QMainWindow):
         act_report.setToolTip(tr("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel"))
         act_report.triggered.connect(self._open_assembly_report)
         m_tools.addAction(act_report)
+        act_norms = QAction(tr("Нормы и цены завода (Pro)…"), self)
+        act_norms.setToolTip(tr("Нормы времени и цены, по которым считается смета отчёта по сборке"))
+        act_norms.triggered.connect(self._open_norms_dialog)
+        m_tools.addAction(act_norms)
+        act_compare = QAction(tr("Сравнить версии сборки (Pro)…"), self)
+        act_compare.setToolTip(tr("Что добавилось, удалилось и изменилось между двумя версиями изделия"))
+        act_compare.triggered.connect(self._open_compare)
+        m_tools.addAction(act_compare)
         act_laser = QAction(tr("Пакет на лазер (DXFka)…"), self)
         act_laser.setToolTip(tr("DXF всех листовых деталей сборки по папкам толщин (Pro)"))
         act_laser.triggered.connect(self._open_laser_package)
@@ -5483,6 +5491,16 @@ class FluxionWindow(QMainWindow):
         except Exception as exc:  # the workbook open in Excel, no rights to the folder
             self._on_report_failed(tr("Не удалось сохранить отчёт: {exc}", exc=exc))
             return
+        try:
+            from cad import compare, estimate
+
+            try:
+                cost = estimate.build(result).total
+            except Exception:  # unreadable norms: the snapshot without the cost
+                cost = None
+            compare.save_snapshot(result, path, cost)
+        except OSError:  # a snapshot is a convenience: the report is made anyway
+            pass
         summary = report.summary_text(result)
         self._report_entry["text"] = summary + tr("\nОтчёт: {path}", path=path)
         self._report_entry["sources"] = report.report_links(result, path)
@@ -5567,6 +5585,8 @@ class FluxionWindow(QMainWindow):
             "cad": self._open_cad_dialog,
             "materials": self._open_materials_dialog,
             "assembly_report": self._open_assembly_report,
+            "norms": self._open_norms_dialog,
+            "compare": self._open_compare,
             "laser": self._open_laser_package,
             "acad": self._open_acad_check,
             "archive": self._open_archive,
@@ -5757,6 +5777,59 @@ class FluxionWindow(QMainWindow):
         self._set_generating(False)
         self._render_messages()
         self._save_memory()
+
+    def _open_compare(self) -> None:
+        """Инструменты → Сравнить версии сборки: two versions, the changes in Excel (Pro)."""
+        if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
+            return
+        if not self._report_pro():
+            return
+        from .compare_dialog import CompareDialog
+
+        dialog = CompareDialog(self, str(self.qsettings.value("report_dir", "") or ""))
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.start_compare(*dialog.paths())
+
+    def start_compare(self, old: str, new: str) -> None:
+        from .compare_dialog import CompareWorker
+
+        self.qsettings.setValue("report_dir", str(Path(new).parent))
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", tr("Сравнить версии: {old} → {new}", old=Path(old).name, new=Path(new).name))
+        self._append_message("assistant", "")
+        entry = self._messages[-1]
+        entry["meta"] = tr("[КОМПАС-3D | сборки открыты только для чтения]")
+        self._report_entry = entry
+        self._set_generating(True)
+        worker = CompareWorker(old, new, self)
+        self.report_worker = worker  # one KOMPAS job at a time; closeEvent waits for it
+        worker.progress.connect(self._on_report_progress)
+        worker.ready.connect(self._on_compare_ready)
+        worker.failed.connect(self._on_report_failed)
+        worker.finished.connect(lambda: self._on_report_worker_finished(worker))
+        worker.start()
+
+    def _on_compare_ready(self, diff, path: str) -> None:
+        from cad import compare
+
+        summary = compare.summary_text(diff)
+        self._report_entry["text"] = summary + tr("\nИзменения: {path}", path=path)
+        self._report_entry["sources"] = [{"file": path, "label": tr("Изменения: {value}", value=Path(path).name)}]
+        self._report_entry["sources_title"] = tr("Ссылки")
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
+        self._notify_answer(summary)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _open_norms_dialog(self) -> None:
+        """Инструменты → Нормы и цены завода: what the «Смета» of a report is built on (Pro)."""
+        if not self._report_pro():
+            return
+        from .norms_dialog import NormsDialog
+
+        NormsDialog(self).exec()
 
     def _open_materials_dialog(self) -> None:
         """Инструменты → Каталог материалов: the merged catalog, the user's file, import."""
@@ -6424,10 +6497,18 @@ class FluxionWindow(QMainWindow):
         without an update, without a connection and for a skipped version."""
         if not auto:
             self.statusBar().showMessage(tr("Проверка обновлений…"))
-        self._update_worker = UpdateWorker(APP_VERSION)
-        self._update_worker.done.connect(lambda info: self._on_update_result(info, auto=auto))
-        self._update_worker.finished.connect(self._update_worker.deleteLater)
-        self._update_worker.start()
+        worker = UpdateWorker(APP_VERSION)
+        self._update_worker = worker
+        worker.done.connect(lambda info: self._on_update_result(info, auto=auto))
+        worker.finished.connect(lambda: self._forget_update_worker(worker))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _forget_update_worker(self, worker) -> None:
+        # forget it before deleteLater: closeEvent waits on self._update_worker, and a
+        # deleted one raised there — the window did not close for the installer
+        if getattr(self, "_update_worker", None) is worker:
+            self._update_worker = None
 
     def _auto_updates_enabled(self) -> bool:
         return str(self.qsettings.value(self.UPDATES_AUTO_KEY, True)).lower() not in ("false", "0")
@@ -6812,12 +6893,14 @@ class FluxionWindow(QMainWindow):
                     worker.wait(5000)
                 except RuntimeError:   # already deleted by deleteLater
                     pass
-        if getattr(self, "_update_worker", None) is not None:
-            self._update_worker.wait(5000)
-        if getattr(self, "_model_download_worker", None) is not None:
-            self._model_download_worker.wait(10000)
-        if getattr(self, "_model_import_worker", None) is not None:
-            self._model_import_worker.wait(10000)
+        for name, ms in (("_update_worker", 5000), ("_model_download_worker", 10000),
+                         ("_model_import_worker", 10000)):
+            worker = getattr(self, name, None)
+            if worker is not None:
+                try:
+                    worker.wait(ms)
+                except RuntimeError:   # already deleted by deleteLater: nothing to wait for
+                    pass
         if self.status_worker is not None:
             self.status_worker.wait(10000)
         if self._health_worker is not None:

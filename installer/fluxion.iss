@@ -49,6 +49,9 @@ DisableDirPage=auto
 UsePreviousAppDir=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; held while Setup runs: Fluxion started meanwhile (a shortcut, the restart after the
+; one-click update) waits for it instead of loading half-copied files
+SetupMutex=FluxionSetupRunning,Global\FluxionSetupRunning
 CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll,*.pyd
 RestartApplications=no

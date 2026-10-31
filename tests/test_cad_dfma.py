@@ -18,6 +18,9 @@ def _decisions_in_tmp(tmp_path, monkeypatch):
 
     monkeypatch.setattr(report, "decisions_path", lambda: tmp_path / "report_decisions.json")
     monkeypatch.setattr(workload, "norms_path", lambda: tmp_path / "time_norms.json")
+    from cad import estimate
+
+    monkeypatch.setattr(estimate, "norms_path", lambda: tmp_path / "plant_norms.json")
 
 
 def std(name, kg=0.05):

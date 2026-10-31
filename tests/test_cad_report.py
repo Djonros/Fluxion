@@ -19,6 +19,9 @@ def _decisions_in_tmp(tmp_path, monkeypatch):
 
     monkeypatch.setattr(report, "decisions_path", lambda: tmp_path / "report_decisions.json")
     monkeypatch.setattr(workload, "norms_path", lambda: tmp_path / "time_norms.json")
+    from cad import estimate
+
+    monkeypatch.setattr(estimate, "norms_path", lambda: tmp_path / "plant_norms.json")
 
 
 def det(marking, name, material="Сталь 20 ГОСТ 1050-2013", kg=1.0, m2=0.1, file=""):
@@ -234,7 +237,7 @@ def test_xlsx(tmp_path):
     path = report.save_xlsx(r, tmp_path / "r.xlsx", source="100.000.a3d")
     wb = openpyxl.load_workbook(path)
     assert wb.sheetnames == ["Предупреждения", "Сводная ведомость", "Детали", "Металлоёмкость", "Прочие изделия",
-                             "Покраска", "Трудоёмкость", "Технологичность"]
+                             "Покраска", "Трудоёмкость", "Технологичность", "Смета"]
     assert wb.active.title == "Предупреждения"  # the designer sees it first
     tree_rows = list(wb["Сводная ведомость"].iter_rows(min_row=5, values_only=True))
     assert all(not row[5] for row in tree_rows if row[4] == "Сборочные единицы")  # no material on assemblies
