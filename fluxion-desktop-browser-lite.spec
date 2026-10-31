@@ -158,6 +158,7 @@ a = Analysis(
         "cad.quick",
         "cad.assembly",
         "cad.report",
+        "cad.dfma",
         "cad.welds",
         "cad.workload",
         "cad.laser",

@@ -5,6 +5,16 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- «Технологичность» of an assembly report (`cad/dfma.py`, Pro): the fasteners read from the names of the standard items (type, thread with a fine pitch, length, standard, strength class) — a summary by type and size and hints to bring the range down (close lengths of one size, four lengths and more, one fastener under different standards or strength classes; washers of different standards are different washers); twin details (the same material, mass and area under different designations, not the executions «-01»). A sheet «Технологичность» in the workbook and a line in the chat; advice does not hold the report up.
+- The sheet details: `cad/assembly.py` reads the thickness and the inner bend radius of the sheet body (`ISheetMetalBody.Radius`, checked on KOMPAS v24). The norm control warns about a bend radius too small for the material (steel 1 t, duralumin 2.5 t, АМг5–6 1.5 t, spring steel 2 t, soft metals 0.5 t) on details with bends in the build tree, and a sheet body thicker or thinner than the sheet of the material.
+- «Отметить все такие» in the window «Перед оформлением отчёта» (a button and the context menu): every row of the same remark in one click.
+
+### Changed
+- «Пакет на лазер» takes the thickness of the material when the sheet body disagrees with it (a sheet modelled on edge: a body of 1040 mm under «Лист 10»); it took the body's.
+
 ## [0.23.0] — 2026-10-28
 
 ### Added

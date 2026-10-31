@@ -56,7 +56,6 @@
  "Ищем файлы модели {repo_id}…": "Buscando los archivos del modelo {repo_id}…",
  "Строю в КОМПАС-3D…": "Construyendo en KOMPAS-3D…",
  "Перед оформлением отчёта": "Antes del informe",
- "<b>{value}</b>: спорных мест — {n_remarks}. Отметьте каждое: отчёт формируется, только когда отмечено всё. У покупных снимите «Покупное», если это ваше изготовление. Отметки запоминаются для этого изделия. Двойной щелчок по строке открывает модель в КОМПАС, по пути к файлу — его папку.": "<b>{value}</b>: puntos dudosos — {n_remarks}. Marque cada uno: el informe se genera solo cuando todo está marcado. En los comprados, desmarque «Comprado» si es de fabricación propia. Las marcas se recuerdan para este producto. Doble clic en una fila abre el modelo en KOMPAS; en la ruta del archivo, su carpeta.",
  "Покупное": "Comprado",
  "Обозначение и наименование": "Designación y nombre",
  "Отмена — исправлю модель": "Cancelar — corregiré el modelo",
@@ -803,5 +802,11 @@
  "Модели этого чата нет в списке: {model}": "El modelo de este chat no está en la lista: {model}",
  "Папки проекта этого чата больше нет: {path}": "La carpeta del proyecto de este chat ya no existe: {path}",
  "Папка проекта": "Carpeta del proyecto",
- "Этот чат вёлся в папке проекта:\n{path}\n\nОткрыть эту папку?": "Este chat se llevó en la carpeta del proyecto:\n{path}\n\n¿Abrir esta carpeta?"
+ "Этот чат вёлся в папке проекта:\n{path}\n\nОткрыть эту папку?": "Este chat se llevó en la carpeta del proyecto:\n{path}\n\n¿Abrir esta carpeta?",
+ "<b>{value}</b>: спорных мест — {n_remarks}. Отметьте каждое: отчёт формируется, только когда отмечено всё. У покупных снимите «Покупное», если это ваше изготовление. Отметки запоминаются для этого изделия. Двойной щелчок по строке открывает модель в КОМПАС, по пути к файлу — его папку. Много одинаковых замечаний — выберите строку и «Отметить все такие» (или правая кнопка).": "<b>{value}</b>: puntos dudosos — {n_remarks}. Marque cada uno: el informe se genera solo cuando todo está marcado. En los comprados, desmarque «Comprado» si es de fabricación propia. Las marcas se recuerdan para este producto. Doble clic en una fila abre el modelo en KOMPAS; en la ruta del archivo, su carpeta. Muchas observaciones iguales: elija una fila y «Marcar todas iguales» (o clic derecho).",
+ "Отметить «Проверено» все строки с тем же замечанием, что у выбранной": "Marcar «Revisado» en todas las filas con la misma observación que la seleccionada",
+ "Отметить все «{problem}» ({n})": "Marcar todas «{problem}» ({n})",
+ "Снять отметку со всех «{problem}»": "Desmarcar todas «{problem}»",
+ "Отметить все такие ({n})": "Marcar todas iguales ({n})",
+ "Отметить все такие": "Marcar todas iguales"
 }

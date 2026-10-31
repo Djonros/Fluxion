@@ -6,7 +6,9 @@
 - «Детали»: every detail of the product once, with the quantity on the product.
 - «Металлоёмкость»: mass of the details by material and sortament.
 - «Замечания»: what a norm controller would return: no designation, no
-  material, zero mass.
+  material, zero mass, a sheet bent too tight or thicker than its material.
+- «Технологичность» (cad/dfma.py): the fasteners by type and size, hints to
+  bring their range down, twin details. Advice: it does not hold the report up.
 
 Quantities: identical components (same designation, name, material, mass and
 file) of one assembly are one line; the quantity on the product multiplies the
@@ -23,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from . import dfma
 from .assembly import (ASSEMBLY, DETAIL, KIND_TITLES, OTHER, STANDARD, Component, material_text, no_material,
                        purchased_by_name)
 
@@ -63,6 +66,8 @@ class Report:
     assigned: list[tuple["Section", float]] = field(default_factory=list)
     welds: list = field(default_factory=list)  # cad.welds.WeldedAssembly, filled by add_welds
     decisions: dict = field(default_factory=dict)  # the designer's marks: remark id -> {"checked", "purchased"}
+    fastener_rows: list = field(default_factory=list)  # cad.dfma.SizeRow: the fasteners by type and size
+    advice: list = field(default_factory=list)  # cad.dfma.Advice: «Технологичность», not to be marked
 
     @property
     def unchecked(self) -> list[dict]:
@@ -198,11 +203,13 @@ def build(top: Component, decisions: dict | None = None) -> Report:
         own = section.assembly.mass_kg - sum(line.component.mass_kg * line.qty for line in section.lines)
         if own > max(0.5, 0.01 * section.assembly.mass_kg):
             assigned.append((section, own))
+    fastener_rows, advice = dfma.fasteners(standard.values())
+    advice += dfma.twins(details.values())
     return Report(top, list(sections.values()), list(details.values()), list(standard.values()),
                   list(other.values()), _metal(details.values()),
                   _remarks(sections.values(), details.values(), other.values(), where, decisions, _outside(top)),
                   assigned,
-                  decisions=decisions)
+                  decisions=decisions, fastener_rows=fastener_rows, advice=advice)
 
 
 def _metal(details) -> list[dict]:
@@ -328,6 +335,8 @@ def _remarks(sections, details, other, where, decisions=None, borrowed=()) -> li
             add(c, CHECK, "Деталь без обозначения", "В спецификации строка будет без обозначения.", line.qty_product)
         if c.mass_g <= 0:
             add(c, CHECK, "Нулевая масса", "Проверьте тело детали и плотность материала.", line.qty_product)
+        for problem, message in dfma.sheet_problems(c):
+            add(c, CHECK, problem, message, line.qty_product)
     for c, qty, place, source in borrowed:
         file = model_file(c.file)
         if source == OTHER_PROJECT:
@@ -571,6 +580,7 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
         _weld_sheet(sheet, report, bold, head_fill, section_fill, kg, link)
     _paint_sheet(sheet, report, bold, head_fill)
     _work_sheet(sheet, report, bold, head_fill, section_fill)
+    _dfma_sheet(sheet, report, bold, head_fill, wrap)
 
     ws = sheet("Предупреждения", ["Уровень", "Замечание", "Обозначение и наименование", "Что будет и что сделать",
                                    "Где", "Кол. на изделие", "Проверено", "Файл"], [12, 32, 46, 70, 40, 10, 11, 60])
@@ -668,6 +678,27 @@ def _paint_sheet(sheet, report: Report, bold, head_fill) -> None:
         row[1].number_format = "#,##0.00"
 
 
+def _dfma_sheet(sheet, report: Report, bold, head_fill, wrap) -> None:
+    """«Технологичность»: the advice, then the fasteners by type and size."""
+    ws = sheet("Технологичность", ["Тема", "Что", "Совет", "Кол. на изделие"], [18, 34, 100, 12])
+    for a in report.advice:
+        ws.append([a.topic, a.title, a.message, a.qty])
+        ws.cell(row=ws.max_row, column=3).alignment = wrap
+    if not report.advice:
+        ws.append(["", "Советов нет", "Крепёж однотипен, двойников деталей не найдено."])
+    if report.fastener_rows:
+        ws.append([])
+        ws.append(["Крепёж", "Типоразмер", "Длины, мм", "Стандарты", "Позиций", "Кол. на изделие"])
+        for cell in ws[ws.max_row]:
+            cell.font, cell.fill = bold, head_fill
+        for r in report.fastener_rows:
+            ws.append([dfma.PLURAL.get(r.type, r.type), r.size, dfma.mm_list(r.lengths), ", ".join(r.standards),
+                       r.positions, r.qty])
+        ws.append(["Итого", "", "", "", sum(r.positions for r in report.fastener_rows),
+                   sum(r.qty for r in report.fastener_rows)])
+        ws[ws.max_row][0].font = bold
+
+
 def _work_sheet(sheet, report: Report, bold, head_fill, section_fill) -> None:
     from .workload import load_norms, norms_path, workload
 
@@ -749,6 +780,15 @@ def summary_text(report: Report, path: Path | None = None) -> str:
         for r in report.remarks:
             counts[r["problem"]] = counts.get(r["problem"], 0) + 1
         lines.append("Предупреждения: " + "; ".join(f"{k.lower()} — {v}" for k, v in counts.items()) + ".")
+    if report.fastener_rows or report.advice:
+        sizes = len(report.fastener_rows)
+        topics: OrderedDict[str, int] = OrderedDict()
+        for a in report.advice:
+            topics[a.topic] = topics.get(a.topic, 0) + 1
+        text = f"Технологичность: крепёж — {sizes} типоразмеров"
+        if topics:
+            text += "; советы: " + "; ".join(f"{k.lower()} — {v}" for k, v in topics.items())
+        lines.append(text + " (лист «Технологичность»).")
     if path:
         lines.append(f"Отчёт: {path}")
     return "\n".join(lines)

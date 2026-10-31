@@ -175,6 +175,12 @@ def thickness_from_material(material: str) -> str:
     return f"{value:.3f}".rstrip("0").rstrip(".")
 
 
+def choose_thickness(body: str, material: str) -> str:
+    """Толщина для папки DXF: из материала, когда она там есть (лист заказывают
+    по материалу), иначе из листового тела; "" — неизвестна."""
+    return material or body
+
+
 # Сущности DXF, которые составляют контур детали.
 DXF_GEOMETRY = frozenset((
     "LINE", "ARC", "CIRCLE", "ELLIPSE", "LWPOLYLINE", "POLYLINE", "VERTEX",

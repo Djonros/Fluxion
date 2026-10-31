@@ -234,7 +234,7 @@ def test_xlsx(tmp_path):
     path = report.save_xlsx(r, tmp_path / "r.xlsx", source="100.000.a3d")
     wb = openpyxl.load_workbook(path)
     assert wb.sheetnames == ["Предупреждения", "Сводная ведомость", "Детали", "Металлоёмкость", "Прочие изделия",
-                             "Покраска", "Трудоёмкость"]
+                             "Покраска", "Трудоёмкость", "Технологичность"]
     assert wb.active.title == "Предупреждения"  # the designer sees it first
     tree_rows = list(wb["Сводная ведомость"].iter_rows(min_row=5, values_only=True))
     assert all(not row[5] for row in tree_rows if row[4] == "Сборочные единицы")  # no material on assemblies

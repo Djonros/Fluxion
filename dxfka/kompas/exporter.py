@@ -17,7 +17,7 @@ from dxfka.models import CancelledByUser, PartInfo, SkippedByUser
 from dxfka.utils import (
     com_count, com_item, com_items, dxf_extent_area, dxf_geometry_count,
     safe_str, sanitize_filename, strip_dxf_annotations,
-    thickness_from_material)
+    thickness_from_material, choose_thickness)
 
 # ======================================================================
 # ЭКСПОРТ ОДНОЙ ДЕТАЛИ В DXF
@@ -578,14 +578,18 @@ class PartExporter:
             material_thk = thickness_from_material(material)
             body_thk = (self._read_sheet_thickness(sheet_body)
                         if sheet_body is not None else "")
+            # Расходятся — берём материал: лист заказывают по нему, а тело
+            # бывает построено иначе (лист «ребром»: тело 1040 мм при листе
+            # 10 мм). Нормоконтроль сборки показывает такую деталь отдельно.
+            thickness = choose_thickness(body_thk, material_thk)
             if body_thk and material_thk and body_thk != material_thk:
                 self.log("warning",
                          f"Толщина в модели {body_thk} мм, в материале "
-                         f"{material_thk} мм — беру из модели")
+                         f"{material_thk} мм — беру из материала, проверьте деталь")
             elif material_thk and not body_thk:
                 self.log("info", f"Толщина из материала «{material}»: "
                                  f"{material_thk} мм")
-            self.detected_thickness = body_thk or material_thk
+            self.detected_thickness = thickness
 
             if sheet_body is not None:
                 # --- B1. ЛИСТОВАЯ: развертка через выпрямление тела ---

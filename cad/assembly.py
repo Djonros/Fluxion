@@ -53,6 +53,9 @@ class Component:
     guessed: bool = False  # taken as bought by its name (cad.report warns the designer)
     # the build tree of a detail: "Эскиз:2", "Элемент выдавливания:1"... (cad.report counts the work)
     features: list[str] = field(default_factory=list)
+    # the sheet body of a sheet detail, mm (cad.dfma checks the bend against the thickness); 0 — none
+    sheet_thickness: float = 0.0
+    bend_radius: float = 0.0
     children: list["Component"] = field(default_factory=list)
 
     @property
@@ -293,7 +296,29 @@ def features_of(part, cast) -> list[str]:
     return out
 
 
-def _component(part, cast, with_area: bool, properties=None, features=None, sections=None) -> Component:
+def sheet_of(part, cast) -> tuple[float, float]:
+    """(thickness, inner bend radius) of the first sheet body of a detail, mm; (0, 0) — none.
+    ISheetMetalContainer -> SheetMetalBodies -> ISheetMetalBody, as DXFka reads it."""
+    try:
+        bodies = cast(part, "ISheetMetalContainer").SheetMetalBodies
+        if bodies is None or not int(_get(bodies, "Count", 0) or 0):
+            return 0.0, 0.0
+        body = cast(bodies.Item(0), "ISheetMetalBody")  # Item(0): checked by DXFka on v24
+    except Exception:
+        return 0.0, 0.0
+    try:
+        thickness = float(_get(body, "Thickness", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        thickness = 0.0
+    try:
+        radius = float(_get(body, "Radius", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        radius = 0.0
+    return thickness, radius
+
+
+def _component(part, cast, with_area: bool, properties=None, features=None, sections=None,
+               sheets=None) -> Component:
     standard = bool(_get(part, "Standard", False))
     detail = bool(_get(part, "Detail", False))
     props = properties(part) if properties is not None else {}
@@ -324,20 +349,22 @@ def _component(part, cast, with_area: bool, properties=None, features=None, sect
         section=spec_section,
         position=props.get("Позиция", ""),
         features=features(part) if features is not None and kind == DETAIL else [],
+        **(dict(zip(("sheet_thickness", "bend_radius"), sheets(part)))
+           if sheets is not None and kind == DETAIL else {}),
     )
 
 
 def _walk(part, cast, with_area: bool, properties=None, features=None, sections=None,
-          sections_of=None) -> list[Component]:
+          sections_of=None, sheets=None) -> list[Component]:
     out = []
     for child in _get(part, "Parts", None) or []:
         child = cast(child, "IPart7")
         if bool(_get(child, "Excluded", False)):
             continue  # excluded from the calculation in KOMPAS
-        component = _component(child, cast, with_area, properties, features, sections)
+        component = _component(child, cast, with_area, properties, features, sections, sheets)
         if component.kind == ASSEMBLY:  # a bought unit (OTHER) is one item: its insides are not read
             own = sections_of(child) if sections_of is not None else None
-            component.children = _walk(child, cast, with_area, properties, features, own, sections_of)
+            component.children = _walk(child, cast, with_area, properties, features, own, sections_of, sheets)
         out.append(component)
     return out
 
@@ -376,6 +403,17 @@ def read(path: str | Path, with_area: bool = True, log=print) -> Component:
                     seen[key] = names
                 return names
 
+            sheet_seen: dict[str, tuple[float, float]] = {}
+
+            def sheets(part) -> tuple[float, float]:  # read once per detail file
+                key = str(_get(part, "FileName", "") or "").lower()
+                if key and ">" not in key and key in sheet_seen:
+                    return sheet_seen[key]
+                found = sheet_of(part, CastTo)
+                if key and ">" not in key:
+                    sheet_seen[key] = found
+                return found
+
             specs: dict[str, SpecSections | None] = {}
 
             def sections_of(part) -> SpecSections | None:  # read once per subassembly file
@@ -388,7 +426,7 @@ def read(path: str | Path, with_area: bool = True, log=print) -> Component:
                 return found
 
             top.children = _walk(top_part, CastTo, with_area, _Properties(app, doc, CastTo), features,
-                                 spec_sections(doc, CastTo), sections_of)
+                                 spec_sections(doc, CastTo), sections_of, sheets)
             if with_area:
                 try:
                     top.area_cm2 = float(CastTo(top_part, "IMassInertiaParam7").Area)

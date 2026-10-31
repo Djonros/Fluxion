@@ -990,7 +990,8 @@ class ReportWarningsDialog(QDialog):
             tr("<b>{value}</b>: спорных мест — {n_remarks}. "
             "Отметьте каждое: отчёт формируется, только когда отмечено всё. "
             "У покупных снимите «Покупное», если это ваше изготовление. Отметки запоминаются для этого изделия. "
-            "Двойной щелчок по строке открывает модель в КОМПАС, по пути к файлу — его папку.", value=html.escape(result.top.title), n_remarks=len(result.remarks))
+            "Двойной щелчок по строке открывает модель в КОМПАС, по пути к файлу — его папку. "
+            "Много одинаковых замечаний — выберите строку и «Отметить все такие» (или правая кнопка).", value=html.escape(result.top.title), n_remarks=len(result.remarks))
         )
         intro.setWordWrap(True)
         intro.setTextFormat(Qt.RichText)
@@ -1036,6 +1037,9 @@ class ReportWarningsDialog(QDialog):
         self.table.resizeRowsToContents()  # after the widths: rows as high as their text
         self.table.itemChanged.connect(self._update)
         self.table.cellDoubleClicked.connect(self.open_model)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._same_menu)
+        self.table.currentCellChanged.connect(lambda *_a: self._update())
         box.addWidget(self.table, 1)
         buttons = QHBoxLayout()
         from .manual import help_button
@@ -1043,6 +1047,10 @@ class ReportWarningsDialog(QDialog):
         buttons.addWidget(help_button(self, "otchet-po-sborke"))
         self.counter = QLabel()
         buttons.addWidget(self.counter, 1)
+        self.same_button = QPushButton()
+        self.same_button.setToolTip(tr("Отметить «Проверено» все строки с тем же замечанием, что у выбранной"))
+        self.same_button.clicked.connect(lambda: self.mark_same(self.table.currentRow()))
+        buttons.addWidget(self.same_button)
         from cad.fix import material_fixes, section_fixes
 
         self.fixes = section_fixes(result.top)
@@ -1135,6 +1143,35 @@ class ReportWarningsDialog(QDialog):
             QDesktopServices.openUrl(QUrl.fromLocalFile(file))
         return file
 
+    def same_rows(self, row: int) -> list[int]:
+        """The rows with the same remark as *row* («Малый радиус гиба» of every detail)."""
+        if not 0 <= row < len(self.result.remarks):
+            return []
+        problem = self.result.remarks[row]["problem"]
+        return [i for i, r in enumerate(self.result.remarks) if r["problem"] == problem]
+
+    def mark_same(self, row: int, checked: bool = True) -> int:
+        """Mark (or unmark) every row with the remark of *row*; how many rows."""
+        rows = self.same_rows(row)
+        self.table.blockSignals(True)
+        for i in rows:
+            self.table.item(i, 0).setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        self.table.blockSignals(False)
+        self._update()
+        return len(rows)
+
+    def _same_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        rows = self.same_rows(row)
+        if not rows:
+            return
+        problem = self.result.remarks[row]["problem"]
+        menu = QMenu(self.table)
+        menu.addAction(tr("Отметить все «{problem}» ({n})", problem=problem, n=len(rows)),
+                       lambda: self.mark_same(row, True))
+        menu.addAction(tr("Снять отметку со всех «{problem}»", problem=problem), lambda: self.mark_same(row, False))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
     def marks(self) -> dict:
         out = {}
         for row, r in enumerate(self.result.remarks):
@@ -1150,6 +1187,10 @@ class ReportWarningsDialog(QDialog):
         total = len(marks)
         self.counter.setText(tr("Отмечено {done} из {total}", done=done, total=total))
         self.make_button.setEnabled(done == total)  # blocked until every place is marked
+        same = self.same_rows(self.table.currentRow())
+        self.same_button.setText(tr("Отметить все такие ({n})", n=len(same)) if same
+                                 else tr("Отметить все такие"))
+        self.same_button.setEnabled(len(same) > 1)
 
 
 class MaterialFixDialog(QDialog):
