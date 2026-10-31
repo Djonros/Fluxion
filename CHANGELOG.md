@@ -5,7 +5,7 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.24.0] — 2026-10-31
 
 ### Added
 - «Технологичность» of an assembly report (`cad/dfma.py`, Pro): the fasteners read from the names of the standard items (type, thread with a fine pitch, length, standard, strength class) — a summary by type and size and hints to bring the range down (close lengths of one size, four lengths and more, one fastener under different standards or strength classes; washers of different standards are different washers); twin details (the same material, mass and area under different designations, not the executions «-01»). A sheet «Технологичность» in the workbook and a line in the chat; advice does not hold the report up.
