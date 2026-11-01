@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The download page shows the SHA-256 of the installer and of the portable archive (the digest GitHub keeps for every release file) and how to check a download with `certutil`.
 
+- The Инструкция in English: all 24 pages (`desktop_browser/manual/en`); the English interface showed 23 of them in Russian.
+
 ### Fixed
 - The one-click update: the window raised in `closeEvent` on an update worker already deleted (0.22–0.24) and did not close for the installer. Fluxion started while the installer copies its files (a shortcut, a second copy) loaded half-copied PySide6 and crashed («shiboken6\libshiboken does not exist»): the installer holds `SetupMutex`, and Fluxion waits for it, up to three minutes.
 

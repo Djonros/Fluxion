@@ -96,3 +96,11 @@ def test_manual_in_english_keeps_the_russian_pages_it_lacks():
     page = {p.key: p for p in english}["yazyk-interfeysa"]
     assert page.title == "Interface language" and page.section == "Начало работы"
     assert {p.key: p for p in russian}["yazyk-interfeysa"].title == "Язык интерфейса"
+
+
+def test_every_page_of_the_manual_is_in_english():
+    """The English manual has every page, with the same section, tool and Pro mark as the Russian one."""
+    russian = manual.load_pages(code="ru")
+    english = manual.load_pages(manual.MANUAL_DIR / "en")
+    assert [(p.key, p.section, p.tool, p.pro) for p in english] == [(p.key, p.section, p.tool, p.pro) for p in russian]
+    assert all(p.text and not any("а" <= ch <= "я" for ch in p.title.lower()) for p in english)
