@@ -68,10 +68,17 @@
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
   };
 
-  const setBuild = (kind, href, sizeText) => {
+  const setBuild = (kind, href, sizeText, digest, name) => {
     document.querySelectorAll(`[data-asset="${kind}"]`).forEach((a) => { a.href = href; });
     const s = document.querySelector(`[data-size-for="${kind}"]`);
     if (s) s.textContent = sizeText;
+    // GitHub gives the SHA-256 of every release file: to check the download
+    const sha = String(digest || "").replace(/^sha256:/i, "");
+    document.querySelectorAll(`[data-sha-for="${kind}"]`).forEach((el) => {
+      if (!/^[0-9a-f]{64}$/i.test(sha)) return;
+      el.textContent = `${name || kind} — SHA-256: ${sha}`;
+      el.hidden = false;
+    });
   };
 
   const applyRelease = (release) => {
@@ -80,11 +87,11 @@
     const setup = newest(assets, "Setup");
     const lite = newest(assets, "Lite");   // the portable .7z of the program
 
-    if (lite) setBuild("Lite", lite.browser_download_url, size(lite.size));
+    if (lite) setBuild("Lite", lite.browser_download_url, size(lite.size), lite.digest, lite.name);
     // the installer is the main download; a release without it falls back to the .7z
     const main = setup || lite;
     if (main) {
-      setBuild("Setup", main.browser_download_url, size(main.size));
+      setBuild("Setup", main.browser_download_url, size(main.size), main.digest, main.name);
       const primary = document.getElementById("dl-primary");
       if (primary) primary.href = main.browser_download_url;
       const note = document.getElementById("dl-primary-note");

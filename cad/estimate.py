@@ -75,6 +75,11 @@ RECOMMENDED = {
         {"key": "assembly", "hours": 0.1, "rate": 0.0},
     ],
     "items": [],  # {"match": "Ось 35т", "price": 45000.0}
+    # the sheets of the purchase list (cad/purchase.py): the first format the thickness fits; 0 — any
+    "sheet_formats": [
+        {"max_thickness": 4.0, "width": 1250.0, "length": 2500.0},
+        {"max_thickness": 0.0, "width": 1500.0, "length": 6000.0},
+    ],
 }
 
 
@@ -114,6 +119,12 @@ def normalize(data: dict) -> dict:
     for i in data.get("items") or []:
         if isinstance(i, dict) and str(i.get("match") or "").strip():
             out["items"].append({"match": str(i["match"]).strip(), "price": _float(i.get("price"))})
+    formats = data.get("sheet_formats")
+    if not isinstance(formats, list):  # a file of 0.25 before the purchase list: the recommended formats
+        formats = RECOMMENDED["sheet_formats"]
+    out["sheet_formats"] = [{"max_thickness": _float(f.get("max_thickness")), "width": _float(f.get("width")),
+                             "length": _float(f.get("length"))}
+                            for f in formats if isinstance(f, dict) and _float(f.get("width")) > 0]
     return out
 
 
@@ -153,6 +164,8 @@ def changed(norms: dict) -> list[str]:
             out.append(names[o["key"]])
     if norms["items"]:
         out.append(f"Цены покупных и крепежа: {len(norms['items'])}")
+    if norms["sheet_formats"] != rec["sheet_formats"]:
+        out.append("Форматы листа")
     return out
 
 
@@ -459,6 +472,10 @@ def export_xlsx(norms: dict, path: str | Path) -> Path:
     ws.append(["Наименование (часть)", "Цена, ₽/шт"])
     for i in norms["items"]:
         ws.append([i["match"], i["price"]])
+    ws = wb.create_sheet("Форматы листа")
+    ws.append(["До толщины, мм (0 — любая)", "Ширина, мм", "Длина, мм"])
+    for f in norms["sheet_formats"]:
+        ws.append([f["max_thickness"], f["width"], f["length"]])
     ws = wb.create_sheet("Общее")
     ws.append(["Параметр", "Значение", "Код"])
     for key, title in GENERAL:
@@ -499,6 +516,10 @@ def import_xlsx(path: str | Path, base: dict | None = None) -> dict:
     items = rows("Покупные и крепёж")
     if items is not None:
         norms["items"] = [{"match": str(r[0]).strip(), "price": _float(r[1])} for r in items if r[0]]
+    formats = rows("Форматы листа")
+    if formats is not None:
+        norms["sheet_formats"] = [{"max_thickness": _float(r[0]), "width": _float(r[1]), "length": _float(r[2])}
+                                  for r in formats]
     general = rows("Общее")
     if general is not None:
         for r in general:

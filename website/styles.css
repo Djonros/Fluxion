@@ -271,3 +271,8 @@ footer .fine { width: 100%; margin: 0; color: var(--muted); font-size: var(--ste
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
+
+/* the SHA-256 of the downloads, to check a file */
+.sha { margin: 0.35rem 0 0; font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.72rem; color: var(--muted);
+       overflow-wrap: anywhere; }
+.sha-how { margin: 0.5rem 0 0; font-size: var(--step--1); color: var(--muted); }

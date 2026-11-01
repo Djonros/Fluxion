@@ -875,5 +875,22 @@
  "Сборки и снимки отчётов (*.a3d *.json);;Сборки КОМПАС-3D (*.a3d);;Снимки отчётов (*.json)": "Assemblages et instantanés de rapports (*.a3d *.json);;Assemblages KOMPAS-3D (*.a3d);;Instantanés de rapports (*.json)",
  "Сравнить": "Comparer",
  "Было:": "Avant :",
- "Стало:": "Après :"
+ "Стало:": "Après :",
+ "Изделия заявки и их количество. Каждое — сборка КОМПАС-3D (.a3d, открывается только для чтения) или снимок её отчёта (.json, лежит рядом с книгой отчёта). Отход и форматы листа — из «Норм и цен завода».": "Produits de la commande et leurs quantités. Chacun est un assemblage KOMPAS-3D (.a3d, ouvert en lecture seule) ou un instantané de son rapport (.json, à côté du classeur du rapport). La chute et les formats de tôle viennent des « Normes et prix de l’usine ».",
+ "До толщины, мм (0 — любая)": "Jusqu’à l’épaisseur, mm (0 — toute)",
+ "Заявка на закупку (Pro)…": "Demande d’achat (Pro)…",
+ "Форматы листа": "Formats de tôle",
+ "Изделия заявки": "Produits de la commande",
+ "Не получилось составить заявку: {exc}": "Impossible de faire la demande : {exc}",
+ "Заявка: {value}": "Demande : {value}",
+ "Листы, прокат, крепёж и покупные на несколько изделий с их количеством": "Tôles, profilés, visserie et achats pour plusieurs produits avec leurs quantités",
+ "Количество, шт.": "Quantité, pcs",
+ "Заявка на закупку: {value}": "Demande d’achat : {value}",
+ "Длина, мм": "Longueur, mm",
+ "Заявка на закупку": "Demande d’achat",
+ "Добавить…": "Ajouter…",
+ "Изделие (файл)": "Produit (fichier)",
+ "Ширина, мм": "Largeur, mm",
+ "Составить заявку": "Faire la demande",
+ "\nЗаявка: {path}": "\nDemande : {path}"
 }

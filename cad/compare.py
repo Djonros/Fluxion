@@ -31,9 +31,24 @@ MASS_TOLERANCE = 0.005  # 0.5 %: a remodelled detail of the same mass is not a c
 
 
 def _item(c, qty: int) -> dict:
-    return {"kind": c.kind, "marking": c.marking, "name": c.name, "material": material_text(c.material),
+    item = {"kind": c.kind, "marking": c.marking, "name": c.name, "material": material_text(c.material),
             "mass_kg": round(c.mass_kg, 4), "qty": qty, "section": c.section,
             "file": ntpath.basename(c.file.split(">", 1)[-1]) if c.file else ""}
+    if c.kind == DETAIL:  # for the purchase list (cad/purchase.py): sheets by thickness
+        item["sheet_t"] = sheet_thickness(c)
+    return item
+
+
+def sheet_thickness(c) -> float:
+    """The thickness of a detail cut from a sheet, mm: the sheet of its material (it is ordered by
+    it, as «Пакет на лазер» takes it), else its sheet body; 0 — not from a sheet."""
+    try:
+        from dxfka.utils import thickness_from_material
+
+        named = float(thickness_from_material(c.material) or 0)
+    except Exception:
+        named = 0.0
+    return named or round(c.sheet_thickness, 3)
 
 
 def snapshot(report, cost: float | None = None) -> dict:

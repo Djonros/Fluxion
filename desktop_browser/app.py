@@ -2619,6 +2619,10 @@ class FluxionWindow(QMainWindow):
         act_compare.setToolTip(tr("Что добавилось, удалилось и изменилось между двумя версиями изделия"))
         act_compare.triggered.connect(self._open_compare)
         m_tools.addAction(act_compare)
+        act_purchase = QAction(tr("Заявка на закупку (Pro)…"), self)
+        act_purchase.setToolTip(tr("Листы, прокат, крепёж и покупные на несколько изделий с их количеством"))
+        act_purchase.triggered.connect(self._open_purchase)
+        m_tools.addAction(act_purchase)
         act_laser = QAction(tr("Пакет на лазер (DXFka)…"), self)
         act_laser.setToolTip(tr("DXF всех листовых деталей сборки по папкам толщин (Pro)"))
         act_laser.triggered.connect(self._open_laser_package)
@@ -5587,6 +5591,7 @@ class FluxionWindow(QMainWindow):
             "assembly_report": self._open_assembly_report,
             "norms": self._open_norms_dialog,
             "compare": self._open_compare,
+            "purchase": self._open_purchase,
             "laser": self._open_laser_package,
             "acad": self._open_acad_check,
             "archive": self._open_archive,
@@ -5816,6 +5821,51 @@ class FluxionWindow(QMainWindow):
         summary = compare.summary_text(diff)
         self._report_entry["text"] = summary + tr("\nИзменения: {path}", path=path)
         self._report_entry["sources"] = [{"file": path, "label": tr("Изменения: {value}", value=Path(path).name)}]
+        self._report_entry["sources_title"] = tr("Ссылки")
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
+        self._notify_answer(summary)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _open_purchase(self) -> None:
+        """Инструменты → Заявка на закупку: products and quantities, what to buy in Excel (Pro)."""
+        if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
+            return
+        if not self._report_pro():
+            return
+        from .purchase_dialog import PurchaseDialog
+
+        dialog = PurchaseDialog(self, str(self.qsettings.value("report_dir", "") or ""))
+        if dialog.exec() != QDialog.Accepted or not dialog.products():
+            return
+        self.start_purchase(dialog.products())
+
+    def start_purchase(self, products: list[tuple[str, int]]) -> None:
+        from .purchase_dialog import PurchaseWorker
+
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", tr("Заявка на закупку: {value}", value=", ".join(
+            f"{Path(p).name} × {n}" for p, n in products)))
+        self._append_message("assistant", "")
+        entry = self._messages[-1]
+        entry["meta"] = tr("[КОМПАС-3D | сборки открыты только для чтения]")
+        self._report_entry = entry
+        self._set_generating(True)
+        worker = PurchaseWorker(products, self)
+        self.report_worker = worker  # one KOMPAS job at a time; closeEvent waits for it
+        worker.progress.connect(self._on_report_progress)
+        worker.ready.connect(self._on_purchase_ready)
+        worker.failed.connect(self._on_report_failed)
+        worker.finished.connect(lambda: self._on_report_worker_finished(worker))
+        worker.start()
+
+    def _on_purchase_ready(self, order, path: str) -> None:
+        from cad import purchase
+
+        summary = purchase.summary_text(order)
+        self._report_entry["text"] = summary + tr("\nЗаявка: {path}", path=path)
+        self._report_entry["sources"] = [{"file": path, "label": tr("Заявка: {value}", value=Path(path).name)}]
         self._report_entry["sources_title"] = tr("Ссылки")
         self._set_generating(False)
         self._render_messages()

@@ -875,5 +875,22 @@
  "Сборки и снимки отчётов (*.a3d *.json);;Сборки КОМПАС-3D (*.a3d);;Снимки отчётов (*.json)": "Assemblies and report snapshots (*.a3d *.json);;KOMPAS-3D assemblies (*.a3d);;Report snapshots (*.json)",
  "Сравнить": "Compare",
  "Было:": "Before:",
- "Стало:": "After:"
+ "Стало:": "After:",
+ "Изделия заявки и их количество. Каждое — сборка КОМПАС-3D (.a3d, открывается только для чтения) или снимок её отчёта (.json, лежит рядом с книгой отчёта). Отход и форматы листа — из «Норм и цен завода».": "Products of the order and their quantities. Each is a KOMPAS-3D assembly (.a3d, opened read-only) or a snapshot of its report (.json, next to the report workbook). Waste and sheet formats come from «Plant norms and prices».",
+ "До толщины, мм (0 — любая)": "Up to thickness, mm (0 — any)",
+ "Заявка на закупку (Pro)…": "Purchase list (Pro)…",
+ "Форматы листа": "Sheet formats",
+ "Изделия заявки": "Products of the order",
+ "Не получилось составить заявку: {exc}": "Could not make the purchase list: {exc}",
+ "Заявка: {value}": "Purchase list: {value}",
+ "Листы, прокат, крепёж и покупные на несколько изделий с их количеством": "Sheets, rolled metal, fasteners and bought items for several products with their quantities",
+ "Количество, шт.": "Quantity, pcs",
+ "Заявка на закупку: {value}": "Purchase list: {value}",
+ "Длина, мм": "Length, mm",
+ "Заявка на закупку": "Purchase list",
+ "Добавить…": "Add…",
+ "Изделие (файл)": "Product (file)",
+ "Ширина, мм": "Width, mm",
+ "Составить заявку": "Make the purchase list",
+ "\nЗаявка: {path}": "\nPurchase list: {path}"
 }

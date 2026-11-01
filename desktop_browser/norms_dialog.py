@@ -50,9 +50,11 @@ class NormsDialog(QDialog):
                                   tr("Отход, %")])
         self.work = self._table([tr("Операция"), tr("Единица"), tr("Часов на единицу"), tr("Ставка, ₽/ч (0 — общая)")])
         self.items = self._table([tr("Наименование (часть)"), tr("Цена, ₽/шт")])
+        self.formats = self._table([tr("До толщины, мм (0 — любая)"), tr("Ширина, мм"), tr("Длина, мм")])
         self.tabs.addTab(self._with_rows(self.metal, self._add_metal), tr("Металл"))
         self.tabs.addTab(self.work, tr("Работы"))
         self.tabs.addTab(self._with_rows(self.items, self._add_item), tr("Покупные и крепёж"))
+        self.tabs.addTab(self._with_rows(self.formats, self._add_format), tr("Форматы листа"))
         general = QWidget()
         form = QFormLayout(general)
         self.general = {}
@@ -141,6 +143,13 @@ class NormsDialog(QDialog):
         self.items.setItem(row, 1, self._cell("0"))
         self.items.setCurrentCell(row, 0)
 
+    def _add_format(self) -> None:
+        row = self.formats.rowCount()
+        self.formats.insertRow(row)
+        for col, text in enumerate(("0", "1500", "6000")):
+            self.formats.setItem(row, col, self._cell(text))
+        self.formats.setCurrentCell(row, 0)
+
     def fill(self, norms: dict) -> None:
         self._filling = True
         norms = estimate.normalize(norms)
@@ -167,6 +176,12 @@ class NormsDialog(QDialog):
             self.items.insertRow(row)
             self.items.setItem(row, 0, self._cell(i["match"]))
             self.items.setItem(row, 1, self._cell(_fmt(i["price"])))
+        self.formats.setRowCount(0)
+        for f in norms["sheet_formats"]:
+            row = self.formats.rowCount()
+            self.formats.insertRow(row)
+            for col, value in enumerate((f["max_thickness"], f["width"], f["length"])):
+                self.formats.setItem(row, col, self._cell(_fmt(value)))
         for key, spin in self.general.items():
             spin.setValue(norms[key])
         self._filling = False
@@ -186,6 +201,9 @@ class NormsDialog(QDialog):
                                 "rate": _number(text(self.work, r, 3))} for r in range(self.work.rowCount())]
         norms["items"] = [{"match": text(self.items, r, 0), "price": _number(text(self.items, r, 1))}
                           for r in range(self.items.rowCount()) if text(self.items, r, 0)]
+        norms["sheet_formats"] = [{"max_thickness": _number(text(self.formats, r, 0)),
+                                   "width": _number(text(self.formats, r, 1)),
+                                   "length": _number(text(self.formats, r, 2))} for r in range(self.formats.rowCount())]
         return estimate.normalize(norms)
 
     # ── what differs from the recommended norms ──────────────────────────
@@ -208,6 +226,11 @@ class NormsDialog(QDialog):
         for row, (o, rec) in enumerate(zip(norms["operations"], self.recommended["operations"])):
             self._mark(self.work.item(row, 2), o["hours"] != rec["hours"])
             self._mark(self.work.item(row, 3), o["rate"] != rec["rate"])
+        rec_formats = self.recommended["sheet_formats"]
+        for row, f in enumerate(norms["sheet_formats"]):
+            rec = rec_formats[row] if row < len(rec_formats) else None
+            for col, k in enumerate(("max_thickness", "width", "length")):
+                self._mark(self.formats.item(row, col), rec is None or f[k] != rec[k])
         for row in range(self.items.rowCount()):
             for col in (0, 1):
                 self._mark(self.items.item(row, col), True)  # the recommended list is empty: every price is the plant's
@@ -240,7 +263,8 @@ class NormsDialog(QDialog):
             return
         menu = QMenu(table)
         action = menu.addAction(tr("Вернуть рекомендуемое для строки"), lambda: self.reset_row(table, row))
-        action.setEnabled(table is not self.items and (table is self.work or self._recommended_metal(row) is not None))
+        action.setEnabled(table is self.work or (table is self.metal and self._recommended_metal(row) is not None)
+                          or (table is self.formats and row < len(self.recommended["sheet_formats"])))
         menu.exec(table.viewport().mapToGlobal(pos))
 
     def reset_row(self, table: QTableWidget, row: int) -> None:
@@ -248,6 +272,10 @@ class NormsDialog(QDialog):
             rec = self.recommended["operations"][row]
             table.item(row, 2).setText(_fmt(rec["hours"]))
             table.item(row, 3).setText(_fmt(rec["rate"]))
+        elif table is self.formats and row < len(self.recommended["sheet_formats"]):
+            rec = self.recommended["sheet_formats"][row]
+            for col, k in enumerate(("max_thickness", "width", "length")):
+                table.item(row, col).setText(_fmt(rec[k]))
         elif table is self.metal and self._recommended_metal(row) is not None:
             rec = self._recommended_metal(row)
             for col, value in enumerate((rec["match"], rec["name"], _fmt(rec["price_kg"]), _fmt(rec["waste_pct"]))):

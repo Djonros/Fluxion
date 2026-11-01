@@ -161,6 +161,7 @@ a = Analysis(
         "cad.dfma",
         "cad.estimate",
         "cad.compare",
+        "cad.purchase",
         "cad.welds",
         "cad.workload",
         "cad.laser",
@@ -196,6 +197,7 @@ a = Analysis(
         "desktop_browser.text_dialog",
         "desktop_browser.norms_dialog",
         "desktop_browser.compare_dialog",
+        "desktop_browser.purchase_dialog",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window
         "dxfka",
