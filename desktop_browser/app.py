@@ -2637,6 +2637,10 @@ class FluxionWindow(QMainWindow):
         act_laser.setToolTip(tr("DXF всех листовых деталей сборки по папкам толщин (Pro)"))
         act_laser.triggered.connect(self._open_laser_package)
         m_tools.addAction(act_laser)
+        act_dxf_check = QAction(tr("Проверить развёртки DXF (Pro)…"), self)
+        act_dxf_check.setToolTip(tr("Малые отверстия, узкие перемычки и вырезы в развёртках для лазера"))
+        act_dxf_check.triggered.connect(self._open_dxf_check)
+        m_tools.addAction(act_dxf_check)
         m_tools.addSeparator()
         act_acad = QAction(tr("Нормоконтроль чертежа AutoCAD (Pro)…"), self)
         act_acad.setToolTip(tr("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel"))
@@ -5361,6 +5365,9 @@ class FluxionWindow(QMainWindow):
         if summary:
             lines.append(tr("По толщинам: ") + "; ".join(tr("{name} мм — {count} DXF", name=name, count=count) for name, count in summary) + ".")
             lines.append(tr("Папка: {out_dir}", out_dir=job.out_dir))
+            check = self._check_flat_patterns(job.out_dir)
+            if check:
+                lines.append(check)
         self._laser_lines.append("\n".join(lines))
         self._laser_entry["text"] = "\n".join(self._laser_lines[-40:])
         if summary:
@@ -5603,6 +5610,7 @@ class FluxionWindow(QMainWindow):
             "compare": self._open_compare,
             "purchase": self._open_purchase,
             "laser": self._open_laser_package,
+            "dxf_check": self._open_dxf_check,
             "acad": self._open_acad_check,
             "archive": self._open_archive,
             "calc": self._open_calc,
@@ -5882,6 +5890,60 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
         self._notify_answer(summary)
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _check_flat_patterns(self, folder: str, thickness: float = 0.0) -> str:
+        """«Проверка развёрток» of the DXF in *folder*: the workbook in it, a line for the chat."""
+        from cad import dxf_check, estimate
+
+        try:
+            limits = estimate.load_norms()["sheet_limits"]
+        except Exception:  # unreadable norms: the recommended limits
+            limits = None
+        try:
+            sheets = dxf_check.check_folder(folder, thickness, limits)
+            if not sheets:
+                return ""
+            path = dxf_check.save_xlsx(sheets, Path(folder) / "Проверка развёрток.xlsx")
+        except Exception as exc:  # the workbook open in Excel, a folder without rights
+            return tr("Проверка развёрток не удалась: {exc}", exc=exc)
+        return dxf_check.summary_text(sheets) + tr(" Отчёт: {path}", path=path)
+
+    def _open_dxf_check(self) -> None:
+        """Инструменты → Проверить развёртки DXF: a folder of flat patterns, the remarks in Excel (Pro)."""
+        from PySide6.QtWidgets import QFileDialog
+
+        from cad.laser import PRO_FEATURE
+
+        if not self._pro_feature(PRO_FEATURE, tr("Проверить развёртки DXF"),
+                                 tr("«Проверка развёрток» — функция Pro, как «Пакет на лазер»: малые отверстия, узкие "
+                                    "перемычки и вырезы в DXF для лазера.")):
+            return
+        start = str(self.qsettings.value("dxf_check_dir", "") or "")
+        folder = QFileDialog.getExistingDirectory(self, tr("Папка с развёртками DXF"), start)
+        if not folder:
+            return
+        self.qsettings.setValue("dxf_check_dir", folder)
+        thickness, ok = QInputDialog.getDouble(
+            self, tr("Толщина листа"),
+            tr("Толщина берётся из папки пакета на лазер («…\\8\\») или из имени файла («S10», «лист 12»).\n"
+               "Для остальных файлов — эта толщина, мм (0 — пропустить их):"), 0.0, 0.0, 200.0, 1)
+        if not ok:
+            return
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", tr("Проверить развёртки: {value}", value=folder))
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            text = self._check_flat_patterns(folder, thickness) or tr("В папке нет DXF.")
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._append_message("assistant", text)
+        report = Path(folder) / "Проверка развёрток.xlsx"
+        if report.is_file():
+            self._messages[-1]["sources"] = [{"file": str(report), "label": tr("Проверка развёрток.xlsx")}]
+            self._messages[-1]["sources_title"] = tr("Ссылки")
+            self._render_messages()
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
+        self._save_memory()
 
     def _open_norms_dialog(self) -> None:
         """Инструменты → Нормы и цены завода: what the «Смета» of a report is built on (Pro)."""

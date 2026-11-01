@@ -337,7 +337,7 @@ def test_shaft_key_and_suggestions():
 # ── registry, report, chat ──────────────────────────────────────────────────
 
 def test_registry_and_fields():
-    assert list(calc.CALCS) == ["weld", "bolt", "beam", "frame", "column", "bend", "shaft"]
+    assert list(calc.CALCS) == ["weld", "bolt", "beam", "frame", "column", "bend", "shaft", "pin", "cylinder", "axles"]
     for kind, (title, mod) in calc.CALCS.items():
         names = [f.name for f in mod.FIELDS]
         assert len(names) == len(set(names)), kind

@@ -26,7 +26,8 @@ def test_every_tab_calculates(app):
 
     dialog = CalcDialog()
     assert [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())] == ["Швы", "Болты", "Балки", "Рама", "Стойки", "Гибка",
-                                                                                    "Валы"]
+                                                                                    "Валы", "Пальцы", "Гидроцилиндр",
+                                                                                    "Развесовка"]
     filled = {
         "weld": {"force": "50 кН", "leg": "6", "length": "200"},
         "bolt": {"diameter": "М16", "shear": "40 кН", "count": "4", "plates": "8"},
@@ -36,6 +37,9 @@ def test_every_tab_calculates(app):
                   "body_load": "3 тс", "drawbar": "1500"},
         "column": {"force": "50 кН", "length": "2 м", "profile": "труба 60х60х3"},
         "shaft": {"diameter": "40", "torque": "400 Н·м", "moment": "300 Н·м"},
+        "pin": {"force": "12 тс", "diameter": "40", "lug": "30"},
+        "cylinder": {"bore": "100", "rod": "50", "pressure": "160 бар", "load": "10 тс", "length": "1800"},
+        "axles": {"frame": "6 т", "frame_x": "5500", "cargo": "30 т", "cargo_x": "7000", "axles": "6000; 7310; 8620"},
     }
     for kind, values in filled.items():
         tab = dialog.pages[kind]

@@ -67,6 +67,21 @@ class NormsDialog(QDialog):
             form.addRow(tr(title), spin)
             self.general[key] = spin
         self.tabs.addTab(general, tr("Общее"))
+        sheet = QWidget()
+        sheet_form = QFormLayout(sheet)
+        sheet_form.addRow(QLabel(tr("Проверка развёрток DXF после «Пакета на лазер»: наименьшие размеры в толщинах "
+                                    "листа t (1 — не меньше толщины).")))
+        self.sheet_limits = {}
+        for key, title in estimate.SHEET_CHECKS:
+            spin = QDoubleSpinBox()
+            spin.setRange(0, 20)
+            spin.setDecimals(2)
+            spin.setSingleStep(0.1)
+            spin.setSuffix(" t")
+            spin.valueChanged.connect(self._refresh)
+            sheet_form.addRow(tr(title), spin)
+            self.sheet_limits[key] = spin
+        self.tabs.addTab(sheet, tr("Лист"))
         box.addWidget(self.tabs, 1)
 
         buttons = QHBoxLayout()
@@ -186,6 +201,8 @@ class NormsDialog(QDialog):
                 self.formats.setItem(row, col, self._cell(_fmt(value)))
         for key, spin in self.general.items():
             spin.setValue(norms[key])
+        for key, spin in self.sheet_limits.items():
+            spin.setValue(norms["sheet_limits"][key])
         self._filling = False
         self._refresh()
 
@@ -196,6 +213,7 @@ class NormsDialog(QDialog):
             return item.text().strip() if item is not None else ""
 
         norms = {key: spin.value() for key, spin in self.general.items()}
+        norms["sheet_limits"] = {key: spin.value() for key, spin in self.sheet_limits.items()}
         norms["metal"] = [{"match": text(self.metal, r, 0), "name": text(self.metal, r, 1),
                            "price_kg": _number(text(self.metal, r, 2)), "waste_pct": _number(text(self.metal, r, 3))}
                           for r in range(self.metal.rowCount())]
@@ -238,6 +256,9 @@ class NormsDialog(QDialog):
                 self._mark(self.items.item(row, col), True)  # the recommended list is empty: every price is the plant's
         for key, spin in self.general.items():
             edited = norms[key] != self.recommended[key]
+            spin.setStyleSheet(f"color: {EDITED.name()}; font-weight: 600;" if edited else "")
+        for key, spin in self.sheet_limits.items():
+            edited = norms["sheet_limits"][key] != self.recommended["sheet_limits"][key]
             spin.setStyleSheet(f"color: {EDITED.name()}; font-weight: 600;" if edited else "")
         changed = estimate.changed(norms)
         self.state.setText(tr("Сейчас: рекомендуемые нормы.") if not changed

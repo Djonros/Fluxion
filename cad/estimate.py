@@ -75,6 +75,8 @@ RECOMMENDED = {
         {"key": "assembly", "hours": 0.1, "rate": 0.0},
     ],
     "items": [],  # {"match": "Ось 35т", "price": 45000.0}
+    # «Проверка развёрток» (cad/dxf_check.py): the least sizes in thicknesses of the sheet
+    "sheet_limits": {"hole": 1.0, "edge": 1.0, "between": 1.0, "slot": 1.0},
     # the sheets of the purchase list (cad/purchase.py): the first format the thickness fits; 0 — any
     "sheet_formats": [
         {"max_thickness": 4.0, "width": 1250.0, "length": 2500.0},
@@ -119,6 +121,9 @@ def normalize(data: dict) -> dict:
     for i in data.get("items") or []:
         if isinstance(i, dict) and str(i.get("match") or "").strip():
             out["items"].append({"match": str(i["match"]).strip(), "price": _float(i.get("price"))})
+    limits = data.get("sheet_limits") if isinstance(data.get("sheet_limits"), dict) else {}
+    out["sheet_limits"] = {k: _float(limits.get(k), v) if k in limits else v
+                           for k, v in RECOMMENDED["sheet_limits"].items()}
     formats = data.get("sheet_formats")
     if not isinstance(formats, list):  # a file of 0.25 before the purchase list: the recommended formats
         formats = RECOMMENDED["sheet_formats"]
@@ -166,6 +171,8 @@ def changed(norms: dict) -> list[str]:
         out.append(f"Цены покупных и крепежа: {len(norms['items'])}")
     if norms["sheet_formats"] != rec["sheet_formats"]:
         out.append("Форматы листа")
+    if norms["sheet_limits"] != rec["sheet_limits"]:
+        out.append("Проверка развёрток")
     return out
 
 
@@ -448,6 +455,8 @@ def write_sheet(sheet, est: Estimate, bold, head_fill, wrap) -> None:
 
 # ── the norms in Excel: fill them in in the department, carry them to another computer ──
 
+SHEET_CHECKS = (("hole", "Диаметр отверстия"), ("edge", "Перемычка от отверстия до края"),
+                ("between", "Перемычка между отверстиями"), ("slot", "Ширина выреза или паза"))
 GENERAL = (("rate", "Ставка нормо-часа, ₽/ч"), ("hardware_price_kg", "Крепёж без цены, ₽/кг"),
            ("overhead_pct", "Накладные, %"), ("profit_pct", "Рентабельность, %"))
 
@@ -476,6 +485,10 @@ def export_xlsx(norms: dict, path: str | Path) -> Path:
     ws.append(["До толщины, мм (0 — любая)", "Ширина, мм", "Длина, мм"])
     for f in norms["sheet_formats"]:
         ws.append([f["max_thickness"], f["width"], f["length"]])
+    ws = wb.create_sheet("Лист")
+    ws.append(["Проверка развёрток", "Не меньше, толщин листа", "Код"])
+    for key, title in SHEET_CHECKS:
+        ws.append([title, norms["sheet_limits"][key], key])
     ws = wb.create_sheet("Общее")
     ws.append(["Параметр", "Значение", "Код"])
     for key, title in GENERAL:
@@ -520,6 +533,12 @@ def import_xlsx(path: str | Path, base: dict | None = None) -> dict:
     if formats is not None:
         norms["sheet_formats"] = [{"max_thickness": _float(r[0]), "width": _float(r[1]), "length": _float(r[2])}
                                   for r in formats]
+    sheet_rows = rows("Лист")
+    if sheet_rows is not None:
+        for r in sheet_rows:
+            key = str(r[2] or "") if len(r) > 2 else ""
+            if key in norms["sheet_limits"]:
+                norms["sheet_limits"][key] = _float(r[1])
     general = rows("Общее")
     if general is not None:
         for r in general:
