@@ -5,7 +5,7 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.25.0] — 2026-11-01
 
 ### Added
 - «Боты в мессенджерах» (Инструменты; package `bots`): Telegram, MAX and ВКонтакте answer from this computer while Fluxion is open — long polling, no server, no open port. Questions go to the chat of Fluxion (its model and project index), voice messages to its speech model (ffmpeg decodes OGG/Opus); `/расчёт`, `/компас` (the .m3d sent back), and with Pro `/архив`, `/отчёт`, `/смета`, `/лазер` (the DXF by thickness in a .zip; the details that need a hand in KOMPAS skipped and named), `/сравнить`, `/заявка`, `/файл`; `/уведомления` tells when a report, laser package, comparison or purchase request started in the window is over. A stranger gets a six-digit code and nothing else until the owner confirms it; models and files only from the folders open to the bots. The settings window keeps the tokens in `%APPDATA%\Fluxion\bots.json`, checks a token («Проверить»), takes an HTTP proxy and starts Fluxion minimized at Windows sign-in (`--minimized`). The bot chats are kept in the chat history marked «[Telegram · Имя]». A button «Боты: Telegram ✓» in the status bar. Telegram and ВКонтакте checked against their servers; MAX only against a fake one (its hosts did not answer from the development machine). A page «Боты в мессенджерах» in the Инструкция.
