@@ -26,11 +26,12 @@ class CompareDialog(QDialog):
         grid = QGridLayout()
         self.old = QLineEdit()
         self.new = QLineEdit()
+        picks = (self._pick_old, self._pick_new)  # bound methods: Qt drops them with the dialog
         for row, (title, field) in enumerate(((tr("Было:"), self.old), (tr("Стало:"), self.new))):
             grid.addWidget(QLabel(title), row, 0)
             grid.addWidget(field, row, 1)
             pick = QPushButton(tr("Выбрать…"))
-            pick.clicked.connect(lambda _checked=False, f=field: self._pick(f))
+            pick.clicked.connect(picks[row])
             grid.addWidget(pick, row, 2)
         box.addLayout(grid)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -42,6 +43,12 @@ class CompareDialog(QDialog):
         self.old.textChanged.connect(self._update)
         self.new.textChanged.connect(self._update)
         self._update()
+
+    def _pick_old(self) -> None:
+        self._pick(self.old)
+
+    def _pick_new(self) -> None:
+        self._pick(self.new)
 
     def _pick(self, field: QLineEdit) -> None:
         start = field.text() or self.start

@@ -120,11 +120,12 @@ def test_the_purchase_window(tmp_path):
     dialog.add(str(tmp_path / "910.000.a3d"))
     assert dialog.ok.isEnabled()
     assert dialog.products() == [(str(tmp_path / "900.000 - снимок.json"), 3), (str(tmp_path / "910.000.a3d"), 1)]
+    dialog.deleteLater()
 
 
 def test_details_without_a_material_are_not_ordered_as_steel_10():
     """KOMPAS gives a new part «Сталь 10»: the order says the material is not set."""
-    top = Component(ASSEMBLY, "920.000", "Узел", "", 0, 0, "C:\m\920.000.a3d", children=[
+    top = Component(ASSEMBLY, "920.000", "Узел", "", 0, 0, "C:\\m\\920.000.a3d", children=[
         det("920.001", "Планка", "Сталь 10 ГОСТ 1050-2013", 5.0), det("920.002", "Втулка", "", 1.0)])
     rolled, = purchase.build([(snap(top), 2)]).rolled
     assert rolled.material == purchase.NO_MATERIAL and rolled.pieces == 4

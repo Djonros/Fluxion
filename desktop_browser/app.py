@@ -1039,7 +1039,7 @@ class ReportWarningsDialog(QDialog):
         self.table.cellDoubleClicked.connect(self.open_model)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._same_menu)
-        self.table.currentCellChanged.connect(lambda *_a: self._update())
+        self.table.currentCellChanged.connect(self._update)  # bound methods: Qt drops them with the dialog
         box.addWidget(self.table, 1)
         buttons = QHBoxLayout()
         from .manual import help_button
@@ -1049,7 +1049,7 @@ class ReportWarningsDialog(QDialog):
         buttons.addWidget(self.counter, 1)
         self.same_button = QPushButton()
         self.same_button.setToolTip(tr("Отметить «Проверено» все строки с тем же замечанием, что у выбранной"))
-        self.same_button.clicked.connect(lambda: self.mark_same(self.table.currentRow()))
+        self.same_button.clicked.connect(self._mark_same_current)
         buttons.addWidget(self.same_button)
         from cad.fix import material_fixes, section_fixes
 
@@ -1142,6 +1142,9 @@ class ReportWarningsDialog(QDialog):
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(file))
         return file
+
+    def _mark_same_current(self) -> None:
+        self.mark_same(self.table.currentRow())
 
     def same_rows(self, row: int) -> list[int]:
         """The rows with the same remark as *row* («Малый радиус гиба» of every detail)."""
@@ -2105,7 +2108,8 @@ class FluxionWindow(QMainWindow):
         self.history_search = QLineEdit()
         self.history_search.setPlaceholderText(tr("Поиск по чатам"))
         self.history_search.setClearButtonEnabled(True)
-        self.history_search.textChanged.connect(lambda _text: self._refresh_chat_selector())
+        # bound methods, not lambdas: Qt drops them with the widgets when the window is torn down
+        self.history_search.textChanged.connect(self._on_history_search)
         box.addWidget(self.history_search)
         self.history_list = QListWidget()
         self.history_list.setObjectName("historyList")
@@ -2116,7 +2120,7 @@ class FluxionWindow(QMainWindow):
         self.history_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.history_list.customContextMenuRequested.connect(self._history_menu)
         self.history_list.itemClicked.connect(self._on_history_clicked)
-        self.history_list.itemDoubleClicked.connect(lambda item: self._rename_chat(item.data(Qt.UserRole)))
+        self.history_list.itemDoubleClicked.connect(self._on_history_double_clicked)
         delete_key = QShortcut(QKeySequence.Delete, self.history_list)
         delete_key.setContext(Qt.WidgetShortcut)
         delete_key.activated.connect(self._delete_selected_chats)
@@ -2156,6 +2160,12 @@ class FluxionWindow(QMainWindow):
             empty.setFlags(Qt.NoItemFlags)
             listing.addItem(empty)
         listing.blockSignals(False)
+
+    def _on_history_search(self, _text: str) -> None:
+        self._refresh_chat_selector()
+
+    def _on_history_double_clicked(self, item: QListWidgetItem) -> None:
+        self._rename_chat(item.data(Qt.UserRole))
 
     def _selected_chat_ids(self) -> list[str]:
         listing = getattr(self, "history_list", None)
@@ -6549,15 +6559,20 @@ class FluxionWindow(QMainWindow):
             self.statusBar().showMessage(tr("Проверка обновлений…"))
         worker = UpdateWorker(APP_VERSION)
         self._update_worker = worker
-        worker.done.connect(lambda info: self._on_update_result(info, auto=auto))
-        worker.finished.connect(lambda: self._forget_update_worker(worker))
+        self._update_auto = auto
+        worker.done.connect(self._on_update_done)  # bound methods: Qt drops them with the window
+        worker.finished.connect(self._forget_update_worker)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
-    def _forget_update_worker(self, worker) -> None:
+    def _on_update_done(self, info) -> None:
+        self._on_update_result(info, auto=getattr(self, "_update_auto", False))
+
+    def _forget_update_worker(self) -> None:
         # forget it before deleteLater: closeEvent waits on self._update_worker, and a
         # deleted one raised there — the window did not close for the installer
-        if getattr(self, "_update_worker", None) is worker:
+        worker = getattr(self, "_update_worker", None)
+        if worker is not None and worker.isFinished():
             self._update_worker = None
 
     def _auto_updates_enabled(self) -> bool:

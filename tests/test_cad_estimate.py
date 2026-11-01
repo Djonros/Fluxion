@@ -157,9 +157,11 @@ def test_the_norms_window(tmp_path, monkeypatch):
     dialog.save()
     saved = estimate.load_norms()
     assert saved["rate"] == 900 and saved["operations"][2]["hours"] == 0.55
+    dialog.deleteLater()
     dialog = NormsDialog()
     dialog.reset_row(dialog.work, weld)
     assert not dialog.work.item(weld, 2).font().bold()
     monkeypatch.setattr("desktop_browser.norms_dialog.QMessageBox.question", lambda *a, **k: QMessageBox.Yes)
     dialog.reset_all()
     assert dialog.collect() == estimate.recommended() and "рекомендуемые" in dialog.state.text()
+    dialog.deleteLater()  # not left to the end of the run: Qt tears it down in order

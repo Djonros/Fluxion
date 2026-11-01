@@ -36,6 +36,7 @@ class NormsDialog(QDialog):
         self.recommended = estimate.recommended()
         self.norms = estimate.normalize(norms) if norms is not None else estimate.load_norms()
         self._filling = False
+        self._row_tables: list[QTableWidget] = []  # the tables of the «Удалить строку» buttons
         box = QVBoxLayout(self)
         intro = QLabel(tr("Смета отчёта по сборке считается по этим нормам и ценам. {basis} "
                           "Исправленные значения выделены цветом; правая кнопка по строке — «Вернуть рекомендуемое».",
@@ -102,7 +103,7 @@ class NormsDialog(QDialog):
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         table.itemChanged.connect(self._refresh)
         table.setContextMenuPolicy(Qt.CustomContextMenu)
-        table.customContextMenuRequested.connect(lambda pos, t=table: self._row_menu(t, pos))
+        table.customContextMenuRequested.connect(self._on_menu)  # bound: Qt drops it with the dialog
         return table
 
     def _with_rows(self, table: QTableWidget, add) -> QWidget:
@@ -114,8 +115,9 @@ class NormsDialog(QDialog):
         plus = QPushButton(tr("Добавить строку"))
         plus.clicked.connect(add)
         minus = QPushButton(tr("Удалить строку"))
-        minus.clicked.connect(lambda: table.removeRow(table.currentRow()) if table.currentRow() >= 0 else None)
-        minus.clicked.connect(self._refresh)
+        minus.setProperty("table", len(self._row_tables))
+        self._row_tables.append(table)
+        minus.clicked.connect(self._remove_row)
         row.addWidget(plus)
         row.addWidget(minus)
         row.addStretch(1)
@@ -256,6 +258,21 @@ class NormsDialog(QDialog):
         else:
             item.setData(Qt.ForegroundRole, None)
             item.setToolTip("")
+
+    def _on_menu(self, pos) -> None:
+        table = self.sender()
+        if isinstance(table, QTableWidget):
+            self._row_menu(table, pos)
+
+    def _remove_row(self) -> None:
+        button = self.sender()
+        index = button.property("table") if button is not None else None
+        if index is None or not 0 <= int(index) < len(self._row_tables):
+            return
+        table = self._row_tables[int(index)]
+        if table.currentRow() >= 0:
+            table.removeRow(table.currentRow())
+        self._refresh()
 
     def _row_menu(self, table: QTableWidget, pos) -> None:
         row = table.rowAt(pos.y())

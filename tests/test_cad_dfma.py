@@ -184,7 +184,7 @@ def test_mark_all_such_in_the_warnings_window():
     QApplication.instance() or QApplication([])
     bent = [det(f"400.00{i}", "Уголок", SHEET3, kg=1.0 + i, m2=0.1 + i, sheet_thickness=3, bend_radius=1,
                 features=BENT) for i in range(3)]
-    top = Component(ASSEMBLY, "400.000", "Рама", "", 9000, 0, "C:\m\400.000.a3d",
+    top = Component(ASSEMBLY, "400.000", "Рама", "", 9000, 0, "C:\\m\\400.000.a3d",
                     children=bent + [det("", "Планка", kg=1.0, m2=0.1)])
     dialog = ReportWarningsDialog(report.build(top))
     radius_rows = dialog.same_rows(next(i for i, x in enumerate(dialog.result.remarks)
@@ -197,6 +197,7 @@ def test_mark_all_such_in_the_warnings_window():
     assert not dialog.make_button.isEnabled()  # «Деталь без обозначения» is still to mark
     assert dialog.mark_same(radius_rows[0], checked=False) == 3
     assert all(dialog.table.item(i, 0).checkState() == Qt.Unchecked for i in radius_rows)
+    dialog.deleteLater()
 
 
 def test_the_laser_package_takes_the_thickness_of_the_material():

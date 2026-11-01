@@ -131,6 +131,7 @@ def test_the_compare_window_needs_two_different_versions(tmp_path):
     dialog.new.setText(str(new))
     assert dialog.ok.isEnabled() and dialog.paths() == (str(old), str(new))
     assert version_snapshot(str(old), print)["product"]["marking"] == "600.000"  # a .json needs no KOMPAS
+    dialog.deleteLater()
 
 
 def test_a_notice_of_change_in_the_designation_is_the_same_component():

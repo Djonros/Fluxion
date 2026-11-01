@@ -301,7 +301,7 @@ def test_the_window_closes_for_the_installer_after_an_update_check(window, monke
 
 def test_fluxion_waits_for_the_installer(monkeypatch):
     """Started while FluxionSetup.exe copies its files (a shortcut mid-update), Fluxion loaded
-    half-copied PySide6 and crashed («shiboken6\libshiboken does not exist»): it waits now."""
+    half-copied PySide6 and crashed («shiboken6\\libshiboken does not exist»): it waits now."""
     import run_desktop_browser as launcher
 
     states = iter([True, True, False])
