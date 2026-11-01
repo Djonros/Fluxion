@@ -107,6 +107,24 @@ def load_snapshot(path: str | Path) -> dict:
 _CHANGE_NOTE_RE = re.compile(r"\s*изм\.?\s*\d+", re.IGNORECASE)
 
 
+def version_snapshot(path: str, log) -> dict:
+    """The snapshot of a version: read from a .json, or the assembly read and reported."""
+    if Path(path).suffix.lower() == ".json":
+        return load_snapshot(path)
+    from . import assembly, report
+
+    top = assembly.read(path, log=log)
+    result = report.build(top, report.load_decisions(top.file))
+    report.add_welds(result, log=log)
+    try:
+        from . import estimate
+
+        cost = estimate.build(result).total
+    except Exception:  # unreadable norms: compared without the cost
+        cost = None
+    return snapshot(result, cost)
+
+
 def base_marking(marking: str) -> str:
     """The designation without the notice of change: «792720.2801220 Изм2-01» -> «792720.2801220-01»."""
     return " ".join(_CHANGE_NOTE_RE.sub("", marking or "").split()).lower()

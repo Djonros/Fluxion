@@ -95,7 +95,7 @@ class PurchaseWorker(QThread):
     def run(self) -> None:
         from cad import assembly, purchase
 
-        from .compare_dialog import version_snapshot
+        from cad.compare import version_snapshot
 
         try:
             import pythoncom

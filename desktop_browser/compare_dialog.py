@@ -9,6 +9,8 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QGridLayout, QLabel, QLineEdit, QPushButton,
                                QVBoxLayout)
 
+from cad.compare import version_snapshot
+
 from .i18n import tr
 
 
@@ -65,26 +67,6 @@ class CompareDialog(QDialog):
         old, new = self.paths()
         ok = all(p and Path(p).is_file() and Path(p).suffix.lower() in (".a3d", ".json") for p in (old, new))
         self.ok.setEnabled(ok and Path(old).resolve() != Path(new).resolve())
-
-
-def version_snapshot(path: str, log) -> dict:
-    """The snapshot of a version: read from a .json, or the assembly read and reported."""
-    from cad import compare
-
-    if Path(path).suffix.lower() == ".json":
-        return compare.load_snapshot(path)
-    from cad import assembly, report
-
-    top = assembly.read(path, log=log)
-    result = report.build(top, report.load_decisions(top.file))
-    report.add_welds(result, log=log)
-    try:
-        from cad import estimate
-
-        cost = estimate.build(result).total
-    except Exception:  # unreadable norms: compared without the cost
-        cost = None
-    return compare.snapshot(result, cost)
 
 
 class CompareWorker(QThread):

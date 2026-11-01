@@ -2522,6 +2522,13 @@ class FluxionWindow(QMainWindow):
         self.browser_button.toggled.connect(self._toggle_web_panel)
         bar.addPermanentWidget(self.browser_button)
 
+        self.bots_button = QToolButton()
+        self.bots_button.setText(tr("Боты"))
+        self.bots_button.setToolTip(tr("Боты в мессенджерах"))
+        self.bots_button.clicked.connect(self._open_bots_dialog)
+        self.bots_button.setVisible(False)
+        bar.addPermanentWidget(self.bots_button)
+
         self.health_button = QToolButton()
         self.health_button.setText(tr("Состояние"))
         self.health_button.setToolTip(tr("Диагностика зависимостей: Ollama, модель, Docker, веб-поиск, индекс"))
@@ -2655,6 +2662,11 @@ class FluxionWindow(QMainWindow):
         act_archive.setToolTip(tr("Поиск по архиву КД: КОМПАС-3D, PDF, документы. Вопросы в чате: /архив …"))
         act_archive.triggered.connect(self._open_archive)
         m_tools.addAction(act_archive)
+        m_tools.addSeparator()
+        act_bots = QAction(tr("Боты в мессенджерах…"), self)
+        act_bots.setToolTip(tr("Telegram, MAX и ВКонтакте отвечают с этого компьютера, пока Fluxion открыт"))
+        act_bots.triggered.connect(self._open_bots_dialog)
+        m_tools.addAction(act_bots)
 
         # Помощь
         m_help = bar.addMenu(tr("&Помощь"))
@@ -5378,6 +5390,7 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
         self._save_memory()
         self._notify_answer(lines[0])
+        self._notify_bots(tr("Fluxion: пакет на лазер — {value}", value=lines[0]))
 
     def _pro_feature(self, feature: str, title: str, text: str) -> bool:
         """Is *feature* of Fluxion Pro on? If not, say what it is and how to activate it."""
@@ -5530,6 +5543,7 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
         self._save_memory()
         self._notify_answer(summary)
+        self._notify_bots(tr("Fluxion: отчёт готов — {value}", value=Path(path).name))
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _on_report_failed(self, message: str) -> None:
@@ -5614,6 +5628,7 @@ class FluxionWindow(QMainWindow):
             "acad": self._open_acad_check,
             "archive": self._open_archive,
             "calc": self._open_calc,
+            "bots": self._open_bots_dialog,
         }
 
     def open_manual(self, page: str = "") -> None:
@@ -5844,6 +5859,7 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
         self._save_memory()
         self._notify_answer(summary)
+        self._notify_bots(tr("Fluxion: сравнение готово — {value}", value=Path(path).name))
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _open_purchase(self) -> None:
@@ -5889,6 +5905,7 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
         self._save_memory()
         self._notify_answer(summary)
+        self._notify_bots(tr("Fluxion: заявка готова — {value}", value=Path(path).name))
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _check_flat_patterns(self, folder: str, thickness: float = 0.0) -> str:
@@ -6987,8 +7004,88 @@ class FluxionWindow(QMainWindow):
 
     # ── shutdown ─────────────────────────────────────────────────────────
 
+    # ── «Боты в мессенджерах»: Telegram, MAX, ВКонтакте (package bots) ──────────
+
+    def start_bots(self) -> None:
+        """Start the enabled bots (at launch and after the settings window)."""
+        from bots import config
+        from bots.brain import Brain
+        from bots.runner import Runner
+
+        from .bots_dialog import BotHost
+
+        if getattr(self, "bot_runner", None) is None:
+            self._bot_host = BotHost(self)
+            self._bot_host.chat_saved.connect(self._on_bot_chat)
+            self._bot_host.state_changed.connect(self._on_bot_state)
+            self._bot_host.pending_code.connect(self._on_bot_code)
+            self._bot_states: dict[str, tuple[str, bool]] = {}
+            self.bot_runner = Runner(Brain(self._bot_host), state=self._bot_host.state_changed.emit)
+        data = config.load()
+        if not any(data[p]["enabled"] and data[p]["token"] for p in config.PLATFORMS):
+            self._refresh_bots_button()
+            return
+        self.bot_runner.start()
+        self._refresh_bots_button()
+
+    def stop_bots(self) -> None:
+        if getattr(self, "bot_runner", None) is not None:
+            self.bot_runner.stop()
+            self._bot_states = {}
+            self._refresh_bots_button()
+
+    def _open_bots_dialog(self) -> None:
+        from .bots_dialog import BotsDialog
+
+        states = {p: text for p, (text, _ok) in getattr(self, "_bot_states", {}).items()}
+        dialog = BotsDialog(self, states)
+        if dialog.exec() == QDialog.Accepted:
+            dialog.save()
+            self.stop_bots()  # new tokens and switches: start again
+            self.start_bots()
+        dialog.deleteLater()
+
+    def _on_bot_state(self, platform: str, text: str, ok: bool) -> None:
+        from bots.config import TITLES
+
+        self._bot_states[platform] = (text, ok)
+        if not ok:
+            self.statusBar().showMessage(tr("Бот {name}: {text}", name=TITLES[platform], text=text), 8000)
+        self._refresh_bots_button()
+
+    def _refresh_bots_button(self) -> None:
+        from bots.config import TITLES
+
+        states = getattr(self, "_bot_states", {})
+        if not states:
+            self.bots_button.setVisible(False)
+            return
+        self.bots_button.setVisible(True)
+        marks = [f"{TITLES[p]} {'✓' if ok else '✖'}" for p, (_text, ok) in states.items()]
+        self.bots_button.setText(tr("Боты: {value}", value=", ".join(marks)))
+        self.bots_button.setToolTip("\n".join(f"{TITLES[p]}: {text}" for p, (text, _ok) in states.items()))
+
+    def _on_bot_code(self, platform: str, name: str, code: str) -> None:
+        from bots.config import TITLES
+
+        self.statusBar().showMessage(tr("{name} пишет боту {platform}: подтвердите в «Боты в мессенджерах» "
+                                        "кодом из его сообщения", name=name, platform=TITLES[platform]), 15000)
+
+    def _on_bot_chat(self, session: dict) -> None:
+        """A bot chat in the chat history; the chat open in the window is not touched."""
+        self._sessions = save_session(session)
+        self._refresh_chat_selector()
+
+    def _notify_bots(self, text: str) -> None:
+        runner = getattr(self, "bot_runner", None)
+        if runner is not None and runner.running():
+            from threading import Thread
+
+            Thread(target=runner.notify, args=(text,), daemon=True, name="fluxion-bot-notify").start()
+
     def closeEvent(self, event) -> None:
         self._save_memory()
+        self.stop_bots()
         if getattr(self, "report_worker", None) is not None:
             self.report_worker.wait(120000)  # KOMPAS reads a big assembly for a while
         if getattr(self, "acad_worker", None) is not None:
@@ -7133,7 +7230,15 @@ def main() -> int:
             rag_service = None
             window = FluxionWindow()
             window.status_label.setText(tr("Ошибка движка: {exc}", exc=exc))
-        window.show()
+        if "--minimized" in sys.argv:  # started with Windows for the bots (Инструменты → Боты в мессенджерах)
+            window.showMinimized()
+        else:
+            window.show()
+        if os.environ.get("FLUXION_DESKTOP_SMOKE") != "1":
+            try:
+                window.start_bots()
+            except Exception as exc:  # a broken bots.json must not stop Fluxion
+                window.statusBar().showMessage(tr("Боты не запущены: {exc}", exc=exc), 10000)
 
         if (
             os.environ.get("FLUXION_DESKTOP_SMOKE") != "1"

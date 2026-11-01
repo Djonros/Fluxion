@@ -110,3 +110,14 @@ def _close_app_windows():
         except Exception:  # a test replaced a worker with a stub that cannot stop
             pass
     app.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_bots(tmp_path, monkeypatch):
+    """The messenger bots keep their tokens in %APPDATA%/Fluxion/bots.json: never the developer's real one."""
+    try:
+        import bots.config as config
+    except Exception:
+        return
+    monkeypatch.setattr(config, "path", lambda: tmp_path / "bots.json")
+    config._pending.clear()

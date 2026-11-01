@@ -202,6 +202,18 @@ a = Analysis(
         "desktop_browser.norms_dialog",
         "desktop_browser.compare_dialog",
         "desktop_browser.purchase_dialog",
+        # «Боты в мессенджерах»: Telegram, MAX, ВКонтакте, imported lazily from the window
+        "bots",
+        "bots.base",
+        "bots.config",
+        "bots.telegram",
+        "bots.maxbot",
+        "bots.vk",
+        "bots.audio",
+        "bots.jobs",
+        "bots.brain",
+        "bots.runner",
+        "desktop_browser.bots_dialog",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window
         "dxfka",
