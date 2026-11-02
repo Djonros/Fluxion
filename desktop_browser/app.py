@@ -2667,6 +2667,10 @@ class FluxionWindow(QMainWindow):
         act_bots.setToolTip(tr("Telegram, MAX и ВКонтакте отвечают с этого компьютера, пока Fluxion открыт"))
         act_bots.triggered.connect(self._open_bots_dialog)
         m_tools.addAction(act_bots)
+        act_phone = QAction(tr("Связь с телефоном…"), self)
+        act_phone.setToolTip(tr("Fluxion Mobile спрашивает этот компьютер по домашней сети: фото на вкладке «Ремонт»"))
+        act_phone.triggered.connect(self._open_phone_dialog)
+        m_tools.addAction(act_phone)
 
         # Помощь
         m_help = bar.addMenu(tr("&Помощь"))
@@ -7083,9 +7087,57 @@ class FluxionWindow(QMainWindow):
 
             Thread(target=runner.notify, args=(text,), daemon=True, name="fluxion-bot-notify").start()
 
+    # ── «Связь с телефоном»: Fluxion Mobile asks this PC (package phone) ──────────
+
+    def start_phone(self) -> None:
+        """Start the server for the phone when it is turned on (at launch and after its window)."""
+        from phone import config
+        from phone.server import Link
+
+        from .phone_dialog import PhoneHost
+
+        self.stop_phone()
+        cfg = config.load()
+        if not cfg["enabled"]:
+            self._phone_state = tr("Выключено")
+            return
+        if getattr(self, "_phone_host", None) is None:
+            self._phone_host = PhoneHost(self)
+            self._phone_host.asked.connect(self._on_phone_asked)
+        host = getattr(getattr(self, "settings", None), "ollama_host", "") or "http://localhost:11434"
+        link = Link(cfg, host, lambda: getattr(self, "backend", None), on_request=self._phone_host.asked.emit)
+        try:
+            port = link.start()
+        except OSError as exc:
+            self._phone_state = tr("Порт {port} занят: {exc}", port=cfg["port"], exc=exc)
+            self.statusBar().showMessage(tr("Связь с телефоном не запущена: {exc}", exc=self._phone_state), 10000)
+            return
+        self.phone_link = link
+        self._phone_state = tr("Работает на порту {port}", port=port)
+
+    def stop_phone(self) -> None:
+        link = getattr(self, "phone_link", None)
+        if link is not None:
+            link.stop()
+            self.phone_link = None
+
+    def _on_phone_asked(self, kind: str) -> None:
+        text = tr("Телефон прислал фото: разбираю") if kind == "фото" else tr("Телефон задал вопрос")
+        self.statusBar().showMessage(text, 8000)
+
+    def _open_phone_dialog(self) -> None:
+        from .phone_dialog import PhoneDialog
+
+        dialog = PhoneDialog(self, getattr(self, "_phone_state", ""))
+        if dialog.exec() == QDialog.Accepted:
+            dialog.save()
+            self.start_phone()
+        dialog.deleteLater()
+
     def closeEvent(self, event) -> None:
         self._save_memory()
         self.stop_bots()
+        self.stop_phone()
         if getattr(self, "report_worker", None) is not None:
             self.report_worker.wait(120000)  # KOMPAS reads a big assembly for a while
         if getattr(self, "acad_worker", None) is not None:
@@ -7239,6 +7291,10 @@ def main() -> int:
                 window.start_bots()
             except Exception as exc:  # a broken bots.json must not stop Fluxion
                 window.statusBar().showMessage(tr("Боты не запущены: {exc}", exc=exc), 10000)
+            try:
+                window.start_phone()
+            except Exception as exc:  # nor a broken phone.json
+                window.statusBar().showMessage(tr("Связь с телефоном не запущена: {exc}", exc=exc), 10000)
 
         if (
             os.environ.get("FLUXION_DESKTOP_SMOKE") != "1"
