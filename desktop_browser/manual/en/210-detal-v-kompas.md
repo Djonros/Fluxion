@@ -6,7 +6,7 @@ To build a simple part in KOMPAS-3D from words: «уголок 50х30 из ли�
 
 ## How to start
 
-Menu **Tools → «Part in KOMPAS…»** or `/компас description` in the chat.
+Menu **Design → «Part in KOMPAS…»** or `/компас description` in the chat.
 
 ## Step by step
 

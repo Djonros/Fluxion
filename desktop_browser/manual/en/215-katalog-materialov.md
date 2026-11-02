@@ -6,7 +6,7 @@ Your own materials and sheets with their range of thicknesses, for the parts Flu
 
 ## How to start
 
-Menu **Tools → «Materials catalog…»**.
+Menu **Design → «Materials catalog…»**.
 
 ## Step by step
 

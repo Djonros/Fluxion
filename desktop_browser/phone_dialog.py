@@ -1,4 +1,4 @@
-"""«Связь с телефоном» (Инструменты): Fluxion Mobile asks this PC over the home network
+"""«Связь с телефоном» (Связь): Fluxion Mobile asks this PC over the home network
 (package phone). The window turns the server on, shows the address and the pairing code
 to type on the phone, and downloads the vision model the «Ремонт» tab of the phone uses.
 """

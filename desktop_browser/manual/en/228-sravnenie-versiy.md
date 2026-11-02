@@ -6,7 +6,7 @@ To see what changed between two versions of a product: which positions were adde
 
 ## How to start
 
-Menu **Tools → «Compare assembly versions (Pro)…»**.
+Menu **Production → «Compare assembly versions…»**.
 
 ## Step by step
 

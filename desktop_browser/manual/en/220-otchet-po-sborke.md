@@ -6,7 +6,7 @@ From a finished KOMPAS-3D assembly — the summary bill of materials, metal weig
 
 ## How to start
 
-Menu **Tools → «Assembly bill of materials and metal weight (Pro)…»**, choose the `.a3d` file.
+Menu **Production → «Assembly bill of materials and metal weight…»**, choose the `.a3d` file.
 
 ## Step by step
 

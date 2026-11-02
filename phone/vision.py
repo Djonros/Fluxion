@@ -185,5 +185,5 @@ def pick(cfg: dict, ollama_host: str, folder: Path | None = None, embedded=None)
     if installed(cfg, folder):
         raise VisionUnavailable("Модель для фото скачана, но llama-cpp-python на компьютере старый: "
                                 "нужна версия 0.3.9 или новее (или Ollama с моделью qwen2.5vl)")
-    raise VisionUnavailable("На компьютере нет модели для фото: в Fluxion откройте Инструменты → "
+    raise VisionUnavailable("На компьютере нет модели для фото: в Fluxion откройте Связь → "
                             "«Связь с телефоном» и нажмите «Скачать модель для фото»")

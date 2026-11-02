@@ -6,7 +6,7 @@ Memos, explanatory notes and letters to customers — in your own manner: forms 
 
 ## How to start
 
-Menu **Tools → «My writing style…»**, then the **«✍ My style»** chip under the input field.
+Menu **Connect → «My writing style…»**, then **+** at the input field → **«My style»**.
 
 ## Step by step
 
@@ -14,7 +14,7 @@ Menu **Tools → «My writing style…»**, then the **«✍ My style»** chip u
 2. Check the «Kind of text» column.
 3. **«Describe the style»** — the model reads the samples (up to a couple of minutes).
 4. Correct the description if needed and «Save».
-5. Turn on «✍ My style» and write: «a memo to buy 09G2S sheet 10 mm, 1.8 t, by 5 November».
+5. Turn on «My style» (+ → «My style») and write: «a memo to buy 09G2S sheet 10 mm, 1.8 t, by 5 November».
 
 ## What you get
 
@@ -23,4 +23,4 @@ A text in your manner. Fluxion takes the facts only from the request and leaves 
 ## If it does not work
 
 - You added new samples — «Describe the style» and «Save» again.
-- For ordinary questions turn «✍ My style» off: the answers are shorter.
+- For ordinary questions turn «My style» off (the cross on its chip over the field): the answers are shorter.

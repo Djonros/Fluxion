@@ -6,7 +6,7 @@ What to buy for several products in their quantities: sheets by grade and thickn
 
 ## How to start
 
-Menu **Tools → «Purchase list (Pro)…»**.
+Menu **Production → «Purchase list…»**.
 
 ## Step by step
 
@@ -27,7 +27,7 @@ The chat gets a short summary: tonnes of sheet and the number of sheets, tonnes 
 
 ## If it does not work
 
-- Waste by material and the **sheet formats** (by default 1250×2500 up to 4 mm and 1500×6000 thicker) — **Tools → «Plant norms and prices»**, the «Metal» and «Sheet formats» tabs.
+- Waste by material and the **sheet formats** (by default 1250×2500 up to 4 mm and 1500×6000 thicker) — **Production → «Plant norms and prices»**, the «Metal» and «Sheet formats» tabs.
 - The sheet thickness is taken from the material of the part («Лист 10…»), and without it — from the sheet body.
 - Parts without a material (KOMPAS gives a new part «Сталь 10») are listed separately as «material not set», not ordered as steel 10.
 - There is no length of rolled metal in metres: the program has no tables of linear mass, and Fluxion does not write a guess.

@@ -3,17 +3,34 @@
 It replaced a one-line QLineEdit, which kept a long message on one line out of
 sight and cut a pasted text at 32 767 characters.  The methods of the old field
 the window uses — ``text()``, ``setText()``, ``returnPressed`` — are kept.
+
+Files dropped on the field or pasted with Ctrl+V, and a picture copied to the
+clipboard (a screenshot), are not inserted as text: ``filesAttached`` gives their
+paths to the window, which attaches them to the message.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeyEvent, QTextOption
+import tempfile
+import time
+from pathlib import Path
+
+from PySide6.QtCore import QMimeData, Qt, Signal
+from PySide6.QtGui import QImage, QKeyEvent, QTextOption
 from PySide6.QtWidgets import QFrame, QPlainTextEdit, QSizePolicy
+
+
+def pasted_image_path(image: QImage) -> str:
+    """Save a picture from the clipboard to a PNG in the temp folder; its path, or "" when it fails."""
+    folder = Path(tempfile.gettempdir()) / "fluxion-paste"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / time.strftime("скриншот-%Y%m%d-%H%M%S.png")
+    return str(path) if image.save(str(path), "PNG") else ""
 
 
 class ChatInput(QPlainTextEdit):
     returnPressed = Signal()        # Enter: send
     agentRequested = Signal()       # Ctrl+Enter: run this message through the agent
+    filesAttached = Signal(list)    # paths of files dropped or pasted, of a pasted picture
 
     MIN_LINES = 1
     MAX_LINES = 8
@@ -55,6 +72,29 @@ class ChatInput(QPlainTextEdit):
             self.returnPressed.emit()
             return
         super().keyPressEvent(event)
+
+    # ── files and pictures: dropped or pasted ──────────────────────────────
+
+    @staticmethod
+    def _local_files(source: QMimeData) -> list[str]:
+        if not source.hasUrls():
+            return []
+        return [url.toLocalFile() for url in source.urls() if url.isLocalFile() and Path(url.toLocalFile()).is_file()]
+
+    def canInsertFromMimeData(self, source: QMimeData) -> bool:  # noqa: N802 (Qt API)
+        return bool(self._local_files(source)) or source.hasImage() or super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source: QMimeData) -> None:  # noqa: N802 (Qt API)
+        files = self._local_files(source)
+        if files:
+            self.filesAttached.emit(files)
+            return
+        if source.hasImage() and not source.hasText():
+            path = pasted_image_path(QImage(source.imageData()))
+            if path:
+                self.filesAttached.emit([path])
+            return
+        super().insertFromMimeData(source)
 
     # ── height: one line empty, up to MAX_LINES, then a scroll bar ────────
 

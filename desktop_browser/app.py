@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import random
 import re
 import os
 import sys
@@ -10,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QSettings, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QShortcut, QTextDocument
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -112,6 +113,23 @@ PLAN_TASK_PREFIX = (
 )
 PLAN_RUN_PREFIX = tr("Реализуй план:\n")
 PLAN_RUN_URL = "fluxion://run-plan"
+COPY_URL = "fluxion://copy/"  # + index of the answer in _messages
+COPY_ICON = "fluxion-icon:copy"
+FILE_ICON = "fluxion-icon:file"
+THINK_ICON = "fluxion-icon:thinking"  # the spinner frame, replaced on each tick (_on_think_tick)
+# «Думаю…»: one phrase for the whole answer, the next one for the next question
+THINK_PHRASES = (tr("Думаю…"), tr("Раздумываю…"), tr("В раздумье…"))
+# Правка and the context menus of the text fields: (icon, text, keys, method of the field)
+EDIT_MENU = (
+    ("undo", tr("Отменить"), "Ctrl+Z", "undo"),
+    ("redo", tr("Повторить"), "Ctrl+Y", "redo"),
+    None,
+    ("cut", tr("Вырезать"), "Ctrl+X", "cut"),
+    ("copy", tr("Копировать"), "Ctrl+C", "copy"),
+    ("paste", tr("Вставить"), "Ctrl+V", "paste"),
+    None,
+    ("select", tr("Выделить всё"), "Ctrl+A", "selectAll"),
+)
 SPEAK_URL = "fluxion://speak/"  # + index of the answer in _messages
 HANDS_FREE_WAIT = 8.0  # seconds to wait for speech before listening again
 HANDS_FREE_SILENT_TURNS = 3  # turns without speech that switch hands-free mode off
@@ -687,6 +705,33 @@ class ModelImportWorker(QThread):
             self.failed.emit(tr("Ошибка импорта: {exc}", exc=exc))
 
 
+def menu_caption(menu: QMenu, text: str) -> None:
+    """A small grey caption over a group of rows (QMenu.addSection shows only a line on Windows)."""
+    from PySide6.QtWidgets import QWidgetAction
+
+    label = QLabel(text.upper())
+    label.setObjectName("menuCaption")
+    action = QWidgetAction(menu)
+    action.setDefaultWidget(label)
+    action.setEnabled(False)
+    if not menu.isEmpty():
+        menu.addSeparator()
+    menu.addAction(action)
+
+
+def with_attachments(question: str, files: list[dict], ollama_host: str, notice) -> str:
+    """*question* with the text of the attached *files* in front of it; *notice* gets each
+    file that could not be read. Runs in the worker thread: a picture takes the vision model a while."""
+    if not files:
+        return question
+    from .attachments import context
+
+    block, problems = context(files, question, ollama_host)
+    for problem in problems:
+        notice(problem)
+    return f"{block}\n\n{question}" if block else question
+
+
 class ChatWorker(QThread):
     """Streams tokens from Assistant.ask_stream in a background thread."""
 
@@ -695,6 +740,7 @@ class ChatWorker(QThread):
     failed = Signal(str)
     finished_ok = Signal()
     text_reset = Signal()
+    notice = Signal(str)  # a file that could not be attached
 
     def __init__(self, assistant, query: str, history: list[dict[str, str]], parent=None):
         super().__init__(parent)
@@ -704,13 +750,15 @@ class ChatWorker(QThread):
         self.target = ""
         self.style = ""  # «Мой стиль»: the user's manner of writing for the system prompt
         self.source = None  # «/архив»: the design archive instead of the project index (rag/archive.py)
+        self.files: list[dict] = []  # attached files: their text goes in front of the question
+        self.ollama_host = ""  # for the vision model that describes attached pictures
         self._stop = False
 
     def stop(self) -> None:
         self._stop = True
 
     def run(self) -> None:
-        query = self.query
+        query = with_attachments(self.query, self.files, self.ollama_host, self.notice.emit)
         for attempt in (1, 2):
             try:
                 extra = {"style": self.style} if self.style else {}
@@ -1638,6 +1686,7 @@ class AgentWorker(QThread):
     step = Signal(object)
     done = Signal(dict)
     failed = Signal(str)
+    notice = Signal(str)  # a file that could not be attached
 
     def __init__(self, agent_factory, task: str, allow_write: bool, max_iter: int, parent=None):
         super().__init__(parent)
@@ -1645,12 +1694,15 @@ class AgentWorker(QThread):
         self.task = task
         self.allow_write = allow_write
         self.max_iter = max_iter
+        self.files: list[dict] = []  # attached files: their text goes in front of the task
+        self.ollama_host = ""
         self._stop = False
 
     def stop(self) -> None:
         self._stop = True
 
     def run(self) -> None:
+        self.task = with_attachments(self.task, self.files, self.ollama_host, self.notice.emit)
         try:
             agent = self.agent_factory(self.task, self.allow_write, self.max_iter)
         except Exception as exc:
@@ -1894,8 +1946,10 @@ class FluxionWindow(QMainWindow):
         self.history: list[dict[str, str]] = []
         self._messages: list[dict[str, str]] = []
         self._think_frame = 0
+        self._think_phrase = random.randrange(len(THINK_PHRASES))
+        self._think_color = "#94A3B8"
         self._think_timer = QTimer(self)
-        self._think_timer.setInterval(400)
+        self._think_timer.setInterval(55)
         self._think_timer.timeout.connect(self._on_think_tick)
         self._sessions: list[dict] = []
         self._session_id: str | None = None
@@ -2450,6 +2504,16 @@ class FluxionWindow(QMainWindow):
         sidebar_layout.setContentsMargins(16, 24, 16, 16)
         sidebar_layout.setSpacing(8)
 
+        app_icon = QLabel()
+        app_icon.setObjectName("sidebarIcon")
+        app_icon.setAlignment(Qt.AlignHCenter)
+        icon_pixmap = QPixmap(str(APP_ROOT / "assets" / "icon-256.png"))
+        if not icon_pixmap.isNull():
+            ratio = self.devicePixelRatioF() or 1.0
+            icon_pixmap = icon_pixmap.scaled(int(72 * ratio), int(72 * ratio), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            icon_pixmap.setDevicePixelRatio(ratio)
+            app_icon.setPixmap(icon_pixmap)
+        sidebar_layout.addWidget(app_icon)
         self.brand_banner = BrandBanner()
         tagline = QLabel(tr("Локальный AI-ассистент"))
         tagline.setObjectName("tagline")
@@ -2463,8 +2527,11 @@ class FluxionWindow(QMainWindow):
 
         # Chat and Project are in the sidebar; "Модели" and "Обучение" open from
         # the top menu "Модели" (pages 2 and 3 keep their indexes).
+        self._nav_icons: list[tuple[QPushButton, str]] = []
         for index, title in ((PAGE_CHAT, tr("Чат")), (PAGE_PROJECT, tr("Проект"))):
             button = QPushButton(title)
+            button.setIconSize(QSize(18, 18))
+            self._nav_icons.append((button, "chat" if index == PAGE_CHAT else "folder"))
             button.setCheckable(True)
             button.setProperty("nav", True)
             button.setProperty("page", index)
@@ -2516,13 +2583,16 @@ class FluxionWindow(QMainWindow):
         bar.addWidget(self.index_chip)
 
         self.browser_button = QToolButton()
-        self.browser_button.setText(tr("Браузер"))
+        self.browser_button.setObjectName("statusIcon")
         self.browser_button.setCheckable(True)
-        self.browser_button.setToolTip(tr("Показать/скрыть встроенный браузер"))
+        self.browser_button.setToolTip(tr("Браузер: показать/скрыть встроенный браузер"))
         self.browser_button.toggled.connect(self._toggle_web_panel)
+        self.browser_button.toggled.connect(self._refresh_outline_icons)
         bar.addPermanentWidget(self.browser_button)
 
         self.bots_button = QToolButton()
+        self.bots_button.setObjectName("statusIcon")
+        self.bots_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.bots_button.setText(tr("Боты"))
         self.bots_button.setToolTip(tr("Боты в мессенджерах"))
         self.bots_button.clicked.connect(self._open_bots_dialog)
@@ -2530,8 +2600,8 @@ class FluxionWindow(QMainWindow):
         bar.addPermanentWidget(self.bots_button)
 
         self.health_button = QToolButton()
-        self.health_button.setText(tr("Состояние"))
-        self.health_button.setToolTip(tr("Диагностика зависимостей: Ollama, модель, Docker, веб-поиск, индекс"))
+        self.health_button.setObjectName("statusIcon")
+        self.health_button.setToolTip(tr("Состояние: диагностика зависимостей — Ollama, модель, Docker, веб-поиск, индекс"))
         self.health_button.clicked.connect(self._open_health_dialog)
         bar.addPermanentWidget(self.health_button)
 
@@ -2541,9 +2611,11 @@ class FluxionWindow(QMainWindow):
         bar.addPermanentWidget(self.license_button)
 
         self._refresh_index_chip()
+        self._refresh_outline_icons()
 
     def _build_menu(self) -> None:
         bar = self.menuBar()
+        self._menu_icons: list[tuple[QAction, str]] = []  # outline icons, recoloured with the theme
 
         # Файл
         m_file = bar.addMenu(tr("&Файл"))
@@ -2557,18 +2629,19 @@ class FluxionWindow(QMainWindow):
         act_quit.triggered.connect(self.close)
         m_file.addAction(act_quit)
 
-        # Правка
+        # Правка: for the field in focus — the chat input, the answers, a search field
         m_edit = bar.addMenu(tr("&Правка"))
-        act_copy = QAction(tr("Копировать"), self)
-        act_copy.setShortcut("Ctrl+C")
-        act_copy.triggered.connect(self._copy_selection)
-        m_edit.addAction(act_copy)
-        m_edit.addSeparator()
-        self.act_searxng = QAction(tr("Расширенный веб-поиск (SearXNG в Docker)"), self)
-        self.act_searxng.setCheckable(True)
-        self.act_searxng.setChecked(self._searxng_on())
-        self.act_searxng.toggled.connect(self._toggle_searxng)
-        m_edit.addAction(self.act_searxng)
+        for row in EDIT_MENU:
+            if row is None:
+                m_edit.addSeparator()
+                continue
+            icon, text, keys, method = row
+            act = QAction(text, self)
+            act.setShortcut(keys)
+            act.setShortcutContext(Qt.WidgetShortcut)  # shown in the menu; the field handles the keys itself
+            act.triggered.connect(lambda _checked=False, m=method: self._edit_focused(m))
+            m_edit.addAction(act)
+            self._menu_icons.append((act, icon))
 
         # Вид
         m_view = bar.addMenu(tr("&Вид"))
@@ -2611,66 +2684,34 @@ class FluxionWindow(QMainWindow):
         act_training.triggered.connect(lambda: self.pages.setCurrentIndex(PAGE_TRAINING))
         m_models.addAction(act_training)
 
-        # Инструменты: part in KOMPAS-3D by description (prototype, for everyone)
-        m_tools = bar.addMenu(tr("&Инструменты"))
-        act_cad = QAction(tr("Деталь в КОМПАС…"), self)
-        act_cad.triggered.connect(self._open_cad_dialog)
-        m_tools.addAction(act_cad)
-        act_materials = QAction(tr("Каталог материалов…"), self)
-        act_materials.triggered.connect(self._open_materials_dialog)
-        m_tools.addAction(act_materials)
-        act_calc = QAction(tr("Инженерный калькулятор…"), self)
-        act_calc.setToolTip(tr("Сварные швы, болты, балки и рамы, гибка листа, валы — по формулам. В чате: /расчёт …"))
-        act_calc.triggered.connect(lambda: self._open_calc())
-        m_tools.addAction(act_calc)
-        m_tools.addSeparator()
-        act_report = QAction(tr("Ведомость и металлоёмкость сборки (Pro)…"), self)
-        act_report.setToolTip(tr("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel"))
-        act_report.triggered.connect(self._open_assembly_report)
-        m_tools.addAction(act_report)
-        act_norms = QAction(tr("Нормы и цены завода (Pro)…"), self)
-        act_norms.setToolTip(tr("Нормы времени и цены, по которым считается смета отчёта по сборке"))
-        act_norms.triggered.connect(self._open_norms_dialog)
-        m_tools.addAction(act_norms)
-        act_compare = QAction(tr("Сравнить версии сборки (Pro)…"), self)
-        act_compare.setToolTip(tr("Что добавилось, удалилось и изменилось между двумя версиями изделия"))
-        act_compare.triggered.connect(self._open_compare)
-        m_tools.addAction(act_compare)
-        act_purchase = QAction(tr("Заявка на закупку (Pro)…"), self)
-        act_purchase.setToolTip(tr("Листы, прокат, крепёж и покупные на несколько изделий с их количеством"))
-        act_purchase.triggered.connect(self._open_purchase)
-        m_tools.addAction(act_purchase)
-        act_laser = QAction(tr("Пакет на лазер (DXFka)…"), self)
-        act_laser.setToolTip(tr("DXF всех листовых деталей сборки по папкам толщин (Pro)"))
-        act_laser.triggered.connect(self._open_laser_package)
-        m_tools.addAction(act_laser)
-        act_dxf_check = QAction(tr("Проверить развёртки DXF (Pro)…"), self)
-        act_dxf_check.setToolTip(tr("Малые отверстия, узкие перемычки и вырезы в развёртках для лазера"))
-        act_dxf_check.triggered.connect(self._open_dxf_check)
-        m_tools.addAction(act_dxf_check)
-        m_tools.addSeparator()
-        act_acad = QAction(tr("Нормоконтроль чертежа AutoCAD (Pro)…"), self)
-        act_acad.setToolTip(tr("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel"))
-        act_acad.triggered.connect(self._open_acad_check)
-        m_tools.addAction(act_acad)
-        m_tools.addSeparator()
-        act_style = QAction(tr("Мой стиль письма…"), self)
-        act_style.setToolTip(tr("Служебки, пояснительные записки и письма заказчикам вашим стилем (Pro)"))
-        act_style.triggered.connect(self._open_writing_style)
-        m_tools.addAction(act_style)
-        act_archive = QAction(tr("Архив КД (Pro)…"), self)
-        act_archive.setToolTip(tr("Поиск по архиву КД: КОМПАС-3D, PDF, документы. Вопросы в чате: /архив …"))
-        act_archive.triggered.connect(self._open_archive)
-        m_tools.addAction(act_archive)
-        m_tools.addSeparator()
-        act_bots = QAction(tr("Боты в мессенджерах…"), self)
-        act_bots.setToolTip(tr("Telegram, MAX и ВКонтакте отвечают с этого компьютера, пока Fluxion открыт"))
-        act_bots.triggered.connect(self._open_bots_dialog)
-        m_tools.addAction(act_bots)
-        act_phone = QAction(tr("Связь с телефоном…"), self)
-        act_phone.setToolTip(tr("Fluxion Mobile спрашивает этот компьютер по домашней сети: фото на вкладке «Ремонт»"))
-        act_phone.triggered.connect(self._open_phone_dialog)
-        m_tools.addAction(act_phone)
+        # Конструктор, Производство, Связь: the tools by who uses them; Pro ones marked «PRO»
+        for title, groups in (
+            (tr("&Конструктор"), self._tool_groups()[:1]),
+            (tr("&Производство"), self._tool_groups()[1:3]),
+            (tr("С&вязь"), self._tool_groups()[3:]),
+        ):
+            menu = bar.addMenu(title)
+            menu.setToolTipsVisible(True)
+            for caption, entries in groups:
+                if len(groups) > 1:
+                    menu_caption(menu, caption)
+                for icon, text, slot, pro, tip in entries:
+                    if icon == "-":
+                        menu.addSeparator()
+                        continue
+                    act = QAction(text + ("	PRO" if pro else ""), self)
+                    act.setToolTip(tip)
+                    act.triggered.connect(lambda _checked=False, slot=slot: slot())
+                    menu.addAction(act)
+                    self._menu_icons.append((act, icon))
+            if title == tr("С&вязь"):
+                menu.addSeparator()
+                self.act_searxng = QAction(tr("Расширенный веб-поиск (SearXNG в Docker)"), self)
+                self.act_searxng.setCheckable(True)
+                self.act_searxng.setChecked(self._searxng_on())
+                self.act_searxng.toggled.connect(self._toggle_searxng)
+                menu.addAction(self.act_searxng)
+                self._menu_icons.append((self.act_searxng, "globe"))
 
         # Помощь
         m_help = bar.addMenu(tr("&Помощь"))
@@ -2688,6 +2729,50 @@ class FluxionWindow(QMainWindow):
         act_about = QAction(tr("О Fluxion"), self)
         act_about.triggered.connect(self._show_about)
         m_help.addAction(act_about)
+
+    def _tool_groups(self) -> list[tuple[str, list[tuple]]]:
+        """The tools of the menus Конструктор, Производство, Связь and of «+» → Инструменты:
+        (group, [(icon, text, slot, pro, tooltip)]); "-" as the icon is a separator."""
+        return [
+            (tr("Конструктор"), [
+                ("box", tr("Деталь в КОМПАС…"), self._open_cad_dialog, False,
+                 tr("Деталь в КОМПАС-3D по описанию. В чате: /компас …")),
+                ("calculator", tr("Инженерный калькулятор…"), lambda: self._open_calc(), False,
+                 tr("Сварные швы, болты, балки и рамы, гибка листа, валы — по формулам. В чате: /расчёт …")),
+                ("layers", tr("Каталог материалов…"), self._open_materials_dialog, False,
+                 tr("Марки сталей и сплавов, сортамент, плотность")),
+                ("-", "", None, False, ""),
+                ("ruler", tr("Нормоконтроль чертежа AutoCAD…"), self._open_acad_check, True,
+                 tr("Штамп, шрифты, слои, размеры и масштабы чертежа DWG/DXF по ЕСКД и СПДС, отчёт в Excel")),
+                ("archive", tr("Архив КД…"), self._open_archive, True,
+                 tr("Поиск по архиву КД: КОМПАС-3D, PDF, документы. Вопросы в чате: /архив …")),
+            ]),
+            (tr("Сборка"), [
+                ("list", tr("Ведомость и металлоёмкость сборки…"), self._open_assembly_report, True,
+                 tr("Сводная ведомость, детали, металлоёмкость и замечания по сборке КОМПАС-3D в Excel")),
+                ("diff", tr("Сравнить версии сборки…"), self._open_compare, True,
+                 tr("Что добавилось, удалилось и изменилось между двумя версиями изделия")),
+                ("cart", tr("Заявка на закупку…"), self._open_purchase, True,
+                 tr("Листы, прокат, крепёж и покупные на несколько изделий с их количеством")),
+                ("coin", tr("Нормы и цены завода…"), self._open_norms_dialog, True,
+                 tr("Нормы времени и цены, по которым считается смета отчёта по сборке")),
+            ]),
+            (tr("Лазер"), [
+                ("zap", tr("Пакет на лазер (DXF)…"), self._open_laser_package, True,
+                 tr("DXF всех листовых деталей сборки по папкам толщин (DXFka)")),
+                ("scan", tr("Проверить развёртки DXF…"), self._open_dxf_check, True,
+                 tr("Малые отверстия, узкие перемычки и вырезы в развёртках для лазера")),
+            ]),
+            (tr("Связь"), [
+                ("bot", tr("Боты в мессенджерах…"), self._open_bots_dialog, False,
+                 tr("Telegram, MAX и ВКонтакте отвечают с этого компьютера, пока Fluxion открыт")),
+                ("phone", tr("Связь с телефоном…"), self._open_phone_dialog, False,
+                 tr("Fluxion Mobile спрашивает этот компьютер по домашней сети: фото на вкладке «Ремонт»")),
+                ("-", "", None, False, ""),
+                ("feather", tr("Мой стиль письма…"), self._open_writing_style, True,
+                 tr("Служебки, пояснительные записки и письма заказчикам вашим стилем")),
+            ]),
+        ]
 
     def _show_about(self) -> None:
         """Menu Помощь → О Fluxion: the version, the site, the folder of the user's data."""
@@ -2717,6 +2802,7 @@ class FluxionWindow(QMainWindow):
         for button in self.nav_group.buttons():
             button.setChecked(button.property("page") == index)
         self.nav_group.setExclusive(True)
+        self._refresh_outline_icons()
 
     def _open_cloud_section(self) -> None:
         self.pages.setCurrentIndex(PAGE_MODELS)
@@ -2774,11 +2860,11 @@ class FluxionWindow(QMainWindow):
                 tr("SearXNG не запустился (нужен Docker Desktop) — пока работает встроенный поиск."), 12000
             )
 
-    def _copy_selection(self) -> None:
-        widget = QApplication.focusWidget()
-        copy = getattr(widget, "copy", None)
-        if callable(copy):
-            copy()
+    def _edit_focused(self, method: str) -> None:
+        """Правка → Копировать, Вставить…: the same command of the field in focus."""
+        call = getattr(QApplication.focusWidget(), method, None)
+        if callable(call):
+            call()
 
     # ── web panel ────────────────────────────────────────────────────────
 
@@ -2798,6 +2884,11 @@ class FluxionWindow(QMainWindow):
             return
         if target.startswith(SPEAK_URL):
             self._toggle_speak_answer(target[len(SPEAK_URL):])
+            return
+        if target.startswith(COPY_URL):
+            index = target[len(COPY_URL):]
+            if index.isdigit():
+                self._copy_answer(int(index))
             return
         if target.startswith("file:"):  # a source of the answer: the document itself
             QDesktopServices.openUrl(QUrl(target))
@@ -2830,14 +2921,15 @@ class FluxionWindow(QMainWindow):
         header.addWidget(title)
         header.addStretch()
         self.agent_settings_button = QToolButton()
-        self.agent_settings_button.setText(tr("⚙ Настройки чата"))
-        self.agent_settings_button.setObjectName("iconButton")
-        self.agent_settings_button.setToolTip(tr("Модель, число итераций агента, git-инструменты"))
+        self.agent_settings_button.setObjectName("headerIcon")
+        self.agent_settings_button.setIconSize(QSize(20, 20))
+        self.agent_settings_button.setToolTip(tr("Настройки чата: модель, голос, число итераций агента, git-инструменты"))
         self.agent_settings_button.clicked.connect(self._show_agent_settings)
         header.addWidget(self.agent_settings_button)
         self.chat_kebab = QToolButton()
-        self.chat_kebab.setText("⋮")
-        self.chat_kebab.setObjectName("iconButton")
+        self.chat_kebab.setObjectName("headerIcon")
+        self.chat_kebab.setIconSize(QSize(20, 20))
+        self.chat_kebab.setToolTip(tr("Чат: новый, экспорт, очистить историю"))
         self.chat_kebab.setPopupMode(QToolButton.InstantPopup)
         kebab_menu = QMenu(self.chat_kebab)
         act_new = kebab_menu.addAction(tr("Новый чат"))
@@ -2873,6 +2965,8 @@ class FluxionWindow(QMainWindow):
         self.messages.setOpenExternalLinks(False)
         self.messages.setOpenLinks(False)
         self.messages.anchorClicked.connect(self._on_anchor)
+        self.messages.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.messages.customContextMenuRequested.connect(self._messages_menu)
         self._wire_sticky_scroll(self.messages)
         layout.addWidget(self.messages, 1)
 
@@ -2880,20 +2974,42 @@ class FluxionWindow(QMainWindow):
         self.banners = BannerStack()
         layout.addWidget(self.banners)
 
+        # ── composer: chips of files and modes over a row «+ | text | voice | ↑» ──
         composer = QFrame()
         composer.setObjectName("composer")
-        composer_layout = QHBoxLayout(composer)
-        composer_layout.setContentsMargins(12, 10, 10, 10)
-        composer_layout.setSpacing(10)
+        composer_box = QVBoxLayout(composer)
+        composer_box.setContentsMargins(8, 8, 8, 8)
+        composer_box.setSpacing(6)
+        self.composer_chips = QWidget()
+        self.composer_chips.setObjectName("composerChips")
+        self._chips_flow = FlowLayout(self.composer_chips)
+        self._chips_flow.setContentsMargins(4, 0, 4, 0)
+        self.composer_chips.setVisible(False)
+        composer_box.addWidget(self.composer_chips)
+        composer_layout = QHBoxLayout()
+        composer_layout.setContentsMargins(0, 0, 0, 0)
+        composer_layout.setSpacing(4)
+        composer_box.addLayout(composer_layout)
         from .chat_input import ChatInput
+
+        self.plus_button = QToolButton()
+        self.plus_button.setObjectName("plusButton")
+        self.plus_button.setIconSize(QSize(20, 20))
+        self.plus_button.setToolTip(tr("Прикрепить файл, режим, команды и инструменты"))
+        self.plus_button.setPopupMode(QToolButton.InstantPopup)
+        self.plus_menu = QMenu(self.plus_button)
+        self.plus_menu.aboutToShow.connect(self._fill_plus_menu)
+        self.plus_button.setMenu(self.plus_menu)
+        composer_layout.addWidget(self.plus_button, 0, Qt.AlignBottom)
 
         self.prompt = ChatInput()
         self.prompt.setPlaceholderText(tr("Напишите сообщение..."))
-        self.prompt.setToolTip(
-            tr("Enter — отправить; Shift+Enter — новая строка; Ctrl+Enter — разово выполнить агентом")
-        )
+        self.prompt.setToolTip(tr("Enter — отправить; Shift+Enter — новая строка; файлы можно перетащить сюда"))
         self.prompt.returnPressed.connect(self.send_message)
         self.prompt.agentRequested.connect(self.send_agent_once)
+        self.prompt.filesAttached.connect(self.attach_files)
+        self.prompt.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.prompt.customContextMenuRequested.connect(self._prompt_menu)
         for keys in ("Ctrl+Return", "Ctrl+Enter"):
             shortcut = QShortcut(QKeySequence(keys), self.prompt)
             shortcut.setContext(Qt.WidgetShortcut)
@@ -2929,51 +3045,46 @@ class FluxionWindow(QMainWindow):
         )
         self.hands_free_button.toggled.connect(self.set_hands_free)
         self._show_speak_toggle()
-        composer_layout.addWidget(self.speak_toggle)
-        composer_layout.addWidget(self.hands_free_button)
+        self.speak_toggle.setVisible(False)  # «+» → «Озвучивать ответы» and the chat settings switch it
+        composer_layout.addWidget(self.speak_toggle, 0, Qt.AlignBottom)
+        composer_layout.addWidget(self.hands_free_button, 0, Qt.AlignBottom)
         hands_free_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Space"), self)
         hands_free_shortcut.activated.connect(self.hands_free_button.toggle)
         voice_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
         voice_shortcut.activated.connect(self.toggle_voice_input)
-        self.stop_button = QPushButton(tr("Стоп"))
-        self.stop_button.setObjectName("stopButton")
+        self.stop_button = QToolButton()
+        self.stop_button.setObjectName("stopRound")
+        self.stop_button.setIconSize(QSize(16, 16))
+        self.stop_button.setToolTip(tr("Остановить ответ"))
         self.stop_button.clicked.connect(self.stop_generation)
         self.stop_button.setVisible(False)
-        self.send_button = QPushButton(tr("Отправить"))
-        self.send_button.setObjectName("sendButton")
+        self.send_button = QToolButton()
+        self.send_button.setObjectName("sendRound")
+        self.send_button.setIconSize(QSize(18, 18))
+        self.send_button.setToolTip(tr("Отправить (Enter)"))
         self.send_button.clicked.connect(self.send_message)
-        composer_layout.addWidget(self.stop_button)
-        composer_layout.addWidget(self.send_button)
+        composer_layout.addWidget(self.stop_button, 0, Qt.AlignBottom)
+        composer_layout.addWidget(self.send_button, 0, Qt.AlignBottom)
         layout.addWidget(composer)
 
-        modes = QHBoxLayout()
-        modes.setContentsMargins(2, 0, 2, 0)
-        modes.setSpacing(6)
-        self.chat_agent_files = QCheckBox(tr("✎ Агент: файлы"))
-        self.chat_agent_files.setObjectName("modeChip")
-        self.chat_agent_files.setCursor(Qt.PointingHandCursor)
+        # the modes are switched in «+» and shown as chips over the text; the check boxes keep the state
+        modes = QWidget(page)
+        modes.setVisible(False)
+        self.chat_agent_files = QCheckBox(tr("Агент: файлы"), modes)
         self.chat_agent_files.toggled.connect(self._on_chat_agent_files_toggled)
-        modes.addWidget(self.chat_agent_files)
-        self.chat_plan = QCheckBox(tr("☰ План"))
-        self.chat_plan.setObjectName("modeChip")
-        self.chat_plan.setCursor(Qt.PointingHandCursor)
+        self.chat_plan = QCheckBox(tr("План"), modes)
         self.chat_plan.setToolTip(
             tr("Агент составит нумерованный план и не изменит файлы; "
             "под ответом появится «Выполнить план»")
         )
-        modes.addWidget(self.chat_plan)
-        self.chat_style = QCheckBox(tr("✍ Мой стиль"))
-        self.chat_style.setObjectName("modeChip")
-        self.chat_style.setCursor(Qt.PointingHandCursor)
+        self.chat_style = QCheckBox(tr("Мой стиль"), modes)
         self.chat_style.setToolTip(tr("Писать служебки, пояснительные записки и письма заказчикам вашим стилем (Pro). "
-                                   "Образцы — Инструменты → «Мой стиль письма…»"))
+                                   "Образцы — Связь → «Мой стиль письма…»"))
         self.chat_style.toggled.connect(self._on_chat_style_toggled)
-        modes.addWidget(self.chat_style)
-        modes.addStretch()
-        hint = QLabel(tr("Ctrl+Enter — агенту"))
-        hint.setObjectName("modeHint")
-        modes.addWidget(hint)
-        layout.addLayout(modes)
+        for box in (self.chat_agent_files, self.chat_plan, self.chat_style):
+            box.toggled.connect(self._refresh_composer_chips)
+        self._attachments: list[dict] = []
+        self._refresh_outline_icons()
 
         self._build_agent_settings()
         self._render_messages()
@@ -3851,13 +3962,34 @@ class FluxionWindow(QMainWindow):
         self._refresh_speech_models()
         worker.start()
 
+    def _offer_speech_download(self, model_id: str) -> None:
+        """The microphone without a speech model: download it now, then listen at once."""
+        from voice.models import speech_model
+
+        if self._speech_download_worker is not None:
+            self.statusBar().showMessage(tr("Модель распознавания речи ещё скачивается…"), 5000)
+            return
+        model = speech_model(model_id)
+        size = f"{model.size_bytes / 1e6:.0f}"
+        answer = QMessageBox.question(
+            self, tr("Голосовой ввод"),
+            tr("Для голосового ввода нужна модель распознавания речи {name} ({size} МБ). "
+               "Она скачивается один раз и работает без интернета. Скачать сейчас?", name=model.name, size=size),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._listen_after_download = True
+        self._on_speech_model_button(model_id)
+
     def _on_speech_download_progress(self, done: int, total: int) -> None:
         if total > 0:
             self.models_progress.setRange(0, total)
             self.models_progress.setValue(min(done, total))
-            self.models_status.setText(
-                tr("Скачиваем модель распознавания речи… {value:.2f} / {value2:.2f} ГБ", value=done / 1e9, value2=total / 1e9)
-            )
+            line = tr("Скачиваем модель распознавания речи… {value:.2f} / {value2:.2f} ГБ", value=done / 1e9, value2=total / 1e9)
+            self.models_status.setText(line)
+            if getattr(self, "_listen_after_download", False):
+                self.statusBar().showMessage(line, 3000)
 
     def _on_speech_download_done(self, model_id: str) -> None:
         from voice.models import speech_model
@@ -3867,10 +3999,17 @@ class FluxionWindow(QMainWindow):
         self.models_status.setText(
             tr("Модель {value} загружена: голосовой ввод в чате — кнопка микрофона или Ctrl+Пробел.", value=speech_model(model_id).name)
         )
+        if getattr(self, "_listen_after_download", False):
+            self._listen_after_download = False
+            self.statusBar().showMessage(tr("Модель распознавания речи скачана: говорите."), 5000)
+            QTimer.singleShot(0, self._start_listening)
 
     def _on_speech_download_failed(self, message: str) -> None:
         self.models_progress.setVisible(False)
         self.models_status.setText(message)
+        if getattr(self, "_listen_after_download", False):
+            self._listen_after_download = False
+            self.banners.show_warning(message, key="speech_download")
 
     def _on_speech_download_finished(self, worker) -> None:
         if self._speech_download_worker is worker:
@@ -5176,8 +5315,223 @@ class FluxionWindow(QMainWindow):
         """Ctrl+Enter: run this one message through the agent; chips stay as they are."""
         self._submit(agent_once=True)
 
+    # ── composer: «+», attached files, chips of the modes ─────────────────
+
+    def _ollama_host(self) -> str:
+        return getattr(getattr(self, "settings", None), "ollama_host", "") or "http://localhost:11434"
+
+    def attach_files(self, paths: list[str]) -> None:
+        """Attach *paths* to the next message: «+», drag and drop, Ctrl+V."""
+        from .attachments import MAX_ATTACHMENTS, AttachmentError, describe
+
+        known = {item["path"] for item in self._attachments}
+        for path in paths:
+            if len(self._attachments) >= MAX_ATTACHMENTS:
+                self.banners.show_warning(tr("К одному сообщению — не больше {value} файлов.", value=MAX_ATTACHMENTS),
+                                          key="attach_limit")
+                break
+            try:
+                item = describe(path)
+            except AttachmentError as exc:
+                self.banners.show_warning(str(exc), key=f"attach:{path}")
+                continue
+            if item["path"] not in known:
+                known.add(item["path"])
+                self._attachments.append(item)
+        self._refresh_composer_chips()
+        self.prompt.setFocus()
+
+    def _pick_files(self, images: bool = False) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        start = str(self.qsettings.value("attach_dir", "") or "")
+        if images:
+            title, patterns = tr("Фото или скриншот"), tr("Изображения (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)")
+        else:
+            title = tr("Прикрепить файл")
+            patterns = ";;".join((
+                tr("Документы и чертежи (*.pdf *.docx *.xlsx *.pptx *.doc *.xls *.dxf *.dwg *.m3d *.a3d *.cdw *.spw *.txt *.md *.csv)"),
+                tr("Изображения (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)"),
+                tr("Все файлы (*)"),
+            ))
+        paths, _ = QFileDialog.getOpenFileNames(self, title, start, patterns)
+        if paths:
+            self.qsettings.setValue("attach_dir", str(Path(paths[0]).parent))
+            self.attach_files(paths)
+
+    def _remove_attachment(self, path: str) -> None:
+        self._attachments = [item for item in self._attachments if item["path"] != path]
+        self._refresh_composer_chips()
+
+    def _take_attachments(self) -> list[dict]:
+        files, self._attachments = list(self._attachments), []
+        self._refresh_composer_chips()
+        if any(item["image"] for item in files) and getattr(self, "_vision_idle_timer", None) is None:
+            from .attachments import unload_idle_vision
+
+            # the embedded vision model frees the video memory after 10 minutes without pictures
+            self._vision_idle_timer = QTimer(self)
+            self._vision_idle_timer.setInterval(60_000)
+            self._vision_idle_timer.timeout.connect(unload_idle_vision)
+            self._vision_idle_timer.start()
+        return files
+
+    def _mark_files(self, files: list[dict]) -> None:
+        """Show the attached files in the user's message just added."""
+        if files and self._messages:
+            self._messages[-1]["files"] = [{"name": f["name"], "size": f["size"], "image": f["image"]} for f in files]
+            self._render_messages()
+
+    def _on_attachment_notice(self, text: str) -> None:
+        self.banners.show_warning(tr("Вложение не прочитано: {value}", value=text), key=f"attach:{text}")
+
+    def _composer_chip(self, icon: str, text: str, on_remove, active: bool = False, tooltip: str = "") -> QFrame:
+        from . import icons
+
+        colors = getattr(self, "_icon_colors", {"fg": "#94A3B8", "on": "#00E5FF"})
+        color = colors["on"] if active else colors["fg"]
+        chip = QFrame()
+        chip.setObjectName("composerChip")
+        chip.setProperty("active", active)
+        chip.setToolTip(tooltip)
+        row = QHBoxLayout(chip)
+        row.setContentsMargins(8, 2, 4, 2)
+        row.setSpacing(5)
+        mark = QLabel()
+        mark.setPixmap(icons.line(icon, color, 14).pixmap(QSize(14, 14)))
+        row.addWidget(mark)
+        label = QLabel(text)
+        label.setObjectName("composerChipText")
+        row.addWidget(label)
+        close = QToolButton()
+        close.setObjectName("chipClose")
+        close.setIcon(icons.line("x", color, 12))
+        close.setIconSize(QSize(12, 12))
+        close.setToolTip(tr("Убрать"))
+        close.clicked.connect(on_remove)
+        row.addWidget(close)
+        return chip
+
+    def _refresh_composer_chips(self, *_args) -> None:
+        """Chips over the text: the attached files and the modes that are on, each with a cross."""
+        if not hasattr(self, "_chips_flow"):
+            return
+        from .attachments import human_size
+
+        while self._chips_flow.count():
+            item = self._chips_flow.takeAt(0)
+            if item is not None and item.widget() is not None:
+                item.widget().deleteLater()
+        for item in self._attachments:
+            self._chips_flow.addWidget(self._composer_chip(
+                "image" if item["image"] else "file", f'{item["name"]} · {human_size(item["size"])}',
+                lambda _checked=False, path=item["path"]: self._remove_attachment(path), tooltip=item["path"]))
+        for box, icon in ((self.chat_agent_files, "pen"), (self.chat_plan, "list"), (self.chat_style, "feather")):
+            if box.isChecked():
+                self._chips_flow.addWidget(self._composer_chip(
+                    icon, box.text(), lambda _checked=False, b=box: b.setChecked(False), active=True,
+                    tooltip=box.toolTip()))
+        self.composer_chips.setVisible(self._chips_flow.count() > 0)
+        self.composer_chips.updateGeometry()
+
+    def _menu_icon(self, name: str, on: bool = False):
+        """An outline icon for a menu row; a mode that is on gets it in the accent colour."""
+        from . import icons
+
+        colors = getattr(self, "_icon_colors", {"fg": "#94A3B8", "on": "#00E5FF"})
+        return icons.line(name, colors["on"] if on else colors["fg"], 16)
+
+    def _fill_plus_menu(self) -> None:
+        """«+»: attach a file, the modes of the message, the commands and the tools."""
+        menu = self.plus_menu
+        menu.clear()
+        menu.addAction(self._menu_icon("paperclip"), tr("Прикрепить файл…"), lambda: self._pick_files(False))
+        menu.addAction(self._menu_icon("image"), tr("Фото или скриншот…") + "\tCtrl+V", lambda: self._pick_files(True))
+        menu_caption(menu, tr("Режим"))
+        for box, icon, pro in ((self.chat_agent_files, "pen", False), (self.chat_plan, "list", False),
+                               (self.chat_style, "feather", True)):
+            act = menu.addAction(self._menu_icon(icon, box.isChecked()), box.text() +("\tPRO" if pro else ""))
+            act.setCheckable(True)
+            act.setChecked(box.isChecked())
+            act.setEnabled(box.isEnabled())
+            act.setToolTip(box.toolTip())
+            act.toggled.connect(box.setChecked)
+        once = menu.addAction(self._menu_icon("play"), tr("Разово агентом") + "\tCtrl+Enter", self.send_agent_once)
+        once.setEnabled(self.agent_factory is not None)
+        menu.addSeparator()
+        commands = menu.addMenu(self._menu_icon("slash"), tr("Команды"))
+        for command, icon, hint in (
+            ("/компас", "box", tr("деталь в КОМПАС-3D")),
+            ("/расчёт", "calculator", tr("инженерный расчёт")),
+            ("/архив", "archive", tr("поиск по архиву КД")),
+            ("/автокад", "ruler", tr("нормоконтроль DWG")),
+        ):
+            commands.addAction(self._menu_icon(icon), f"{command}\t{hint}",
+                               lambda _checked=False, c=command: self._insert_command(c))
+        tools = menu.addMenu(self._menu_icon("wrench"), tr("Инструменты"))
+        for title, entries in self._tool_groups():
+            menu_caption(tools, title)
+            for icon, text, slot, pro, tip in entries:
+                if icon == "-":
+                    tools.addSeparator()
+                    continue
+                act = tools.addAction(self._menu_icon(icon), text + ("\tPRO" if pro else ""), slot)
+                act.setToolTip(tip)
+        tools.setToolTipsVisible(True)
+        menu.addSeparator()
+        speak = menu.addAction(self._menu_icon("volume", self.speak_toggle.isChecked()), tr("Озвучивать ответы"))
+        speak.setCheckable(True)
+        speak.setChecked(self.speak_toggle.isChecked())
+        speak.toggled.connect(self.speak_toggle.setChecked)
+        menu.setToolTipsVisible(True)
+
+    def _insert_command(self, command: str) -> None:
+        text = self.prompt.text()
+        self.prompt.setText(f"{command} {text}".rstrip() + " ")
+        self.prompt.setFocus()
+
+    def _edit_menu_actions(self, menu: QMenu, widget) -> None:
+        """The rows of Правка for *widget*, those it cannot do now greyed out."""
+        read_only = widget.isReadOnly()
+        selection = widget.textCursor().hasSelection()
+        document = widget.document()
+        enabled = {
+            "undo": not read_only and document.isUndoAvailable(),
+            "redo": not read_only and document.isRedoAvailable(),
+            "cut": not read_only and selection,
+            "copy": selection,
+            "paste": not read_only and widget.canPaste(),
+            "selectAll": not document.isEmpty(),
+        }
+        for row in EDIT_MENU:
+            if row is None:
+                menu.addSeparator()
+                continue
+            icon, text, keys, method = row
+            act = menu.addAction(self._menu_icon(icon), f"{text}	{keys}", getattr(widget, method))
+            act.setEnabled(enabled[method])
+
+    def _prompt_menu(self, pos) -> None:
+        menu = QMenu(self.prompt)
+        self._edit_menu_actions(menu, self.prompt)
+        menu.addSeparator()
+        menu.addAction(self._menu_icon("paperclip"), tr("Прикрепить файл…"), lambda: self._pick_files(False))
+        menu.exec(self.prompt.mapToGlobal(pos))
+
+    def _messages_menu(self, pos) -> None:
+        menu = QMenu(self.messages)
+        self._edit_menu_actions(menu, self.messages)
+        menu.exec(self.messages.mapToGlobal(pos))
+
+    def _copy_answer(self, index: int) -> None:
+        if 0 <= index < len(self._messages):
+            QApplication.clipboard().setText(self._messages[index]["text"])
+            self.statusBar().showMessage(tr("Ответ скопирован."), 3000)
+
     def _submit(self, agent_once: bool) -> None:
         text = self.prompt.text().strip()
+        if not text and self._attachments:
+            text = tr("Разбери вложенные файлы.")
         if not text or self.generating or self.agent_running:
             return
         source = None
@@ -5230,14 +5584,16 @@ class FluxionWindow(QMainWindow):
             self._append_message("assistant", tr("Движок не подключён. Запустите приложение через python -m desktop_browser."))
             return
         self.prompt.clear()
+        files = self._take_attachments() if source is None else []
         if wants_agent:
-            self._send_agent_message(text, plan=self.chat_plan.isChecked())
+            self._send_agent_message(text, plan=self.chat_plan.isChecked(), files=files)
             return
 
         history = list(self.history)
         self._last_query = text
         self._web_opened_for_current = False
         self._append_message("user", text)
+        self._mark_files(files)
         self.history.append({"role": "user", "content": text})
         self._append_message("assistant", "")
         self._start_thinking()
@@ -5249,6 +5605,10 @@ class FluxionWindow(QMainWindow):
         self.worker.target = resolve_target(getattr(self.settings, "language", "auto"), text)
         self.worker.style = self._writing_style_block(text)
         self.worker.source = source
+        if files:
+            self.worker.files = files
+            self.worker.ollama_host = self._ollama_host()
+            self.worker.notice.connect(self._on_attachment_notice)
         self.worker.token.connect(self._on_token)
         self.worker.meta.connect(self._on_meta)
         self.worker.failed.connect(self._on_failed)
@@ -5260,7 +5620,7 @@ class FluxionWindow(QMainWindow):
     # ── «Пакет на лазер»: DXF of the sheet details by thickness (core of DXFka) ──
 
     def _open_laser_package(self) -> None:
-        """Menu Инструменты → Пакет на лазер: pick an .a3d and the DXF folder."""
+        """Menu Производство → Пакет на лазер: pick an .a3d and the DXF folder."""
         from PySide6.QtWidgets import QFileDialog
 
         from cad.laser import PRO_FEATURE, default_out_dir
@@ -5423,7 +5783,7 @@ class FluxionWindow(QMainWindow):
                                  "моделям КОМПАС-3D, PDF и документам — с ответом и ссылками на файлы."))
 
     def _open_archive(self) -> None:
-        """Menu Инструменты → Архив КД: the archive folders and the update of its index."""
+        """Menu Конструктор → Архив КД: the archive folders and the update of its index."""
         if not self._archive_pro():
             return
         from .archive_dialog import ArchiveDialog
@@ -5440,13 +5800,13 @@ class FluxionWindow(QMainWindow):
         if not index.file_count:
             index.close()
             self.prompt.clear()
-            self._append_message("assistant", tr("Архив КД ещё не проиндексирован: Инструменты → «Архив КД (Pro)…», "
+            self._append_message("assistant", tr("Архив КД ещё не проиндексирован: Конструктор → «Архив КД…», "
                                               "добавьте папки архива и нажмите «Обновить индекс»."))
             return None
         return index
 
     def _open_assembly_report(self) -> None:
-        """Menu Инструменты → Ведомость и металлоёмкость сборки: pick an .a3d, report in Excel."""
+        """Menu Производство → Ведомость и металлоёмкость сборки: pick an .a3d, report in Excel."""
         from PySide6.QtWidgets import QFileDialog
 
         if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
@@ -5581,7 +5941,7 @@ class FluxionWindow(QMainWindow):
         return False
 
     def _open_writing_style(self) -> bool:
-        """Menu Инструменты → Мой стиль письма: the samples and the profile. True when saved."""
+        """Menu Связь → Мой стиль письма: the samples and the profile. True when saved."""
         if not self._writing_style_pro():
             return False
         from .writing_style_dialog import WritingStyleDialog
@@ -5642,7 +6002,7 @@ class FluxionWindow(QMainWindow):
         open_manual(self, page, self.manual_tools())
 
     def _open_acad_check(self) -> None:
-        """Menu Инструменты → Нормоконтроль чертежа AutoCAD: pick a DWG/DXF, remarks, report in Excel."""
+        """Menu Конструктор → Нормоконтроль чертежа AutoCAD: pick a DWG/DXF, remarks, report in Excel."""
         from PySide6.QtWidgets import QFileDialog
 
         from .acad_check_dialog import ACAD_FILTER
@@ -5731,7 +6091,7 @@ class FluxionWindow(QMainWindow):
         worker.deleteLater()
 
     def _open_cad_dialog(self) -> None:
-        """Menu Инструменты → Деталь в КОМПАС: the text of the chat input, or ask for it."""
+        """Menu Конструктор → Деталь в КОМПАС: the text of the chat input, or ask for it."""
         if self.generating or self.agent_running:
             return
         text = self.prompt.text().strip()
@@ -5759,7 +6119,7 @@ class FluxionWindow(QMainWindow):
         self._send_cad_message(description, shown=f"/компас {description}")
 
     def _open_calc(self, start: tuple[str, dict] | None = None) -> None:
-        """Инструменты → Инженерный калькулятор; after «/расчёт» in the chat — with that calculation filled in."""
+        """Конструктор → Инженерный калькулятор; after «/расчёт» in the chat — with that calculation filled in."""
         from .calc_dialog import CalcDialog
 
         CalcDialog(self, start or self._last_calc).exec()
@@ -5803,7 +6163,7 @@ class FluxionWindow(QMainWindow):
     def _on_calc_done(self, text: str, calc_kind: str, params: dict) -> None:
         if calc_kind:
             self._last_calc = (calc_kind, params)
-            text += tr("\nФормулы и отчёт: Инструменты → «Инженерный калькулятор…» — расчёт уже заполнен.")
+            text += tr("\nФормулы и отчёт: Конструктор → «Инженерный калькулятор…» — расчёт уже заполнен.")
         self._calc_entry["text"] = text
         self.history.append({"role": "assistant", "content": text})
         self._notify_answer(text.splitlines()[0])
@@ -5821,7 +6181,7 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
 
     def _open_compare(self) -> None:
-        """Инструменты → Сравнить версии сборки: two versions, the changes in Excel (Pro)."""
+        """Производство → Сравнить версии сборки: two versions, the changes in Excel (Pro)."""
         if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
             return
         if not self._report_pro():
@@ -5867,7 +6227,7 @@ class FluxionWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _open_purchase(self) -> None:
-        """Инструменты → Заявка на закупку: products and quantities, what to buy in Excel (Pro)."""
+        """Производство → Заявка на закупку: products and quantities, what to buy in Excel (Pro)."""
         if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
             return
         if not self._report_pro():
@@ -5930,7 +6290,7 @@ class FluxionWindow(QMainWindow):
         return dxf_check.summary_text(sheets) + tr(" Отчёт: {path}", path=path)
 
     def _open_dxf_check(self) -> None:
-        """Инструменты → Проверить развёртки DXF: a folder of flat patterns, the remarks in Excel (Pro)."""
+        """Производство → Проверить развёртки DXF: a folder of flat patterns, the remarks in Excel (Pro)."""
         from PySide6.QtWidgets import QFileDialog
 
         from cad.laser import PRO_FEATURE
@@ -5967,7 +6327,7 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
 
     def _open_norms_dialog(self) -> None:
-        """Инструменты → Нормы и цены завода: what the «Смета» of a report is built on (Pro)."""
+        """Производство → Нормы и цены завода: what the «Смета» of a report is built on (Pro)."""
         if not self._report_pro():
             return
         from .norms_dialog import NormsDialog
@@ -5975,7 +6335,7 @@ class FluxionWindow(QMainWindow):
         NormsDialog(self).exec()
 
     def _open_materials_dialog(self) -> None:
-        """Инструменты → Каталог материалов: the merged catalog, the user's file, import."""
+        """Конструктор → Каталог материалов: the merged catalog, the user's file, import."""
         dialog = MaterialsDialog(self)
         dialog.exec()
 
@@ -6071,10 +6431,7 @@ class FluxionWindow(QMainWindow):
 
         model_id = voice_model_id(self.qsettings)
         if not is_installed(model_id):
-            self._append_banner(
-                tr("Для голосового ввода нужна модель распознавания речи ({value}). "
-                "Скачайте её: меню «Модели» (Ctrl+M) → раздел «Распознавание речи».", value=speech_model(model_id).name)
-            )
+            self._offer_speech_download(model_id)
             return False
         self._stop_speaking()  # do not record Fluxion's own voice
         worker = VoiceInputWorker(str(model_path(model_id)), self, wait_seconds=wait_seconds)
@@ -6207,6 +6564,36 @@ class FluxionWindow(QMainWindow):
                              icons.speaker(colors["on"], True).pixmap(size).toImage())
         document.addResource(QTextDocument.ImageResource, QUrl(SPEAK_ICON_STOP),
                              icons.stop(colors["rec"]).pixmap(size).toImage())
+        document.addResource(QTextDocument.ImageResource, QUrl(COPY_ICON),
+                             icons.line("copy", colors["on"], 16).pixmap(size).toImage())
+        document.addResource(QTextDocument.ImageResource, QUrl(FILE_ICON),
+                             icons.line("file", colors["fg"], 14).pixmap(size).toImage())
+        self._think_color = colors["fg"]
+        self._refresh_outline_icons()
+
+    def _refresh_outline_icons(self) -> None:
+        """The outline icons of the window in the colours of the theme; a button that is on is lit."""
+        if not hasattr(self, "chat_style"):
+            return  # the chat page is still being built: _chat_page calls this at its end
+        from . import icons
+
+        colors = getattr(self, "_icon_colors", {"fg": "#94A3B8", "on": "#00E5FF", "rec": "#FF5C5C"})
+        fg = colors["fg"]
+        self.plus_button.setIcon(icons.line("plus", fg))
+        self.agent_settings_button.setIcon(icons.line("settings", fg))
+        self.chat_kebab.setIcon(icons.line("more", fg))
+        self.send_button.setIcon(icons.line("arrow-up", "#FFFFFF", 18))
+        self.stop_button.setIcon(icons.stop("#FFFFFF"))
+        for act, name in getattr(self, "_menu_icons", []):
+            act.setIcon(icons.line(name, fg, 16))
+        browser = getattr(self, "browser_button", None)
+        if browser is not None:
+            browser.setIcon(icons.line("globe", colors["on"] if browser.isChecked() else fg, 16))
+            self.bots_button.setIcon(icons.line("bot", colors["on"], 16))
+            self.health_button.setIcon(icons.line("pulse", fg, 16))
+        for button, name in getattr(self, "_nav_icons", []):
+            button.setIcon(icons.line(name, colors["on"] if button.isChecked() else fg, 18))
+        self._refresh_composer_chips()
 
     def _show_speak_toggle(self) -> None:
         on = self.speak_toggle.isChecked()
@@ -6349,11 +6736,12 @@ class FluxionWindow(QMainWindow):
             self.prompt.setPlaceholderText(tr("Напишите сообщение..."))
         self._refresh_agent_chip()
 
-    def _send_agent_message(self, task: str, plan: bool = False, shown: str | None = None) -> None:
+    def _send_agent_message(self, task: str, plan: bool = False, shown: str | None = None,
+                            files: list[dict] | None = None) -> None:
         """Run *task* through the agent inside the chat.
 
         *plan* asks for a numbered plan with file writes off; *shown* replaces
-        the text displayed as the user's message.
+        the text displayed as the user's message; *files* are attached to the task.
         """
         visible = shown if shown is not None else task
         self._last_query = visible
@@ -6364,6 +6752,7 @@ class FluxionWindow(QMainWindow):
                                                  "меню «Проект» → «Выбрать папку…»."))
             return
         self._append_message("user", visible)
+        self._mark_files(files or [])
         self.history.append({"role": "user", "content": visible})
         self._append_message("assistant", "")
         self._plan_pending = plan
@@ -6378,6 +6767,10 @@ class FluxionWindow(QMainWindow):
             self._agent_max_iterations(),
             self,
         )
+        if files:
+            self.agent_worker.files = list(files)
+            self.agent_worker.ollama_host = self._ollama_host()
+            self.agent_worker.notice.connect(self._on_attachment_notice)
         self.agent_worker.step.connect(self._on_chat_agent_step)
         self.agent_worker.done.connect(self._on_chat_agent_done)
         self.agent_worker.failed.connect(self._on_chat_agent_failed)
@@ -6474,8 +6867,13 @@ class FluxionWindow(QMainWindow):
 
     def _start_thinking(self) -> None:
         if self._messages:
-            self._messages[-1]["thinking"] = True
+            entry = self._messages[-1]
+            entry["thinking"] = True
+            if "phrase" not in entry:  # a retry of the same answer keeps its phrase
+                self._think_phrase = (self._think_phrase + 1) % len(THINK_PHRASES)
+                entry["phrase"] = self._think_phrase
         self._think_frame = 0
+        self._set_think_frame()
         self._think_timer.start()
         self._render_messages()
 
@@ -6485,8 +6883,21 @@ class FluxionWindow(QMainWindow):
             entry.pop("thinking", None)
 
     def _on_think_tick(self) -> None:
-        self._think_frame = (self._think_frame + 1) % 4
-        self._render_messages()
+        """Next frame of the spinner: only its picture changes, the chat is not laid out again."""
+        from . import icons
+
+        self._think_frame = (self._think_frame + 1) % icons.SPINNER_FRAMES
+        self._set_think_frame()
+        self.messages.viewport().update()
+
+    def _set_think_frame(self) -> None:
+        from . import icons
+
+        frames = getattr(self, "_think_frames", None)
+        if not frames:
+            frames = self._think_frames = [icons.spinner_frame(i) for i in range(icons.SPINNER_FRAMES)]
+        self.messages.document().addResource(QTextDocument.ImageResource, QUrl(THINK_ICON),
+                                             frames[self._think_frame])
 
     def _on_meta(self, result) -> None:
         citations = getattr(result, "citations", None) or []
@@ -6567,9 +6978,14 @@ class FluxionWindow(QMainWindow):
                 parts.append(f"<p><b>{who}</b></p>")
                 if entry["meta"]:
                     parts.append(f"<p><i>{html.escape(entry['meta'])}</i></p>")
+                if entry.get("files"):
+                    parts.append("<p><small>" + "&nbsp;&nbsp;".join(
+                        f'<img src="{FILE_ICON}" width="14" height="14" style="vertical-align: middle"> '
+                        f'{html.escape(f["name"])}' for f in entry["files"]) + "</small></p>")
                 if entry.get("thinking"):
-                    spinner = "◐◓◑◒"[self._think_frame % 4]
-                    parts.append(tr("<p><i>{spinner} Думаю…</i></p>", spinner=spinner))
+                    phrase = THINK_PHRASES[entry.get("phrase", 0) % len(THINK_PHRASES)]
+                    parts.append(f'<p><img src="{THINK_ICON}" width="34" height="18" style="vertical-align: middle">'
+                                 f'&nbsp;&nbsp;<span style="color: {self._think_color}">{html.escape(phrase)}</span></p>')
                     continue
                 from orchestrator.presentation import render_chat_html
 
@@ -6590,7 +7006,9 @@ class FluxionWindow(QMainWindow):
                     else:
                         icon, label = SPEAK_ICON, tr("Озвучить")
                     parts.append(
-                        f'<p><a href="{SPEAK_URL}{index}"><img src="{icon}" width="16" height="16"'
+                        f'<p><a href="{COPY_URL}{index}"><img src="{COPY_ICON}" width="16" height="16"'
+                        f' style="vertical-align: middle"> {tr("Копировать")}</a>&nbsp;&nbsp;&nbsp;'
+                        f'<a href="{SPEAK_URL}{index}"><img src="{icon}" width="16" height="16"'
                         f' style="vertical-align: middle"> {label}</a></p>'
                     )
                 if entry is self._plan_entry and not self.generating:
@@ -6910,7 +7328,25 @@ class FluxionWindow(QMainWindow):
             /* Чат и логи */
             QTextBrowser#messages {{ background: {bg1}; color: {text1}; border: 1px solid {border}; border-radius: 6px; padding: 16px; }}
             QTextBrowser#messages pre {{ background: {bg2}; border-radius: 6px; padding: 10px; font-family: {mono_font}; font-size: 13px; }}
-            QFrame#composer {{ background: {bg1}; border: 1px solid {border}; border-radius: 6px; }}
+            QFrame#composer {{ background: {bg1}; border: 1px solid {border}; border-radius: 14px; }}
+            QFrame#composerChip {{ background: transparent; border: 1px solid {border}; border-radius: 11px; }}
+            QFrame#composerChip[active="true"] {{ border-color: {accent}; }}
+            QFrame#composerChip QLabel {{ background: transparent; color: {text2}; font-size: 12px; }}
+            QFrame#composerChip[active="true"] QLabel#composerChipText {{ color: {accent}; }}
+            QToolButton#chipClose {{ background: transparent; border: none; border-radius: 8px; padding: 2px; }}
+            QToolButton#chipClose:hover {{ background: {bg2}; }}
+            QToolButton#plusButton {{ background: transparent; border: none; border-radius: 8px; padding: 6px; }}
+            QToolButton#plusButton:hover, QToolButton#plusButton:pressed {{ background: {bg2}; }}
+            QToolButton#plusButton::menu-indicator {{ image: none; width: 0px; }}
+            QToolButton#sendRound, QToolButton#stopRound {{ background: {primary}; border: none; border-radius: 17px; min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; padding: 0px; }}
+            QToolButton#sendRound:hover, QToolButton#stopRound:hover {{ background: #8B4BFF; }}
+            QToolButton#sendRound:disabled {{ background: {bg2}; }}
+            QToolButton#headerIcon {{ background: transparent; border: 1px solid {border}; border-radius: 8px; padding: 5px; }}
+            QToolButton#headerIcon:hover {{ background: {bg2}; border-color: {accent}; }}
+            QToolButton#headerIcon::menu-indicator {{ image: none; width: 0px; }}
+            QLabel#menuCaption {{ color: {text2}; font-size: 11px; letter-spacing: 1px; padding: 6px 12px 2px 12px; background: transparent; }}
+            QToolButton#statusIcon {{ background: transparent; border: none; border-radius: 6px; padding: 3px 5px; color: {text2}; }}
+            QToolButton#statusIcon:hover {{ background: {bg2}; }}
             QFrame#composer QLineEdit {{ background: transparent; border: none; padding: 6px; }}
             QFrame#composer QPlainTextEdit {{ background: transparent; color: {text1}; border: none; padding: 2px 4px; font-family: {ui_font}; selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
             QToolButton#composerIcon {{ background: transparent; border: none; border-radius: 6px; padding: 5px; }}
@@ -7282,7 +7718,7 @@ def main() -> int:
             rag_service = None
             window = FluxionWindow()
             window.status_label.setText(tr("Ошибка движка: {exc}", exc=exc))
-        if "--minimized" in sys.argv:  # started with Windows for the bots (Инструменты → Боты в мессенджерах)
+        if "--minimized" in sys.argv:  # started with Windows for the bots (Связь → Боты в мессенджерах)
             window.showMinimized()
         else:
             window.show()

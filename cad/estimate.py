@@ -3,7 +3,7 @@ the plant.
 
 Every plant has its own norms: Fluxion starts from recommended ones (typical general
 machine-building time norms, enlarged; current average metal prices) and the user
-corrects any value («Инструменты → Нормы и цены завода…»); they are kept in
+corrects any value («Производство → Нормы и цены завода…»); they are kept in
 %APPDATA%\\Fluxion\\plant_norms.json. A value that differs from the recommended one is
 the plant's; the estimate says which it is built on.
 
@@ -47,7 +47,7 @@ OPERATIONS = (
 )
 
 RECOMMENDED = {
-    "_": "Нормы и цены завода для сметы. Правьте в Fluxion: Инструменты → «Нормы и цены завода…» "
+    "_": "Нормы и цены завода для сметы. Правьте в Fluxion: Производство → «Нормы и цены завода…» "
          "или здесь. Металл: правило — слово или регулярное выражение, которое ищется в материале "
          "(первое подошедшее). Работы: часов на единицу; ставка 0 — общая ставка нормо-часа. "
          "Сварка — на метр шва с катетом 6 мм.",
@@ -390,7 +390,7 @@ def summary_line(est: Estimate) -> str:
         text += f"; не задано: {len(est.missing)} поз."
     text += f" — {est.basis}"
     if est.basis == "по рекомендуемым нормам":
-        text += " (исправьте под свой завод: Инструменты → «Нормы и цены завода…»)"
+        text += " (исправьте под свой завод: Производство → «Нормы и цены завода…»)"
     return text + "."
 
 
@@ -406,7 +406,7 @@ def write_sheet(sheet, est: Estimate, bold, head_fill, wrap) -> None:
                [26, 60, 10, 14, 12, 9, 14, 46])
     note = f"Смета {est.basis}."
     if est.basis == "по рекомендуемым нормам":
-        note += " Исправьте их под свой завод: Инструменты → «Нормы и цены завода…»."
+        note += " Исправьте их под свой завод: Производство → «Нормы и цены завода…»."
     ws.cell(row=2, column=1, value=note).font = Font(bold=True, color="B45309")
     missing_fill = PatternFill("solid", fgColor="FDECC8")
     first = ws.max_row + 1

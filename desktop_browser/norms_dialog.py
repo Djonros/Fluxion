@@ -1,4 +1,4 @@
-"""«Нормы и цены завода» (Инструменты): the norms and prices the «Смета» of an assembly
+"""«Нормы и цены завода» (Производство): the norms and prices the «Смета» of an assembly
 report is built on (cad/estimate.py). Fluxion starts from recommended ones; every
 value can be corrected, a corrected cell is highlighted, «Вернуть рекомендуемые»
 puts a row or everything back."""

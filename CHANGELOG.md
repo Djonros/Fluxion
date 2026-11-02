@@ -5,6 +5,20 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Files in the chat and the agent: «+» → «Прикрепить файл…» / «Фото или скриншот…», drag and drop on the input field, Ctrl+V (a screenshot from the clipboard too); up to 8 files a message, shown as chips over the field and in the message. Documents, KOMPAS-3D files, DXF/DWG and old .doc/.xls are read the way the design archive reads them, any other file as text (up to 40 000 characters a file); a picture is described by the vision model of «Связь с телефоном» (phone/vision.py) and the description goes in front of the question (`desktop_browser/attachments.py`).
+- The microphone without a speech model offers to download it (Whisper Small, 484 MB) and starts listening when it is downloaded.
+
+### Changed
+- The chat input redesigned: «+» on the left holds the attachments, the modes «Агент: файлы», «План», «Мой стиль», «Разово агентом» (Ctrl+Enter), the slash commands and the tools, and «Озвучивать ответы»; the modes that are on are chips over the field with a cross; a round up-arrow button sends. The row of mode check boxes and the «Ctrl+Enter — агенту» hint are gone.
+- Outline icons everywhere (Lucide shapes in the theme colour, lit in the accent colour when on): the chat settings, ⋮, the sidebar, the status bar (Браузер, Боты, Состояние) and the menus (`desktop_browser/icons.py`).
+- The menu «Инструменты» split into «Конструктор», «Производство» (Сборка, Лазер) and «Связь»; the paid tools are marked «PRO» the same way, «Пакет на лазер» included; «Расширенный веб-поиск» moved from «Правка» to «Связь». The Инструкция, the guide and the messages name the new menus.
+- «Правка»: Отменить, Повторить, Вырезать, Копировать, Вставить, Выделить всё; the same in the context menus of the chat and of the input field; «Копировать» under each answer.
+- «Думаю…»: a light running along the infinity of the logo, and one phrase per answer — «Думаю…», «Раздумываю…», «В раздумье…» in turn from question to question; only the picture is redrawn, not the chat.
+- The program icon at the top of the left column, over the wordmark.
+
 ## [0.26.0] — 2026-11-02
 
 ### Added

@@ -57,7 +57,7 @@ def find_model(query: str, folders: list[str], suffixes=MODEL_SUFFIXES) -> Path:
     if not query:
         raise JobError("Укажите файл: путь к нему или имя, например «/отчёт Рама 600.000».")
     if not folders:
-        raise JobError("Папки для бота не заданы: Инструменты → «Боты в мессенджерах…» → «Папки».")
+        raise JobError("Папки для бота не заданы: Связь → «Боты в мессенджерах…» → «Папки».")
     path = Path(query)
     if path.is_absolute():
         if not allowed_file(path, folders):
@@ -134,7 +134,7 @@ def report(path: Path, log=print, estimate_only: bool = False) -> Result:
     text = (line or reports.summary_text(result, target)) if estimate_only else reports.summary_text(result, target)
     if result.unchecked:
         text += (f"\n\nНе отмечено предупреждений: {len(result.unchecked)} — в отчёте они «не проверены». "
-                 "Отметить: в программе Инструменты → «Ведомость и металлоёмкость сборки…».")
+                 "Отметить: в программе Производство → «Ведомость и металлоёмкость сборки…».")
     return Result(text, [target])
 
 
@@ -214,5 +214,5 @@ def laser(path: Path, log=print, job_factory=None, timeout: float = LASER_TIMEOU
         files.append(zip_folder(out_dir, out_dir / f"{Path(path).stem} - DXF.zip"))
     if skipped:
         lines.append(f"Пропущено (нужна рука в КОМПАС): {len(skipped)} — " + "; ".join(skipped[:10])
-                     + ("…" if len(skipped) > 10 else "") + ". Их сделайте из программы: Инструменты → «Пакет на лазер…».")
+                     + ("…" if len(skipped) > 10 else "") + ". Их сделайте из программы: Производство → «Пакет на лазер (DXF)…».")
     return Result("\n".join(lines), files)

@@ -99,7 +99,7 @@ def _report(path: str, out: str | None, check_only: bool = False, accept: bool =
         return 0
     if result.unchecked and not accept:
         print(f"[ОТЧЁТ НЕ СФОРМИРОВАН] Не отмечено предупреждений: {len(result.unchecked)}. Отметьте их в Fluxion "
-              "(Инструменты → «Ведомость и металлоёмкость сборки…») или запустите с --accept.")
+              "(Производство → «Ведомость и металлоёмкость сборки…») или запустите с --accept.")
         return 3
     target = report.save_xlsx(result, report.default_path(top, out), source=Path(path).name)
     print(report.summary_text(result, target))
@@ -125,7 +125,7 @@ def _acad(path: str, out: str | None, norm: str | None, check_only: bool = False
         return 0
     if result.unchecked and not accept:
         print(f"[ОТЧЁТ НЕ СФОРМИРОВАН] Не отмечено замечаний: {len(result.unchecked)}. Отметьте их в Fluxion "
-              "(Инструменты → «Нормоконтроль чертежа AutoCAD…») или запустите с --accept.")
+              "(Конструктор → «Нормоконтроль чертежа AutoCAD…») или запустите с --accept.")
         return 3
     target = acad_check.save_xlsx(result, acad_check.default_path(result, out))
     print(acad_check.summary_text(result, target))

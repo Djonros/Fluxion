@@ -13,7 +13,7 @@ Menu **Models → «Download and choose models…»** (Ctrl+M). On the first sta
 1. Open the «Models» page.
 2. For everyday work download **Qwen2.5 Coder 7B** (4.7 GB), or **Qwen2.5 7B** for letters and documents. For a weak computer — 3B or 1.5B.
 3. Wait for the download: if the connection drops, press «Download» again — it continues where it stopped.
-4. The model is connected by itself. To switch models — **«⚙ Chat settings» → «Model»**.
+4. The model is connected by itself. To switch models — **the chat settings button (the gear) → «Model»**.
 5. For voice download «Speech recognition» on the same page; for search by meaning in a project — BGE-M3.
 
 ## What you get

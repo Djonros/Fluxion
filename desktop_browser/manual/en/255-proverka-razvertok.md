@@ -6,13 +6,13 @@ To find in DXF flat patterns what a laser or a punch will not make cleanly: a ho
 
 ## How to start
 
-By itself — at the end of **«Laser package»**. For any folder of DXF — menu **Tools → «Check DXF flat patterns (Pro)…»**.
+By itself — at the end of **«Laser package»**. For any folder of DXF — menu **Production → «Check DXF flat patterns…»**.
 
 ## Step by step
 
 1. After «Laser package» the check runs by itself: the thickness is taken from the thickness folder (`…\8\`).
 2. For your own folder choose it and, if the thickness is in neither the folders nor the file names («S10», «t8», «лист 12», «8мм»), enter the thickness for the other files (0 — skip them).
-3. The limits — **Tools → «Plant norms and prices» → the «Sheet» tab**: the least hole diameter, the web to the edge, the web between holes, the width of a cut-out — in sheet thicknesses t. Recommended — 1·t, editable.
+3. The limits — **Production → «Plant norms and prices» → the «Sheet» tab**: the least hole diameter, the web to the edge, the web between holes, the width of a cut-out — in sheet thicknesses t. Recommended — 1·t, editable.
 
 ## What you get
 

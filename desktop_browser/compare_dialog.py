@@ -1,4 +1,4 @@
-"""«Сравнить версии сборки» (Инструменты, Pro): two versions of a product — assemblies
+"""«Сравнить версии сборки» (Производство, Pro): two versions of a product — assemblies
 (.a3d, opened read-only) or snapshots of earlier reports (.json) — and what changed
 between them in an Excel workbook (cad/compare.py)."""
 from __future__ import annotations

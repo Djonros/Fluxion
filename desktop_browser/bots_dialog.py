@@ -1,4 +1,4 @@
-"""«Боты в мессенджерах» (Инструменты): Telegram, MAX and ВКонтакте answer from this
+"""«Боты в мессенджерах» (Связь): Telegram, MAX and ВКонтакте answer from this
 computer while Fluxion is open (package bots).
 
 ``BotHost`` is what the bots ask the window for, from their own threads: the answers
@@ -55,7 +55,7 @@ class BotHost(QObject):
             source = ArchiveIndex(self.window._style_dir())
             if not source.file_count:
                 source.close()
-                return "Архив КД ещё не проиндексирован: в программе Инструменты → «Архив КД (Pro)…»."
+                return "Архив КД ещё не проиндексирован: в программе Конструктор → «Архив КД…»."
         try:
             extra = {"source": source} if source is not None else {}
             _result, stream = assistant.ask_stream(query=text, history=history, **extra)

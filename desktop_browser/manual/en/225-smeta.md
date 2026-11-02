@@ -6,7 +6,7 @@ The cost of a product from a KOMPAS-3D assembly: metal with waste, fasteners, bo
 
 ## How to start
 
-The estimate is made together with the report: **Tools → «Assembly bill of materials and metal weight (Pro)…»**, the **«Смета»** sheet. Norms and prices — **Tools → «Plant norms and prices (Pro)…»**.
+The estimate is made together with the report: **Production → «Assembly bill of materials and metal weight…»**, the **«Смета»** sheet. Norms and prices — **Production → «Plant norms and prices…»**.
 
 ## Step by step
 

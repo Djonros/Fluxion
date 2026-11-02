@@ -6,7 +6,7 @@ A quick check of parts by formulas: welds, bolts, beams, a whole trailer frame, 
 
 ## How to start
 
-Menu **Tools → «Engineering calculator…»**. In the chat: `/расчёт` and a question in your own words. By voice: «Расчёт, …» or «посчитай балку …».
+Menu **Design → «Engineering calculator…»**. In the chat: `/расчёт` and a question in your own words. By voice: «Расчёт, …» or «посчитай балку …».
 
 ## Step by step
 

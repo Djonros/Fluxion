@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import QApplication
 
-from desktop_browser.app import FluxionWindow
+from desktop_browser.app import THINK_ICON, THINK_PHRASES, FluxionWindow
 from desktop_browser.browser import (
     FallbackBrowserPanel,
     create_browser_panel,
@@ -520,7 +521,8 @@ def test_thinking_indicator_in_chat_bubble(make_window):
     window._append_message("assistant", "")
     window._start_thinking()
     assert window._think_timer.isActive()
-    assert "Думаю" in window.messages.toHtml()
+    phrase = THINK_PHRASES[window._messages[-1]["phrase"]]
+    assert phrase in window.messages.toPlainText()
     window._on_token("Ответ")
     assert not window._think_timer.isActive()
     assert "thinking" not in window._messages[-1]
@@ -531,11 +533,14 @@ def test_thinking_spinner_animates(make_window):
     window = make_window()
     window._append_message("assistant", "")
     window._start_thinking()
-    first = window.messages.toHtml()
+    url = QUrl(THINK_ICON)
+    first = window.messages.document().resource(QTextDocument.ImageResource, url)
+    html_before = window.messages.toHtml()
     window._on_think_tick()
     window._on_think_tick()
-    second = window.messages.toHtml()
-    assert "Думаю" in first and "Думаю" in second
+    second = window.messages.document().resource(QTextDocument.ImageResource, url)
+    assert first != second  # the picture of the spinner moves
+    assert window.messages.toHtml() == html_before  # the chat is not laid out again
     window._stop_thinking()
 
 

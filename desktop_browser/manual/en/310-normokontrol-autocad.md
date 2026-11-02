@@ -6,7 +6,7 @@ To check a DWG or DXF drawing the way a standards controller would, by ESKD or S
 
 ## How to start
 
-Menu **Tools → «AutoCAD drawing standards check (Pro)…»** or `/автокад C:\path\drawing.dwg` in the chat.
+Menu **Design → «AutoCAD drawing standards check…»** or `/автокад C:\path\drawing.dwg` in the chat.
 
 ## Step by step
 

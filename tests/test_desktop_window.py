@@ -580,11 +580,10 @@ def test_chat_settings_hold_model_and_modes_sit_under_the_input(qapp, tmp_path):
     ):
         assert widget.parent() is settings
     composer = window.prompt.parent()
-    assert window.send_button.parent() is composer
-    for chip in (window.chat_agent_files, window.chat_plan):
-        assert chip.parent() is not composer
-        assert chip.objectName() == "modeChip"
-    assert "Настройки чата" in window.agent_settings_button.text()
+    assert window.send_button.parent() is composer and window.plus_button.parent() is composer
+    for chip in (window.chat_agent_files, window.chat_plan):  # switched in «+», shown as chips over the text
+        assert not chip.isVisibleTo(window)
+    assert "Настройки чата" in window.agent_settings_button.toolTip()
 
     window.show()
     window._show_agent_settings()

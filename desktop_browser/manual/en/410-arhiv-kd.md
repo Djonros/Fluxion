@@ -6,7 +6,7 @@ Answers from the archive of design documentation with links to the files: «what
 
 ## How to start
 
-Menu **Tools → «Design archive (Pro)…»**; questions — in the chat: `/архив question`.
+Menu **Design → «Design archive…»**; questions — in the chat: `/архив question`.
 
 ## Step by step
 

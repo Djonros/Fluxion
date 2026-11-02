@@ -91,12 +91,22 @@ class FakeAssistant:
         return meta, iter(["Ответ ", "```py\nx = 1\n```"])
 
 
-def test_voice_input_without_model_explains_where_to_get_it(qapp, tmp_path, monkeypatch):
+def test_voice_input_without_model_offers_to_download_it(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+
     monkeypatch.setattr(voice.models, "is_installed", lambda model_id, models_dir=None: False)
+    asked = []
+    monkeypatch.setattr(app_module.QMessageBox, "question",
+                        lambda *args, **kwargs: asked.append(args[2]) or app_module.QMessageBox.No)
     window = _window(qapp, tmp_path)
+    started = []
+    monkeypatch.setattr(window, "_on_speech_model_button", started.append)
     window.toggle_voice_input()
-    assert window.voice_worker is None
-    assert "Распознавание речи" in window.messages.toPlainText()
+    assert window.voice_worker is None and not started  # «Нет»: nothing is downloaded
+    assert "Whisper" in asked[0]
+    monkeypatch.setattr(app_module.QMessageBox, "question", lambda *args, **kwargs: app_module.QMessageBox.Yes)
+    window.toggle_voice_input()
+    assert started and window._listen_after_download  # recording starts when the download is done
     window.close()
 
 
@@ -297,12 +307,17 @@ def test_hands_free_waits_while_answer_is_read(qapp, tmp_path, monkeypatch):
     window.close()
 
 
-def test_hands_free_without_model_explains(qapp, tmp_path, monkeypatch):
+def test_hands_free_without_model_offers_the_download(qapp, tmp_path, monkeypatch):
+    import desktop_browser.app as app_module
+
     monkeypatch.setattr(voice.models, "is_installed", lambda model_id, models_dir=None: False)
+    asked = []
+    monkeypatch.setattr(app_module.QMessageBox, "question",
+                        lambda *args, **kwargs: asked.append(args[2]) or app_module.QMessageBox.No)
     window = _window(qapp, tmp_path)
     window.hands_free_button.setChecked(True)
     assert not window._hands_free and not window.hands_free_button.isChecked()
-    assert "Распознавание речи" in window.messages.toPlainText()
+    assert asked and "Whisper" in asked[0]
     window.close()
 
 

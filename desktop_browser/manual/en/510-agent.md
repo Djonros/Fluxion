@@ -6,7 +6,7 @@ To solve a task in code step by step: find the files, read the code, run the tes
 
 ## How to start
 
-**Ctrl+Enter** in the chat, or the **«Agent: files»** and **«Plan»** chips under the input field.
+**Ctrl+Enter** in the chat, or the **+** button at the input field → «Agent: files» and «Plan».
 
 ## Step by step
 
@@ -21,4 +21,4 @@ The steps of the agent and the result are seen in the chat. Before the first edi
 ## If it does not work
 
 - Tests do not run — install pytest in the venv of the project or set the Python in `FLUXION_TEST_PYTHON`.
-- The step limit — «⚙ Chat settings» → «Max iterations»; in Pro — «No limit».
+- The step limit — the chat settings button (the gear) → «Max iterations»; in Pro — «No limit».

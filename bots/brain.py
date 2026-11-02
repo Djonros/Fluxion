@@ -160,7 +160,7 @@ class Brain:
             self.host.pending(msg.platform, msg.name, code)
             self._send(adapter, msg, f"Это бот Fluxion. Вас ещё нет в списке разрешённых.\n"
                                      f"Код подтверждения: {code}\nВладелец компьютера вводит его в Fluxion: "
-                                     "Инструменты → «Боты в мессенджерах…» → «Подтвердить». Код действует 15 минут.")
+                                     "Связь → «Боты в мессенджерах…» → «Подтвердить». Код действует 15 минут.")
             return
         dialog = self.dialog(msg)
         with dialog.lock:  # one message of a user at a time, in order

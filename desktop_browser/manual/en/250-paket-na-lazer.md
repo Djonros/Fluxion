@@ -6,7 +6,7 @@ Flat patterns of all sheet parts of an assembly in DXF 1:1, without a frame and 
 
 ## How to start
 
-Menu **Tools → «Laser package (DXFka)…»**.
+Menu **Production → «Laser package (DXF)…»**.
 
 ## Step by step
 

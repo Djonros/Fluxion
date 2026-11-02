@@ -63,7 +63,7 @@ def find(text: str, kinds: tuple[str, ...] | None = None) -> catalog.Material:
         raise CalcError(f"материал «{text}» не знаю. Есть: {names}. Свой — в «Каталоге материалов» с σт и σв")
     if not material.has_strength:
         raise CalcError(f"у материала «{material.short}» в каталоге нет σт и σв — добавьте их "
-                        f"(Инструменты → «Каталог материалов…», поля strength)")
+                        f"(Конструктор → «Каталог материалов…», поля strength)")
     return material
 
 

@@ -1,4 +1,4 @@
-"""«Заявка на закупку» (Инструменты, Pro): several products, each in its quantity —
+"""«Заявка на закупку» (Производство, Pro): several products, each in its quantity —
 assemblies (.a3d, opened read-only) or snapshots of their reports (.json) — and what
 to buy for all of them in an Excel workbook (cad/purchase.py)."""
 from __future__ import annotations

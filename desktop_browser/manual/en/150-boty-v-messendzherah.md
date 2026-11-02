@@ -6,7 +6,7 @@ Ask Fluxion from your phone — from Telegram, MAX or VK: a question, a calculat
 
 ## How to start
 
-Menu **Tools → «Messenger bots…»**. When a bot is on, the status bar shows a **«Bots: Telegram ✓»** button — it opens the same window.
+Menu **Connect → «Messenger bots…»**. When a bot is on, the status bar shows a **«Bots: Telegram ✓»** button — it opens the same window.
 
 ## Step by step
 
