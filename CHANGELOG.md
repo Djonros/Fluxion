@@ -5,10 +5,11 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.27.0] — 2026-11-02
 
 ### Added
 - Files in the chat and the agent: «+» → «Прикрепить файл…» / «Фото или скриншот…», drag and drop on the input field, Ctrl+V (a screenshot from the clipboard too); up to 8 files a message, shown as chips over the field and in the message. Documents, KOMPAS-3D files, DXF/DWG and old .doc/.xls are read the way the design archive reads them, any other file as text (up to 40 000 characters a file); a picture is described by the vision model of «Связь с телефоном» (phone/vision.py) and the description goes in front of the question (`desktop_browser/attachments.py`).
+- «Связь с телефоном»: a QR code in the window (`fluxion://pair?code=…&url=…`, segno); Fluxion Mobile 0.7.2 scans it and keeps the address that answers `/health`.
 - The microphone without a speech model offers to download it (Whisper Small, 484 MB) and starts listening when it is downloaded.
 
 ### Changed
@@ -18,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - «Правка»: Отменить, Повторить, Вырезать, Копировать, Вставить, Выделить всё; the same in the context menus of the chat and of the input field; «Копировать» under each answer.
 - «Думаю…»: a light running along the infinity of the logo, and one phrase per answer — «Думаю…», «Раздумываю…», «В раздумье…» in turn from question to question; only the picture is redrawn, not the chat.
 - The program icon at the top of the left column, over the wordmark.
+
+### Fixed
+- «Связь с телефоном» showed the address of a VPN in TUN mode (198.18.0.0/15) first, and the phone could not reach the PC: the addresses are ranked now — home networks first, tunnels and link-local (169.254) hidden.
 
 ## [0.26.0] — 2026-11-02
 
