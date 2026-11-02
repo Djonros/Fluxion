@@ -214,6 +214,13 @@ a = Analysis(
         "bots.brain",
         "bots.runner",
         "desktop_browser.bots_dialog",
+        # «Связь с телефоном»: the server Fluxion Mobile talks to, imported lazily from the window
+        "phone",
+        "phone.config",
+        "phone.vision",
+        "phone.server",
+        "desktop_browser.phone_dialog",
+        "http.server",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window
         "dxfka",
