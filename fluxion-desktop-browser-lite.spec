@@ -221,6 +221,7 @@ a = Analysis(
         "phone.server",
         "desktop_browser.phone_dialog",
         "desktop_browser.attachments",  # files attached in the chat, imported lazily from the window
+        "segno",
         "http.server",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)
         # «Пакет на лазер»: the core of DXFka, imported lazily from the window

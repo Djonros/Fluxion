@@ -29,6 +29,8 @@ cryptography>=42
 
 # Desktop UI
 PySide6>=6.10
+# QR code in «Связь с телефоном» (pure Python)
+segno>=1.6
 
 # Voice input and output (voice/): speech recognition and the microphone;
 # answers are read aloud by the Windows voices through pywin32

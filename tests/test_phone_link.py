@@ -8,7 +8,8 @@ import urllib.request
 import pytest
 
 from phone import config, vision
-from phone.server import PhoneServer, as_text, has_image
+from phone import server as phone_server
+from phone.server import PhoneServer, as_text, has_image, lan_addresses
 from phone.vision import VisionUnavailable
 
 CODE = "K7M2-Q9XP"
@@ -181,9 +182,38 @@ def test_dialog_shows_address_and_code(tmp_path, monkeypatch):
     assert dialog.code.text() == code
     assert ":8766/v1" in dialog.address.text()
     assert "Скачайте" in dialog.vision_label.text() and dialog.download_button.isEnabled()
+    assert dialog.link.startswith("fluxion://pair?code=" + code) and ":8766/v1" in dialog.link
+    assert not dialog.qr.pixmap().isNull()
     dialog.enabled.setChecked(True)
     dialog._new_code()
+    assert "code=" + dialog.code.text() in dialog.link  # the QR follows the new code
     dialog.save()
     saved = config.load()
     assert saved["enabled"] and saved["code"] != code
     dialog.deleteLater()
+
+
+def test_pair_link_holds_code_and_every_address():
+    from urllib.parse import parse_qs, urlsplit
+
+    link = config.pair_link(["http://192.168.31.50:8766/v1", "http://172.17.0.1:8766/v1"], "K7M2-Q9XP")
+    parts = urlsplit(link)
+    assert (parts.scheme, parts.netloc) == ("fluxion", "pair")
+    query = parse_qs(parts.query)
+    assert query["code"] == ["K7M2-Q9XP"]
+    assert query["url"] == ["http://192.168.31.50:8766/v1", "http://172.17.0.1:8766/v1"]
+
+
+def test_lan_addresses_put_home_network_first_and_hide_vpn_tunnel(monkeypatch):
+    # what a PC with a TUN-mode VPN, Hyper-V and Radmin reports: the probe lands on the tunnel
+    class Probe:
+        def __init__(self, *args): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def connect(self, address): pass
+        def getsockname(self): return ("198.18.0.1", 0)
+
+    monkeypatch.setattr(phone_server.socket, "socket", Probe)
+    monkeypatch.setattr(phone_server.socket, "gethostbyname_ex", lambda name: (
+        name, [], ["172.17.0.1", "26.24.124.83", "192.168.31.50", "198.18.0.1", "169.254.60.195"]))
+    assert lan_addresses() == ["192.168.31.50", "172.17.0.1", "26.24.124.83"]

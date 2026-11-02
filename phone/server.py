@@ -12,6 +12,7 @@ Standard library only: nothing to install, and it works in the frozen build.
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import logging
 import socket
@@ -51,8 +52,28 @@ def as_text(messages: list) -> list[dict]:
     return out
 
 
+_TUNNEL_NET = ipaddress.IPv4Network("198.18.0.0/15")
+_HOME_NETS = [ipaddress.IPv4Network(n) for n in ("192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12")]
+
+
+def _rank(address: str) -> int | None:
+    """Home networks first; None for an address no phone can reach. A VPN in TUN mode
+    (Clash, sing-box, v2rayN) takes 198.18.0.0/15 and the default route, so the
+    outgoing-interface probe alone would name the tunnel."""
+    try:
+        ip = ipaddress.IPv4Address(address)
+    except ValueError:
+        return None
+    if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip in _TUNNEL_NET:
+        return None
+    for rank, net in enumerate(_HOME_NETS):
+        if ip in net:
+            return rank
+    return len(_HOME_NETS)  # Radmin, Tailscale and the like: reachable only through them
+
+
 def lan_addresses() -> list[str]:
-    """IPv4 addresses of this PC a phone on the same network can reach."""
+    """IPv4 addresses of this PC a phone on the same network can reach, the likeliest first."""
     found: list[str] = []
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
@@ -66,7 +87,8 @@ def lan_addresses() -> list[str]:
                 found.append(address)
     except OSError:
         pass
-    return [a for a in found if not a.startswith("127.")] or ["127.0.0.1"]
+    usable = [a for a in found if _rank(a) is not None]
+    return sorted(usable, key=_rank) or ["127.0.0.1"]  # stable: the probe's pick leads its class
 
 
 class PhoneServer:

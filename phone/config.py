@@ -11,6 +11,7 @@ import os
 import secrets
 import threading
 from pathlib import Path
+from urllib.parse import urlencode
 
 DEFAULT_PORT = 8766
 DEFAULT_OLLAMA_MODEL = "qwen2.5vl:7b"
@@ -28,6 +29,12 @@ def path() -> Path:
 def new_code() -> str:
     raw = "".join(secrets.choice(ALPHABET) for _ in range(8))
     return raw[:4] + "-" + raw[4:]
+
+
+def pair_link(urls: list[str], code: str) -> str:
+    """What the QR code in the window holds; Fluxion Mobile opens it and checks each address
+    in turn (the first that answers /health wins): fluxion://pair?code=…&url=…&url=…"""
+    return "fluxion://pair?" + urlencode([("code", code)] + [("url", u) for u in urls], safe=":/")
 
 
 def normalize(data) -> dict:

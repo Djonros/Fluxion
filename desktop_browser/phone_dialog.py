@@ -4,7 +4,10 @@ to type on the phone, and downloads the vision model the «Ремонт» tab of
 """
 from __future__ import annotations
 
+import io
+
 from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QProgressBar, QPushButton, QSpinBox, QVBoxLayout)
 
@@ -46,6 +49,19 @@ def vision_state(cfg: dict) -> str:
               size=vision.DOWNLOAD_GB, model=cfg["ollama_model"])
 
 
+def qr_pixmap(text: str, size: int = 200) -> QPixmap:
+    """A QR code a phone camera reads from the screen: dark on white with the quiet zone."""
+    import segno
+
+    code = segno.make(text, error="m")
+    modules = code.symbol_size(scale=1, border=4)[0]
+    data = io.BytesIO()  # whole pixels per module: a resized code blurs and reads worse
+    code.save(data, kind="png", scale=max(3, size // modules), border=4, dark="#000", light="#fff")
+    pixmap = QPixmap()
+    pixmap.loadFromData(data.getvalue(), "PNG")
+    return pixmap
+
+
 class PhoneDialog(QDialog):
     def __init__(self, parent=None, state: str = ""):
         super().__init__(parent)
@@ -85,14 +101,19 @@ class PhoneDialog(QDialog):
         code_row.addWidget(renew)
         code_row.addStretch(1)
         form.addRow(tr("Код сопряжения"), code_row)
-        box.addLayout(form)
+        pairing = QHBoxLayout()
+        pairing.addLayout(form, 1)
+        self.qr = QLabel()
+        self.qr.setToolTip(tr("Наведите камеру телефона или «Ремонт» → ⚙ → «Сканировать QR»"))
+        pairing.addWidget(self.qr, 0, Qt.AlignTop)
+        box.addLayout(pairing)
         self.state = QLabel(state)
         self.state.setWordWrap(True)
         box.addWidget(self.state)
 
         hint = QLabel(tr(
-            "На телефоне: «Ремонт» → ⚙ → «Домашний Fluxion», адрес и код отсюда. Телефон и компьютер должны быть "
-            "в одной сети. При первом включении Windows спросит про брандмауэр: разрешите доступ в частных сетях."))
+            "На телефоне наведите камеру на QR-код, или «Ремонт» → ⚙ → «Домашний Fluxion» и адрес с кодом отсюда. "
+            "Телефон и компьютер должны быть в одной сети. При первом включении Windows спросит про брандмауэр: разрешите доступ в частных сетях."))
         hint.setWordWrap(True)
         box.addWidget(hint)
 
@@ -123,11 +144,15 @@ class PhoneDialog(QDialog):
         self._show_address()
 
     def _show_address(self) -> None:
-        self.address.setText("\n".join(f"http://{ip}:{self.port.value()}/v1" for ip in lan_addresses()))
+        urls = [f"http://{ip}:{self.port.value()}/v1" for ip in lan_addresses()]
+        self.address.setText("\n".join(urls))
+        self.link = config.pair_link(urls, self.cfg["code"])
+        self.qr.setPixmap(qr_pixmap(self.link))
 
     def _new_code(self) -> None:
         self.cfg["code"] = config.new_code()
         self.code.setText(self.cfg["code"])
+        self._show_address()
 
     def _download(self) -> None:
         if self.worker is not None:

@@ -960,7 +960,6 @@
  "Модель Qwen2.5-VL в GGUF и её файл mmproj": "Un modelo Qwen2.5-VL en GGUF y su archivo mmproj",
  "Модель для фото скачана, но llama-cpp-python старый: нужна версия 0.3.9 или новее.": "El modelo para fotos está descargado, pero llama-cpp-python es antiguo: se necesita la versión 0.3.9 o posterior.",
  "Модель для фото: {name}": "Modelo para fotos: {name}",
- "На телефоне: «Ремонт» → ⚙ → «Домашний Fluxion», адрес и код отсюда. Телефон и компьютер должны быть в одной сети. При первом включении Windows спросит про брандмауэр: разрешите доступ в частных сетях.": "En el teléfono: «Reparación» → ⚙ → «Fluxion de casa», con la dirección y el código de aquí. El teléfono y el ordenador deben estar en la misma red. La primera vez Windows preguntará por el cortafuegos: permita el acceso en redes privadas.",
  "Новый код": "Nuevo código",
  "Порт": "Puerto",
  "Порт {port} занят: {exc}": "El puerto {port} está ocupado: {exc}",
@@ -1047,5 +1046,7 @@
  "Нормоконтроль чертежа AutoCAD…": "Control normativo de dibujos AutoCAD…",
  "Остановить ответ": "Detener la respuesta",
  "{name}: больше 5 МБ — это не текстовый файл": "{name}: más de 5 MB — no es un archivo de texto",
- "DXF всех листовых деталей сборки по папкам толщин (DXFka)": "DXF de todas las piezas de chapa del conjunto por carpetas de espesor (DXFka)"
+ "DXF всех листовых деталей сборки по папкам толщин (DXFka)": "DXF de todas las piezas de chapa del conjunto por carpetas de espesor (DXFka)",
+ "На телефоне наведите камеру на QR-код, или «Ремонт» → ⚙ → «Домашний Fluxion» и адрес с кодом отсюда. Телефон и компьютер должны быть в одной сети. При первом включении Windows спросит про брандмауэр: разрешите доступ в частных сетях.": "En el teléfono, apunte la cámara al código QR, o «Reparación» → ⚙ → «Fluxion de casa» con la dirección y el código de aquí. El teléfono y el ordenador deben estar en la misma red. La primera vez, Windows pregunta por el cortafuegos: permita el acceso en redes privadas.",
+ "Наведите камеру телефона или «Ремонт» → ⚙ → «Сканировать QR»": "Apunte la cámara del teléfono, o «Reparación» → ⚙ → «Escanear QR»"
 }

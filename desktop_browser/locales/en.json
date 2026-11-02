@@ -960,7 +960,6 @@
  "Модель Qwen2.5-VL в GGUF и её файл mmproj": "A Qwen2.5-VL model in GGUF and its mmproj file",
  "Модель для фото скачана, но llama-cpp-python старый: нужна версия 0.3.9 или новее.": "The photo model is downloaded, but llama-cpp-python is old: version 0.3.9 or newer is needed.",
  "Модель для фото: {name}": "Photo model: {name}",
- "На телефоне: «Ремонт» → ⚙ → «Домашний Fluxion», адрес и код отсюда. Телефон и компьютер должны быть в одной сети. При первом включении Windows спросит про брандмауэр: разрешите доступ в частных сетях.": "On the phone: «Repair» → ⚙ → «Home Fluxion», the address and the code from here. The phone and the computer must be on the same network. The first time, Windows asks about the firewall: allow access on private networks.",
  "Новый код": "New code",
  "Порт": "Port",
  "Порт {port} занят: {exc}": "Port {port} is busy: {exc}",
@@ -1047,5 +1046,7 @@
  "Нормоконтроль чертежа AutoCAD…": "AutoCAD drawing standards check…",
  "Остановить ответ": "Stop the answer",
  "{name}: больше 5 МБ — это не текстовый файл": "{name}: over 5 MB — not a text file",
- "DXF всех листовых деталей сборки по папкам толщин (DXFka)": "DXF of all sheet parts of the assembly by thickness folders (DXFka)"
+ "DXF всех листовых деталей сборки по папкам толщин (DXFka)": "DXF of all sheet parts of the assembly by thickness folders (DXFka)",
+ "На телефоне наведите камеру на QR-код, или «Ремонт» → ⚙ → «Домашний Fluxion» и адрес с кодом отсюда. Телефон и компьютер должны быть в одной сети. При первом включении Windows спросит про брандмауэр: разрешите доступ в частных сетях.": "On the phone, point the camera at the QR code, or «Repair» → ⚙ → «Home Fluxion» and the address and code from here. The phone and the computer must be on the same network. The first time, Windows asks about the firewall: allow access on private networks.",
+ "Наведите камеру телефона или «Ремонт» → ⚙ → «Сканировать QR»": "Point the phone camera here, or «Repair» → ⚙ → «Scan QR»"
 }
