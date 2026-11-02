@@ -5,7 +5,7 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.26.0] — 2026-11-02
 
 ### Added
 - «Связь с телефоном» (Инструменты; package `phone`): Fluxion Mobile asks this PC over the home network. While Fluxion is open and the link is on, an OpenAI-compatible server listens on port 8766 (`GET /v1/health`, `GET /v1/models`, `POST /v1/chat/completions`, `stream: true` as SSE; standard library, no new dependency) and answers only `Authorization: Bearer <pairing code>`. A message with an `image_url` goes to the vision model: Qwen2.5-VL 7B (Apache 2.0) with its mmproj in llama-cpp-python (`Qwen25VLChatHandler`, 0.3.9+), downloaded from the window (about 5,5 GB) or own files, loaded on the first photo and unloaded after 10 minutes without photos; else `qwen2.5vl` of a running Ollama. Any other message goes to the chat model of the window. The window shows the addresses for the phone and the code («Новый код» drops old phones), keeps them in `%APPDATA%\Fluxion\phone.json`. Used by the «Ремонт» tab of Fluxion Mobile 0.7.1.
