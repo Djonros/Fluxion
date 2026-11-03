@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QSettings, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QShortcut, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -2504,16 +2504,6 @@ class FluxionWindow(QMainWindow):
         sidebar_layout.setContentsMargins(16, 24, 16, 16)
         sidebar_layout.setSpacing(8)
 
-        app_icon = QLabel()
-        app_icon.setObjectName("sidebarIcon")
-        app_icon.setAlignment(Qt.AlignHCenter)
-        icon_pixmap = QPixmap(str(APP_ROOT / "assets" / "icon-256.png"))
-        if not icon_pixmap.isNull():
-            ratio = self.devicePixelRatioF() or 1.0
-            icon_pixmap = icon_pixmap.scaled(int(72 * ratio), int(72 * ratio), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            icon_pixmap.setDevicePixelRatio(ratio)
-            app_icon.setPixmap(icon_pixmap)
-        sidebar_layout.addWidget(app_icon)
         self.brand_banner = BrandBanner()
         tagline = QLabel(tr("Локальный AI-ассистент"))
         tagline.setObjectName("tagline")

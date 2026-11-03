@@ -18,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The menu «Инструменты» split into «Конструктор», «Производство» (Сборка, Лазер) and «Связь»; the paid tools are marked «PRO» the same way, «Пакет на лазер» included; «Расширенный веб-поиск» moved from «Правка» to «Связь». The Инструкция, the guide and the messages name the new menus.
 - «Правка»: Отменить, Повторить, Вырезать, Копировать, Вставить, Выделить всё; the same in the context menus of the chat and of the input field; «Копировать» under each answer.
 - «Думаю…»: a light running along the infinity of the logo, and one phrase per answer — «Думаю…», «Раздумываю…», «В раздумье…» in turn from question to question; only the picture is redrawn, not the chat.
-- The program icon at the top of the left column, over the wordmark.
 
 ### Fixed
 - «Связь с телефоном» showed the address of a VPN in TUN mode (198.18.0.0/15) first, and the phone could not reach the PC: the addresses are ranked now — home networks first, tunnels and link-local (169.254) hidden.
