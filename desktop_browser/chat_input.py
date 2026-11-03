@@ -23,7 +23,7 @@ def pasted_image_path(image: QImage) -> str:
     """Save a picture from the clipboard to a PNG in the temp folder; its path, or "" when it fails."""
     folder = Path(tempfile.gettempdir()) / "fluxion-paste"
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / time.strftime("скриншот-%Y%m%d-%H%M%S.png")
+    path = folder / f"скриншот-{time.strftime('%Y%m%d-%H%M%S')}.png"  # Cyrillic in strftime fails on Windows
     return str(path) if image.save(str(path), "PNG") else ""
 
 

@@ -2972,8 +2972,11 @@ class FluxionWindow(QMainWindow):
         composer_box.setSpacing(6)
         self.composer_chips = QWidget()
         self.composer_chips.setObjectName("composerChips")
-        self._chips_flow = FlowLayout(self.composer_chips)
+        # a plain row, not FlowLayout: its Python list of layout items, emptied and refilled,
+        # crashed the interpreter at exit (Ubuntu, Python 3.11)
+        self._chips_flow = QHBoxLayout(self.composer_chips)
         self._chips_flow.setContentsMargins(4, 0, 4, 0)
+        self._chips_flow.setSpacing(6)
         self.composer_chips.setVisible(False)
         composer_box.addWidget(self.composer_chips)
         composer_layout = QHBoxLayout()
@@ -5409,9 +5412,9 @@ class FluxionWindow(QMainWindow):
         from .attachments import human_size
 
         while self._chips_flow.count():
-            item = self._chips_flow.takeAt(0)
-            if item is not None and item.widget() is not None:
-                item.widget().deleteLater()
+            widget = self._chips_flow.takeAt(0).widget()
+            if widget is not None:
+                widget.deleteLater()
         for item in self._attachments:
             self._chips_flow.addWidget(self._composer_chip(
                 "image" if item["image"] else "file", f'{item["name"]} · {human_size(item["size"])}',
@@ -5421,7 +5424,10 @@ class FluxionWindow(QMainWindow):
                 self._chips_flow.addWidget(self._composer_chip(
                     icon, box.text(), lambda _checked=False, b=box: b.setChecked(False), active=True,
                     tooltip=box.toolTip()))
-        self.composer_chips.setVisible(self._chips_flow.count() > 0)
+        shown = self._chips_flow.count() > 0
+        if shown:
+            self._chips_flow.addStretch(1)
+        self.composer_chips.setVisible(shown)
         self.composer_chips.updateGeometry()
 
     def _menu_icon(self, name: str, on: bool = False):

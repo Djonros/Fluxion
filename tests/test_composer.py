@@ -85,7 +85,7 @@ def test_chips_show_files_and_modes(window, tmp_path):
     window.attach_files([str(path), str(path)])  # the same file once
     window.chat_plan.setChecked(True)
     assert len(window._attachments) == 1
-    assert window._chips_flow.count() == 2
+    assert window._chips_flow.count() == 3  # two chips and the stretch
     files = window._take_attachments()
     window.chat_plan.setChecked(False)
     assert files[0]["name"] == "ТЗ.txt" and window._chips_flow.count() == 0
