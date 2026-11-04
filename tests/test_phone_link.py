@@ -217,3 +217,46 @@ def test_lan_addresses_put_home_network_first_and_hide_vpn_tunnel(monkeypatch):
     monkeypatch.setattr(phone_server.socket, "gethostbyname_ex", lambda name: (
         name, [], ["172.17.0.1", "26.24.124.83", "192.168.31.50", "198.18.0.1", "169.254.60.195"]))
     assert lan_addresses() == ["192.168.31.50", "172.17.0.1", "26.24.124.83"]
+
+
+def test_vision_warning_says_what_the_model_needs_and_checks_memory():
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from desktop_browser.phone_dialog import vision_requirements
+
+    text, short = vision_requirements(ram_gb=32, vram_gb=12)
+    assert "16" in text and "5,5" in text and not short
+    assert "медленно" not in text and "Видеокарты не найдено" not in text
+    text, short = vision_requirements(ram_gb=14, vram_gb=0)
+    assert not short and "14 ГБ" in text and "медленно" in text and "Видеокарты не найдено" in text
+    text, short = vision_requirements(ram_gb=8, vram_gb=0)
+    assert short and "8 ГБ оперативной памяти" in text and "Скачать всё равно" in text
+    assert vision_requirements(ram_gb=0, vram_gb=8)[1] is False  # memory unknown: no alarm
+
+
+def test_total_ram_and_out_of_memory():
+    assert vision.total_ram_gb() >= 0
+    assert vision.out_of_memory(RuntimeError("ggml_backend: failed to allocate buffer"))
+    assert vision.out_of_memory(MemoryError())
+    assert not vision.out_of_memory(RuntimeError("model not found"))
+
+
+def test_download_asks_first_and_cancel_downloads_nothing(tmp_path, monkeypatch):
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+
+    import desktop_browser.phone_dialog as phone_dialog
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(vision, "models_dir", lambda: tmp_path)
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(phone_dialog, "confirm_vision_download", lambda parent=None: False)
+    dialog = phone_dialog.PhoneDialog()
+    dialog._download()
+    assert dialog.worker is None and dialog.download_button.isEnabled()
+    dialog.deleteLater()

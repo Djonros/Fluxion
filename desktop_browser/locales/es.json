@@ -1048,5 +1048,14 @@
  "{name}: больше 5 МБ — это не текстовый файл": "{name}: más de 5 MB — no es un archivo de texto",
  "DXF всех листовых деталей сборки по папкам толщин (DXFka)": "DXF de todas las piezas de chapa del conjunto por carpetas de espesor (DXFka)",
  "На телефоне наведите камеру на QR-код, или «Ремонт» → ⚙ → «Домашний Fluxion» и адрес с кодом отсюда. Телефон и компьютер должны быть в одной сети. При первом включении Windows спросит про брандмауэр: разрешите доступ в частных сетях.": "En el teléfono, apunte la cámara al código QR, o «Reparación» → ⚙ → «Fluxion de casa» con la dirección y el código de aquí. El teléfono y el ordenador deben estar en la misma red. La primera vez, Windows pregunta por el cortafuegos: permita el acceso en redes privadas.",
- "Наведите камеру телефона или «Ремонт» → ⚙ → «Сканировать QR»": "Apunte la cámara del teléfono, o «Reparación» → ⚙ → «Escanear QR»"
+ "Наведите камеру телефона или «Ремонт» → ⚙ → «Сканировать QR»": "Apunte la cámara del teléfono, o «Reparación» → ⚙ → «Escanear QR»",
+ "Модель для фото не скачалась: {value}": "El modelo de fotos no se descargó: {value}",
+ "Модель для фото скачана: фото можно прикладывать к вопросу.": "El modelo de fotos está descargado: puede adjuntar fotos a la pregunta.",
+ "Видеокарты не найдено: фото будет разбираться на процессоре, 1–3 минуты.": "No se encontró tarjeta gráfica: la foto se analizará en el procesador, 1–3 minutos.",
+ "На этом компьютере {value} ГБ оперативной памяти — модели для фото, скорее всего, не хватит. Скачать всё равно?": "Este equipo tiene {value} GB de memoria — probablemente no basten para el modelo de fotos. ¿Descargar de todos modos?",
+ "Модель для фото требовательна к компьютеру. Нужно около {size} ГБ на диске и от {ram} ГБ оперативной памяти; желательно видеокарта с {vram} ГБ видеопамяти — тогда фото разбирается за секунды, без неё — 1–3 минуты. На компьютерах с 8 ГБ памяти модель, скорее всего, не запустится.": "El modelo de fotos es exigente. Necesita unos {size} GB de disco y {ram} GB de memoria o más; es recomendable una tarjeta gráfica con {vram} GB de memoria de vídeo — así una foto se analiza en segundos, sin ella en 1–3 minutos. En equipos con 8 GB de memoria el modelo probablemente no arrancará.",
+ "Не хватило памяти для модели для фото: закройте другие программы или используйте компьютер мощнее.": "No hubo memoria suficiente para el modelo de fotos: cierre otros programas o use un equipo más potente.",
+ "На этом компьютере {value} ГБ памяти: модель запустится, но будет работать медленно. Скачать?": "Este equipo tiene {value} GB de memoria: el modelo arrancará, pero irá lento. ¿Descargar?",
+ "Скачиваю модель для фото… {value} %": "Descargando el modelo de fotos… {value} %",
+ "Модель для фото": "Modelo de fotos"
 }

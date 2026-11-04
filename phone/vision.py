@@ -13,6 +13,8 @@ seconds without photos, so it does not hold the video memory the chat model need
 from __future__ import annotations
 
 import logging
+import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -26,6 +28,11 @@ MODEL_SIZE = 4_700_000_000
 MMPROJ_SIZE = 850_000_000
 DOWNLOAD_GB = round((MODEL_SIZE + MMPROJ_SIZE) / 1e9, 1)
 IDLE_UNLOAD = 10 * 60
+# what the model asks of the PC: about 7 GB of memory for the 7B model with its image part,
+# plus Windows and the chat model; a video card makes a photo seconds instead of minutes
+RAM_GB_GOOD = 16  # below it the model runs, but slowly
+RAM_GB_LOW = 12  # below it the model most likely does not start
+VRAM_GB_GOOD = 8
 N_CTX = 8192
 
 
@@ -160,6 +167,38 @@ class OllamaVision:
 
     def unload_if_idle(self, idle: float = IDLE_UNLOAD) -> bool:
         return False  # Ollama unloads its models itself
+
+
+def total_ram_gb() -> float:
+    """Memory of the PC in GB; 0 when it cannot be read."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong),
+                            ("total_phys", ctypes.c_ulonglong), ("avail_phys", ctypes.c_ulonglong),
+                            ("total_page", ctypes.c_ulonglong), ("avail_page", ctypes.c_ulonglong),
+                            ("total_virtual", ctypes.c_ulonglong), ("avail_virtual", ctypes.c_ulonglong),
+                            ("avail_extended", ctypes.c_ulonglong)]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(MemoryStatus)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return 0.0
+            total = status.total_phys
+        else:
+            total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        return 0.0
+    return round(total / 1024 ** 3, 1)
+
+
+def out_of_memory(exc: BaseException) -> bool:
+    """llama.cpp could not get the memory the vision model needs."""
+    text = str(exc).lower()
+    return isinstance(exc, MemoryError) or any(word in text for word in (
+        "out of memory", "failed to allocate", "cannot allocate", "bad_alloc", "unable to allocate"))
 
 
 def gpu_layers() -> int:

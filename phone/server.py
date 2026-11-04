@@ -21,7 +21,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .vision import VisionUnavailable
+from .vision import VisionUnavailable, out_of_memory
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +237,9 @@ class _Handler(BaseHTTPRequestHandler):
             return self._error(503, str(exc))
         except Exception as exc:  # the phone shows the message; the server keeps running
             logger.exception("phone request failed")
+            if out_of_memory(exc):
+                return self._error(503, "Компьютеру не хватило памяти для модели для фото: закройте на нём "
+                                        "другие программы или используйте компьютер мощнее")
             return self._error(500, f"Ошибка на компьютере: {exc}")
 
     def _stream(self, tokens) -> None:

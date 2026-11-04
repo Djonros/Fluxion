@@ -104,6 +104,9 @@ def describe_image(path: str | Path, question: str, ollama_host: str) -> str:
         try:
             return _vision_engine.complete(messages, temperature=0.2, max_tokens=700).strip()
         except Exception as exc:
+            if vision.out_of_memory(exc):
+                raise AttachmentError(tr("Не хватило памяти для модели для фото: закройте другие программы "
+                                         "или используйте компьютер мощнее.")) from exc
             raise AttachmentError(tr("{name}: модель для фото не ответила ({exc})", name=path.name, exc=exc)) from exc
 
 

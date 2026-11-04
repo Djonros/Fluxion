@@ -121,3 +121,19 @@ def test_one_thinking_phrase_per_question(window):
     window._start_thinking()
     assert window._messages[-1]["phrase"] == (first + 1) % len(THINK_PHRASES)
     window._stop_thinking()
+
+
+def test_a_photo_without_the_vision_model_warns_once(window, tmp_path, monkeypatch):
+    import desktop_browser.phone_dialog as phone_dialog
+    from phone import vision
+
+    monkeypatch.setattr(vision, "installed", lambda cfg, folder=None: False)
+    asked = []
+    monkeypatch.setattr(phone_dialog, "confirm_vision_download", lambda parent=None: asked.append(1) or False)
+    for name in ("a.png", "b.png"):
+        image = QImage(4, 4, QImage.Format_ARGB32)
+        image.fill(0xFF0000FF)
+        image.save(str(tmp_path / name))
+        window.attach_files([str(tmp_path / name)])
+    assert asked == [1]  # «Отмена»: asked once a session, the photos stay attached
+    assert len(window._attachments) == 2 and getattr(window, "_vision_download", None) is None

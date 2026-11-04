@@ -9,7 +9,7 @@ import io
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-                               QProgressBar, QPushButton, QSpinBox, QVBoxLayout)
+                               QMessageBox, QProgressBar, QPushButton, QSpinBox, QVBoxLayout)
 
 from phone import config, vision
 from phone.server import lan_addresses
@@ -47,6 +47,47 @@ def vision_state(cfg: dict) -> str:
         return tr("Модель для фото: {name}", name=model.name)
     return tr("Модели для фото нет. Скачайте её (около {size} ГБ) или запустите Ollama с моделью {model}.",
               size=vision.DOWNLOAD_GB, model=cfg["ollama_model"])
+
+
+def vision_requirements(ram_gb: float | None = None, vram_gb: float | None = None) -> tuple[str, bool]:
+    """(the warning before the vision model is downloaded, whether this PC is short of memory).
+    The check is soft: it says what to expect and never forbids the download."""
+    if ram_gb is None:
+        ram_gb = vision.total_ram_gb()
+    if vram_gb is None:
+        from core.model_manager import detect_gpu_memory_gb
+
+        vram_gb = detect_gpu_memory_gb()
+    lines = [tr("Модель для фото требовательна к компьютеру. Нужно около {size} ГБ на диске и от {ram} ГБ "
+                "оперативной памяти; желательно видеокарта с {vram} ГБ видеопамяти — тогда фото разбирается "
+                "за секунды, без неё — 1–3 минуты. На компьютерах с 8 ГБ памяти модель, скорее всего, "
+                "не запустится.", size=str(vision.DOWNLOAD_GB).replace(".", ","), ram=vision.RAM_GB_GOOD,
+                vram=vision.VRAM_GB_GOOD)]
+    if not vram_gb:
+        lines.append(tr("Видеокарты не найдено: фото будет разбираться на процессоре, 1–3 минуты."))
+    short = bool(ram_gb) and ram_gb < vision.RAM_GB_LOW
+    shown = f"{ram_gb:g}".replace(".", ",")
+    if short:  # the question about memory goes last, just over the buttons
+        lines.append(tr("На этом компьютере {value} ГБ оперативной памяти — модели для фото, скорее всего, "
+                        "не хватит. Скачать всё равно?", value=shown))
+    elif ram_gb and ram_gb < vision.RAM_GB_GOOD:
+        lines.append(tr("На этом компьютере {value} ГБ памяти: модель запустится, но будет работать медленно. "
+                        "Скачать?", value=shown))
+    return "\n\n".join(lines), short
+
+
+def confirm_vision_download(parent=None) -> bool:
+    """The window over the program before the vision model is downloaded: «Скачать» or «Отмена»."""
+    text, short = vision_requirements()
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning if short else QMessageBox.Information)
+    box.setWindowTitle(tr("Модель для фото"))
+    box.setText(text)
+    download = box.addButton(tr("Скачать"), QMessageBox.AcceptRole)
+    box.addButton(tr("Отмена"), QMessageBox.RejectRole)
+    box.setDefaultButton(download)
+    box.exec()
+    return box.clickedButton() is download
 
 
 def qr_pixmap(text: str, size: int = 200) -> QPixmap:
@@ -155,7 +196,7 @@ class PhoneDialog(QDialog):
         self._show_address()
 
     def _download(self) -> None:
-        if self.worker is not None:
+        if self.worker is not None or not confirm_vision_download(self):
             return
         self.download_button.setEnabled(False)
         self.progress.setVisible(True)

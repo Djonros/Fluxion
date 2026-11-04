@@ -5331,8 +5331,55 @@ class FluxionWindow(QMainWindow):
             if item["path"] not in known:
                 known.add(item["path"])
                 self._attachments.append(item)
+                if item["image"]:
+                    self._offer_vision_model()
         self._refresh_composer_chips()
         self.prompt.setFocus()
+
+    def _offer_vision_model(self) -> None:
+        """A picture is attached and the PC has no vision model: say what it asks of the computer
+        and offer the download — once a session, the picture stays attached either way."""
+        from phone import config, vision
+
+        if getattr(self, "_vision_offered", False) or getattr(self, "_vision_download", None) is not None:
+            return
+        if vision.installed(config.load()):
+            return
+        self._vision_offered = True
+        from .phone_dialog import confirm_vision_download
+
+        if confirm_vision_download(self):
+            self._start_vision_download()
+
+    def _start_vision_download(self) -> None:
+        from .phone_dialog import DownloadWorker, _background
+
+        worker = DownloadWorker()
+        self._vision_download = worker
+        _background.add(worker)
+        worker.progress.connect(self._on_vision_progress)
+        worker.done.connect(self._on_vision_downloaded)
+        worker.finished.connect(self._on_vision_worker_finished)
+        self.statusBar().showMessage(tr("Скачиваю модель для фото…"), 5000)
+        worker.start()
+
+    def _on_vision_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self.statusBar().showMessage(tr("Скачиваю модель для фото… {value} %", value=int(done * 100 / total)), 3000)
+
+    def _on_vision_downloaded(self, error: str) -> None:
+        if error:
+            self.banners.show_warning(tr("Модель для фото не скачалась: {value}", value=error), key="vision_download")
+        else:
+            self.statusBar().showMessage(tr("Модель для фото скачана: фото можно прикладывать к вопросу."), 8000)
+
+    def _on_vision_worker_finished(self) -> None:
+        from .phone_dialog import _background
+
+        worker, self._vision_download = self._vision_download, None
+        if worker is not None:
+            _background.discard(worker)
+            worker.deleteLater()
 
     def _pick_files(self, images: bool = False) -> None:
         from PySide6.QtWidgets import QFileDialog

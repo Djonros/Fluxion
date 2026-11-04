@@ -5,6 +5,11 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- The vision model asks first: before it is downloaded («Связь с телефоном», or the first photo attached in the chat without it) a window over the program says what it needs — about 5,5 GB of disk, 16 GB of memory or more, preferably a video card with 8 GB — and checks the PC: under 12 GB of memory «most likely not enough», 12–16 GB «slow», no video card «1–3 minutes a photo»; «Скачать» / «Отмена», never forbidden. When llama.cpp runs out of memory the chat and the phone get «Не хватило памяти для модели для фото…» instead of the raw error.
+
 ## [0.27.0] — 2026-11-02
 
 ### Added
