@@ -20,6 +20,6 @@ The chat gets a summary: how many files and remarks of each kind. The folder get
 
 ## If it does not work
 
-- **Holes near bend lines and short flanges are not checked from DXF**: bend lines are removed from a flat pattern for the laser, the file does not have them.
+- **Bend lines**: the DXF for the laser has none. «Laser package» saves them apart — in the subfolder «_гибы» of the thickness folder, a file with the same name (not to be cut, not put into the archive for the bot). With them «Check flat patterns» finds: a **hole near a bend** — nearer than 2·t + R to a bend line (it is pulled into an oval; the bend radius R is not in the DXF, R = t is taken), a **bend line across a hole** and a **short flange** — from a bend line to the edge or the next bend less than 3·t (it does not lie on the die). The limits are in «Plant norms and prices» → «Sheet». Flat patterns without a file in «_гибы» skip these checks, the summary says so.
 - «No closed contour» — the contour in the DXF is not closed (gaps over 0.2 mm) or is not drawn with lines.
 - «Thickness unknown» — no thickness folder and no thickness in the name: run the check from the menu and enter the thickness.

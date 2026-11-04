@@ -176,7 +176,9 @@ class PlatformTab(QWidget):
         row.addWidget(self.show_token)
         form.addRow(tr("Токен:"), row)
         self.proxy = QLineEdit(settings["proxy"])
-        self.proxy.setPlaceholderText(tr("необязательно: http://адрес:порт"))
+        self.proxy.setPlaceholderText(tr("необязательно: socks5://адрес:порт или http://адрес:порт"))
+        self.proxy.setToolTip(tr("SOCKS5 или HTTP-прокси; с паролем — socks5://логин:пароль@адрес:порт. "
+                                 "«Проверить» проверяет токен через этот прокси."))
         form.addRow(tr("Прокси:"), self.proxy)
         check_row = QHBoxLayout()
         self.check_button = QPushButton(tr("Проверить"))

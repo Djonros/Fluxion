@@ -164,7 +164,8 @@ def purchase(products: list[tuple[Path, int]], log=print) -> Result:
 def zip_folder(folder: Path, target: Path) -> Path:
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for file in sorted(Path(folder).rglob("*")):
-            if file.is_file() and file != target:
+            # the bend lines of «Проверка развёрток» are not for the laser
+            if file.is_file() and file != target and "_гибы" not in file.relative_to(folder).parts:
                 archive.write(file, file.relative_to(folder))
     return target
 

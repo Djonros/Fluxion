@@ -108,11 +108,11 @@ foreach ($pattern in $trimPatterns) {
         }
 }
 
-# --- trim: keep only ru UI translations + en-US/ru webengine locales ---
+# --- trim: keep the Qt translations of the interface languages (ru, uk, es, fr; i18n.QT_LANGUAGE) + en-US/ru webengine locales ---
 $translations = Join-Path $pyside "translations"
 if (Test-Path $translations) {
     Get-ChildItem $translations -Filter *.qm |
-        Where-Object { $_.Name -notmatch "^(qtbase|qtwidgets|qtgui|qtnetwork)_ru\.qm$" } |
+        Where-Object { $_.Name -notmatch "^(qtbase|qtwidgets|qtgui|qtnetwork)_(ru|uk|es|fr)\.qm$" } |
         ForEach-Object { Remove-Item $_.FullName -Force }
     $locales = Join-Path $translations "qtwebengine_locales"
     if (Test-Path $locales) {

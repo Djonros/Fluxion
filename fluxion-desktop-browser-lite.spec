@@ -246,6 +246,7 @@ a = Analysis(
         "faster_whisper",
         "ctranslate2",
         "sounddevice",
+        "soundfile",  # voice messages of the bots: OGG/Opus and MP3 without ffmpeg (bots/audio.py)
         "win32com",
         "win32com.client",
         "win32com.client.gencache",
@@ -253,6 +254,7 @@ a = Analysis(
         "yaml",
         "dotenv",
         "httpx",
+        "socksio",  # SOCKS5 proxy of the messenger bots (bots/base.py)
     ],
     hookspath=[],
     hooksconfig={},

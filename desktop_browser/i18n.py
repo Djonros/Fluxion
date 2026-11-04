@@ -72,3 +72,24 @@ def tr(text: str, **values) -> str:
     """*text* in the interface language; ``{name}`` fields are filled from *values*."""
     text = _catalog.get(text, text)
     return text.format(**values) if values else text
+
+# Qt's own texts — the standard buttons «Save», «Cancel», «Yes», «No», the context menus of
+# the fields — come from its qtbase_<code>.qm; Belarusian and Kazakh have none, Russian is closer
+# to them than English. English needs no file.
+QT_LANGUAGE = {"ru": "ru", "uk": "uk", "es": "es", "fr": "fr", "be": "ru", "kk": "ru"}
+_qt_translators: list = []  # kept: a translator collected by Python stops translating
+
+
+def install_qt_translations(app, code: str | None = None) -> bool:
+    """Translate Qt's own texts into the interface language; False when there is no file for it."""
+    from PySide6.QtCore import QLibraryInfo, QTranslator
+
+    qt_code = QT_LANGUAGE.get(code or _language)
+    if not qt_code:
+        return False
+    translator = QTranslator(app)
+    if not translator.load(f"qtbase_{qt_code}", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
+        return False
+    app.installTranslator(translator)
+    _qt_translators.append(translator)
+    return True

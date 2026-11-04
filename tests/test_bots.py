@@ -563,3 +563,68 @@ def test_audio_of_a_wav_is_read_without_ffmpeg(tmp_path):
         w.setframerate(16000)
         w.writeframes((np.zeros(1600, dtype=np.int16)).tobytes())
     assert len(decode(path)) == 1600
+
+@pytest.mark.parametrize("fmt, subtype, rate", [("OGG", "OPUS", 48000), ("MP3", None, 44100)])
+def test_voice_of_a_messenger_is_read_without_ffmpeg(tmp_path, monkeypatch, fmt, subtype, rate):
+    """Telegram, MAX and VK send OGG/Opus (VK also MP3): libsndfile reads them, 16 kHz for the speech model."""
+    import numpy as np
+
+    soundfile = pytest.importorskip("soundfile")
+    from bots import audio
+
+    monkeypatch.setattr(audio.shutil, "which", lambda name: None)  # no ffmpeg on this PC
+    seconds = 1.0
+    t = np.arange(int(rate * seconds)) / rate
+    path = tmp_path / ("voice.ogg" if fmt == "OGG" else "voice.mp3")
+    soundfile.write(str(path), 0.3 * np.sin(2 * np.pi * 300 * t), rate, format=fmt, subtype=subtype)
+    data = audio.decode(path)
+    assert abs(len(data) - audio.RATE * seconds) < audio.RATE * 0.1
+    assert data.dtype == np.float32 and 0.1 < float(np.abs(data).max()) < 0.5
+
+
+def test_unknown_sound_says_what_to_send(tmp_path, monkeypatch):
+    from bots import audio
+
+    monkeypatch.setattr(audio.shutil, "which", lambda name: None)
+    monkeypatch.setattr(audio, "_pyav", lambda path: None)
+    path = tmp_path / "song.m4a"
+    path.write_bytes(bytes([0, 0, 0, 24]) + b"ftypM4A ")
+    with pytest.raises(audio.AudioError, match="голосовое сообщение"):
+        audio.decode(path)
+
+def test_proxy_text_becomes_a_url():
+    from bots.base import proxy_url
+
+    assert proxy_url("") == ""
+    assert proxy_url(" 10.0.0.1:3128 ") == "http://10.0.0.1:3128"
+    assert proxy_url("socks://10.0.0.1:1080") == "socks5://10.0.0.1:1080"
+    assert proxy_url("socks5://user:pass@host:1080") == "socks5://user:pass@host:1080"
+
+
+@pytest.mark.parametrize("proxy", ["socks5://127.0.0.1:1080", "socks5h://u:p@127.0.0.1:1080", "127.0.0.1:3128"])
+def test_bot_session_goes_through_socks_or_http_proxy(proxy):
+    pytest.importorskip("socksio")
+    from bots.telegram import Telegram
+
+    bot = Telegram("1:ABC", proxy)
+    assert bot.session is not None
+    bot.session.close()
+
+
+def test_a_proxy_with_an_unknown_scheme_is_said_in_words():
+    from bots.base import BotError
+    from bots.telegram import Telegram
+
+    with pytest.raises(BotError, match="socks5://"):
+        Telegram("1:ABC", "ftp://host:21")
+
+def test_the_zip_for_the_bot_leaves_the_bend_lines_out(tmp_path):
+    import zipfile
+
+    from bots.jobs import zip_folder
+
+    (tmp_path / "pkg" / "5" / "_гибы").mkdir(parents=True)
+    (tmp_path / "pkg" / "5" / "a.dxf").write_text("0", encoding="utf-8")
+    (tmp_path / "pkg" / "5" / "_гибы" / "a.dxf").write_text("0", encoding="utf-8")
+    target = zip_folder(tmp_path / "pkg", tmp_path / "pkg.zip")
+    assert zipfile.ZipFile(target).namelist() == ["5/a.dxf"]

@@ -1,5 +1,6 @@
 # Inference / RAG / Web / CLI  (Python 3.11+; release builds use 3.14)
 httpx>=0.27
+socksio>=1.0  # SOCKS5 proxy of the messenger bots (bots/base.py)
 pyyaml>=6.0
 python-dotenv>=1.0
 prompt_toolkit>=3.0
@@ -36,4 +37,5 @@ segno>=1.6
 # answers are read aloud by the Windows voices through pywin32
 faster-whisper>=1.1
 sounddevice>=0.5
+soundfile>=0.13  # voice messages of the bots: OGG/Opus, MP3 (bots/audio.py)
 pywin32>=306; sys_platform == "win32"

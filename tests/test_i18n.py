@@ -104,3 +104,20 @@ def test_every_page_of_the_manual_is_in_english():
     english = manual.load_pages(manual.MANUAL_DIR / "en")
     assert [(p.key, p.section, p.tool, p.pro) for p in english] == [(p.key, p.section, p.tool, p.pro) for p in russian]
     assert all(p.text and not any("а" <= ch <= "я" for ch in p.title.lower()) for p in english)
+
+def test_qt_standard_buttons_follow_the_interface_language():
+    """«Save» / «Cancel» of Qt's dialogs come from qtbase_<code>.qm: Russian for ru, be and kk."""
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QDialogButtonBox
+
+    app = QApplication.instance() or QApplication([])
+    assert not i18n.install_qt_translations(app, "en")  # English needs no file
+    for code, save in (("ru", "Сохранить"), ("kk", "Сохранить"), ("uk", "Зберегти")):
+        assert i18n.install_qt_translations(app, code)
+        try:
+            box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+            assert box.button(QDialogButtonBox.Save).text() == save
+        finally:
+            app.removeTranslator(i18n._qt_translators.pop())

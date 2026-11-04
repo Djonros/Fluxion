@@ -5,6 +5,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def proxy_url(text: str) -> str:
+    """The proxy as httpx wants it: «адрес:порт» means HTTP, «socks5://логин:пароль@адрес:порт» works too."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if lower.startswith("socks://"):
+        return "socks5://" + text[len("socks://"):]
+    if "://" not in text:
+        return "http://" + text
+    return text
+
+
 class BotError(RuntimeError):
     """The messenger refused (a wrong token, no network): said in words for the settings window."""
 
@@ -40,12 +53,16 @@ class Adapter:
         if session is None:
             import httpx
 
-            if proxy.lower().startswith("socks"):
+            proxy = proxy_url(proxy)
+            if proxy.startswith("socks"):
                 try:
                     import socksio  # noqa: F401 — httpx needs it for a SOCKS proxy
                 except ImportError:
                     raise BotError("SOCKS-прокси не поддерживается: укажите HTTP-прокси, http://адрес:порт") from None
-            session = httpx.Client(proxy=proxy or None, follow_redirects=True)
+            try:
+                session = httpx.Client(proxy=proxy or None, follow_redirects=True)
+            except ValueError as exc:  # an unknown scheme
+                raise BotError(f"прокси не понят: {exc}. Пример: socks5://адрес:порт или http://адрес:порт") from None
         self.session = session
 
     def clean(self, text: str) -> str:

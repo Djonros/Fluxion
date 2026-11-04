@@ -10,12 +10,12 @@ from dxfka.config import (
     AFTER_CREATE_DOC_S, AFTER_VIEW_S, DOC_TYPE_FRAGMENT,
     FLAT_PROJECTION_NAME, FRONT_PROJECTION_NAME, OPEN_RETRY_COUNT,
     OPEN_RETRY_WAIT_S, PLATE_PROJECTIONS, REBUILD_WAIT_S, SAVED_VIEW_NAME)
-from dxfka.compat import dynamic_dispatch, pythoncom
+from dxfka.compat import CastTo, dynamic_dispatch, pythoncom
 from dxfka.kompas.connection import KompasConnection
 from dxfka.kompas.walker import AssemblyWalker
 from dxfka.models import CancelledByUser, PartInfo, SkippedByUser
 from dxfka.utils import (
-    com_count, com_item, com_items, dxf_extent_area, dxf_geometry_count,
+    bends_path, com_count, com_item, com_items, dxf_extent_area, dxf_geometry_count,
     safe_str, sanitize_filename, strip_dxf_annotations,
     thickness_from_material, choose_thickness)
 
@@ -355,6 +355,47 @@ class PartExporter:
                     pass
                 time.sleep(0.3)
 
+    def _show_unfold_with_bend_lines(self, _title: str = "", _text: str = "") -> None:
+        """Вид фрагмента — развёртка с линиями гиба (IAssociationView API7:
+        Unfold, BendLinesVisible). Вызывается вместо паузы, до сохранения DXF."""
+        if CastTo is None:
+            return
+        doc = CastTo(self.conn.application.ActiveDocument, "IKompasDocument2D")
+        views = doc.ViewsAndLayersManager.Views
+        for i in range(views.Count):
+            try:
+                view = CastTo(views.View(i), "IAssociationView")
+                view.Unfold = True
+                view.BendLinesVisible = True
+                CastTo(views.View(i), "IView").Update()
+            except Exception:
+                continue  # системный вид фрагмента — не ассоциативный
+
+    def _export_bend_lines(self, source_m3d: str, dxf_path: str) -> None:
+        """Линии гиба листовой детали — отдельным DXF в «_гибы» рядом с развёрткой
+        (для «Проверки развёрток»); DXF для лазера остаётся без них. Не вышло —
+        только запись в журнал: пакет на лазер от этого не зависит."""
+        target = bends_path(dxf_path)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            _, ok, message = self._build_fragment_view(
+                source_m3d, FLAT_PROJECTION_NAME, target, self._show_unfold_with_bend_lines)
+        except Exception as exc:
+            ok, message = False, str(exc)
+        if not ok:
+            self.log("info", f"Линии гиба не выгружены: {message}")
+            return
+        with open(target, "rb") as fh:
+            has_bends = b"K5LT_CHAIN" in fh.read()
+        if not has_bends:  # деталь без гибов: файл не нужен
+            try:
+                os.remove(target)
+                os.rmdir(os.path.dirname(target))  # только пустую папку
+            except OSError:
+                pass
+            return
+        self.log("info", "Линии гиба сохранены для «Проверки развёрток»")
+
     # ------------------------------------------------------------------
     # Локальные детали: выгрузка из сборки во временные .m3d
     # ------------------------------------------------------------------
@@ -648,6 +689,8 @@ class PartExporter:
                     # Вид вместо развёртки не подставляем: у гнутой детали
                     # он дал бы неверную заготовку.
                     message = f"Развертка не построена: {message}"
+                else:
+                    self._export_bend_lines(part.file_path, dxf_path)
                 state["ok"] = ok
                 return ("OK" if ok else "ERROR"), message
 

@@ -1057,5 +1057,9 @@
  "Не хватило памяти для модели для фото: закройте другие программы или используйте компьютер мощнее.": "No hubo memoria suficiente para el modelo de fotos: cierre otros programas o use un equipo más potente.",
  "На этом компьютере {value} ГБ памяти: модель запустится, но будет работать медленно. Скачать?": "Este equipo tiene {value} GB de memoria: el modelo arrancará, pero irá lento. ¿Descargar?",
  "Скачиваю модель для фото… {value} %": "Descargando el modelo de fotos… {value} %",
- "Модель для фото": "Modelo de fotos"
+ "Модель для фото": "Modelo de fotos",
+ "необязательно: socks5://адрес:порт или http://адрес:порт": "opcional: socks5://host:puerto o http://host:puerto",
+ "SOCKS5 или HTTP-прокси; с паролем — socks5://логин:пароль@адрес:порт. «Проверить» проверяет токен через этот прокси.": "Proxy SOCKS5 o HTTP; con contraseña — socks5://usuario:contraseña@host:puerto. «Comprobar» comprueba el token a través de este proxy.",
+ "От отверстия до линии гиба (плюс радиус гиба)": "Del agujero a la línea de plegado (más el radio de plegado)",
+ "Полка: от линии гиба до края": "Ala: de la línea de plegado al borde"
 }

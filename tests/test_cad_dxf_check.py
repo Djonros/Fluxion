@@ -80,7 +80,7 @@ def test_a_folder_of_a_laser_package_and_the_workbook(tmp_path):
     sheets = dxf_check.check_folder(tmp_path)
     assert [(s.file, s.thickness, len(s.problems)) for s in sheets] == [("b.dxf", 3, 0), ("a.dxf", 8, 1)]
     text = dxf_check.summary_text(sheets)
-    assert text.startswith("Проверка развёрток: файлов 2, замечаний 1") and "линий гиба в нём нет" in text
+    assert text.startswith("Проверка развёрток: файлов 2, замечаний 1") and "линий гиба нет" in text
     path = dxf_check.save_xlsx(sheets, tmp_path / "Проверка развёрток.xlsx")
     rows = list(load_workbook(path)["Замечания"].iter_rows(min_row=2, values_only=True))
     assert rows == [("a.dxf", 8, "Отверстие меньше толщины", "отверстие ⌀6", 1, 6, 8)]
@@ -122,3 +122,78 @@ def test_the_laser_package_checks_its_folder(tmp_path, monkeypatch):
     assert text.startswith("Проверка развёрток: файлов 1, замечаний 1") and (package / "Проверка развёрток.xlsx").is_file()
     window.close()
     window.deleteLater()
+
+
+def bends_file(path: Path, width=194.8, height=349.0, bends=(5.2, 103.6)) -> Path:
+    """A flat pattern as KOMPAS writes it with its bend lines: the outline and «dash-dot with two dots» lines."""
+    doc = ezdxf.new()
+    doc.linetypes.add("K5LT_CHAIN_LINE_WITH_2_POINTS", [5.0, 3.0, -1.0, 0.0, -1.0, 0.0, -1.0])
+    msp = doc.modelspace()
+    corners = [(0, 0), (width, 0), (width, height), (0, height)]
+    for a, b in zip(corners, corners[1:] + corners[:1]):
+        msp.add_line(a, b)
+    for x in bends:
+        msp.add_line((x, 0), (x, height), dxfattribs={"linetype": "K5LT_CHAIN_LINE_WITH_2_POINTS"})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.saveas(path)
+    return path
+
+
+def test_bend_lines_from_the_bends_folder_are_turned_onto_the_laser_dxf(tmp_path):
+    # the DXF for the laser lies turned by 90° and moved; the bends file is the flat pattern of KOMPAS
+    plate(tmp_path / "3" / "rib.dxf", width=349.0, height=194.8)
+    bends_file(tmp_path / "3" / dxf_check.BENDS_SUBDIR / "rib.dxf")
+    sheets = dxf_check.check_folder(tmp_path)
+    assert [s.file for s in sheets] == ["rib.dxf"]  # the bends file is not a part to check
+    bends = sheets[0].bends
+    assert len(bends) == 2
+    for a, b in bends:
+        assert round(a[1], 1) == round(b[1], 1)  # horizontal now: across the turned plate
+        assert {round(a[0], 1), round(b[0], 1)} == {0.0, 349.0}
+    assert sorted(round(a[1], 1) for a, _ in bends) in ([5.2, 103.6], [91.2, 189.6])
+    assert "с линиями гиба: 1" in dxf_check.summary_text(sheets)
+    assert [p.what for p in sheets[0].problems] == ["Короткая полка"]  # 5,2 mm < 3·t = 9
+
+
+def test_a_bends_file_of_another_shape_is_not_used(tmp_path):
+    plate(tmp_path / "3" / "a.dxf", width=200.0, height=100.0)
+    bends_file(tmp_path / "3" / dxf_check.BENDS_SUBDIR / "a.dxf")  # 194.8 × 349: not this part
+    sheet = dxf_check.check_file(tmp_path / "3" / "a.dxf", 3)
+    assert sheet.bends is None and not sheet.error
+
+def bent_plate(tmp_path, holes=(), t_folder="4", bends=(60.0,)):
+    """A plate 200×120 with vertical bend lines, its bends file in «_гибы», both the same way round."""
+    plate(tmp_path / t_folder / "p.dxf", width=200.0, height=120.0, holes=holes)
+    bends_file(tmp_path / t_folder / dxf_check.BENDS_SUBDIR / "p.dxf", width=200.0, height=120.0, bends=bends)
+    return dxf_check.check_file(tmp_path / t_folder / "p.dxf", float(t_folder))
+
+
+def test_hole_near_a_bend_line_is_reported_with_two_t_plus_r(tmp_path):
+    # t = 4: from the hole to the bend line at least 2·4 + 4 = 12 mm
+    sheet = bent_plate(tmp_path, holes=[(70, 60, 6)])  # edge of the hole 7 mm from the bend at x = 60
+    near = [p for p in sheet.problems if p.what == "Отверстие у гиба"]
+    assert len(near) == 1 and round(near[0].size, 1) == 7.0 and near[0].limit == 12.0
+
+
+def test_hole_far_from_the_bend_and_a_long_flange_are_fine(tmp_path):
+    sheet = bent_plate(tmp_path, holes=[(100, 60, 6)])  # 37 mm from the bend; flanges 60 and 140 mm
+    assert sheet.problems == []
+
+
+def test_a_bend_line_through_a_hole(tmp_path):
+    sheet = bent_plate(tmp_path, holes=[(60, 60, 10)])
+    assert [p.what for p in sheet.problems] == ["Линия гиба проходит через отверстие"]
+
+
+def test_a_short_flange_between_two_bend_lines(tmp_path):
+    # bends at 60 and 68: the flange between them is 8 mm, less than 3·4 = 12
+    sheet = bent_plate(tmp_path, bends=(60.0, 68.0))
+    flanges = [p for p in sheet.problems if p.what == "Короткая полка"]
+    assert flanges and all(round(p.size, 1) == 8.0 for p in flanges)
+
+
+def test_bend_limits_are_plant_norms(tmp_path):
+    sheet = bent_plate(tmp_path, holes=[(70, 60, 6)])
+    assert any(p.what == "Отверстие у гиба" for p in sheet.problems)
+    sheet = dxf_check.check_file(tmp_path / "4" / "p.dxf", 4.0, {"bend_hole": 0.5})  # 0,5·4 + 4 = 6 < 7
+    assert not any(p.what == "Отверстие у гиба" for p in sheet.problems)

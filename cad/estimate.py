@@ -76,7 +76,7 @@ RECOMMENDED = {
     ],
     "items": [],  # {"match": "Ось 35т", "price": 45000.0}
     # «Проверка развёрток» (cad/dxf_check.py): the least sizes in thicknesses of the sheet
-    "sheet_limits": {"hole": 1.0, "edge": 1.0, "between": 1.0, "slot": 1.0},
+    "sheet_limits": {"hole": 1.0, "edge": 1.0, "between": 1.0, "slot": 1.0, "bend_hole": 2.0, "flange": 3.0},
     # the sheets of the purchase list (cad/purchase.py): the first format the thickness fits; 0 — any
     "sheet_formats": [
         {"max_thickness": 4.0, "width": 1250.0, "length": 2500.0},
@@ -456,7 +456,9 @@ def write_sheet(sheet, est: Estimate, bold, head_fill, wrap) -> None:
 # ── the norms in Excel: fill them in in the department, carry them to another computer ──
 
 SHEET_CHECKS = (("hole", "Диаметр отверстия"), ("edge", "Перемычка от отверстия до края"),
-                ("between", "Перемычка между отверстиями"), ("slot", "Ширина выреза или паза"))
+                ("between", "Перемычка между отверстиями"), ("slot", "Ширина выреза или паза"),
+                ("bend_hole", "От отверстия до линии гиба (плюс радиус гиба)"),
+                ("flange", "Полка: от линии гиба до края"))
 GENERAL = (("rate", "Ставка нормо-часа, ₽/ч"), ("hardware_price_kg", "Крепёж без цены, ₽/кг"),
            ("overhead_pct", "Накладные, %"), ("profit_pct", "Рентабельность, %"))
 

@@ -7692,6 +7692,9 @@ def main() -> int:
         pass
 
     app = QApplication(sys.argv)
+    from .i18n import install_qt_translations
+
+    install_qt_translations(app)  # «Сохранить» / «Отмена» on Qt's standard buttons
     app.setApplicationName("Fluxion")
     app.setOrganizationName("Fluxion")
     app.setStyle("Fusion")

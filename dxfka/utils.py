@@ -21,6 +21,19 @@ def app_dir() -> str:
     return APP_DIR
 
 
+# Линии гиба: для лазера их нет в DXF детали, они лежат рядом, в подпапке «_гибы» папки
+# толщины — файл с тем же именем: развёртка КОМПАС с линиями гиба (тип линии
+# «штрихпунктирная с двумя точками», K5LT_CHAIN_LINE_WITH_2_POINTS). Её читает
+# «Проверка развёрток» (cad/dxf_check.py); резать её не нужно.
+BENDS_SUBDIR = "_гибы"
+
+
+def bends_path(dxf_path: str) -> str:
+    """Где лежат линии гиба развёртки *dxf_path*."""
+    folder, name = os.path.split(dxf_path)
+    return os.path.join(folder, BENDS_SUBDIR, name)
+
+
 def sanitize_filename(name: str) -> str:
     """Заменяет запрещённые в Windows имена символы, обрезает длину."""
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip().rstrip(".")
