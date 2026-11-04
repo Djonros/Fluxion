@@ -5,7 +5,7 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.28.0] — 2026-11-04
 
 ### Added
 - «Fluxion везде» (`desktop_browser/everywhere.py`): select text in any program and press Ctrl+Alt+Space (RegisterHotKey, while Fluxion is open, minimized too) — a small window over the program with the text and Переписать, Мой стиль (Pro), Короче, Перевести, Объяснить, Ответить or the user's own words; the answer streams from the chat model; «Вставить вместо выделенного» (Ctrl+V to that program), «Копировать», «В чат», Esc. The selection is taken with Ctrl+C and the clipboard given back as it was, after pasting too. A program run as administrator gives no selection: the window says so and takes a pasted text. The key is changed or turned off in the chat settings; when another program holds Ctrl+Alt+Space (the Claude app does), Fluxion goes on Ctrl+Alt+Q and says so. A page «Fluxion везде» in the Инструкция.
