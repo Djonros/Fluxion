@@ -221,6 +221,7 @@ a = Analysis(
         "phone.server",
         "desktop_browser.phone_dialog",
         "desktop_browser.attachments",  # files attached in the chat, imported lazily from the window
+        "desktop_browser.everywhere",  # «Fluxion везде»: the hotkey over any program, imported lazily
         "segno",
         "http.server",
         "ezdxf",  # AutoCAD drawings (cad/drawing.py)

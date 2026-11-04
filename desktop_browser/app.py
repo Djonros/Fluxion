@@ -3083,6 +3083,70 @@ class FluxionWindow(QMainWindow):
         self._render_messages()
         return page
 
+    # ── «Fluxion везде»: Ctrl+Alt+Пробел in any program ──────────────────
+
+    def start_everywhere(self) -> None:
+        """Register the hotkey of «Fluxion везде» (called by main(): a test window holds no hotkey)."""
+        from .everywhere import DEFAULT_HOTKEY, ENABLED_SETTING, HOTKEY_SETTING, Everywhere
+
+        if getattr(self, "everywhere", None) is None:
+            self.everywhere = Everywhere(self._quick_backend, self._quick_style, self._theme_colors, self)
+            self.everywhere.window.to_chat.connect(self._quick_to_chat)
+        self.everywhere.stop()
+        if not flag_setting(self.qsettings, ENABLED_SETTING, True):
+            return
+        keys = str(self.qsettings.value(HOTKEY_SETTING, DEFAULT_HOTKEY) or DEFAULT_HOTKEY)
+        if self.everywhere.start(keys):
+            self.banners.dismiss_key("everywhere")
+            return
+        if sys.platform != "win32":
+            return
+        busy = keys.replace("Space", tr("Пробел"))
+        if keys == DEFAULT_HOTKEY and self.everywhere.start_spare():
+            # the Claude app and others take Ctrl+Alt+Space: Fluxion goes on the spare key and says so
+            self.banners.show_warning(
+                tr("Клавиша {value} занята другой программой — «Fluxion везде» работает по {spare}. "
+                   "Сменить: настройки чата → «Fluxion везде».", value=busy, spare=self.everywhere.keys),
+                key="everywhere")
+            return
+        self.banners.show_warning(
+            tr("Клавиша {value} занята другой программой — «Fluxion везде» не включён. Выберите другую: "
+               "настройки чата → «Fluxion везде».", value=busy),
+            key="everywhere")
+
+    def _on_everywhere_changed(self, *_args) -> None:
+        from .everywhere import ENABLED_SETTING, HOTKEY_SETTING, hotkey_text, parse_hotkey
+
+        self.qsettings.setValue(ENABLED_SETTING, int(self.everywhere_on.isChecked()))
+        keys = hotkey_text(self.everywhere_keys.keySequence())
+        if keys and parse_hotkey(keys) is not None:
+            self.qsettings.setValue(HOTKEY_SETTING, keys)
+        elif keys:
+            self.statusBar().showMessage(tr("Нужно сочетание с Ctrl, Alt или Shift, например Ctrl+Alt+Пробел."), 6000)
+        if getattr(self, "everywhere", None) is not None:
+            self.start_everywhere()
+
+    def _quick_backend(self):
+        return getattr(self, "backend", None)
+
+    def _quick_style(self, text: str) -> str:
+        """The «Мой стиль» block for the quick window: "" without Pro or without a profile."""
+        from licensing import feature_enabled
+        from orchestrator import writing_style
+
+        if not feature_enabled(writing_style.PRO_FEATURE):
+            return ""
+        return writing_style.prompt_block(writing_style.load(self._style_dir()), text)
+
+    def _quick_to_chat(self, text: str) -> None:
+        """«В чат»: the selected text into the input of the main window."""
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self.prompt.setText(text)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.prompt.setFocus()
+
     def _build_agent_settings(self) -> None:
         """Create the chat settings popover: model, iteration limit, git tools."""
         self.agent_settings = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
@@ -3126,6 +3190,23 @@ class FluxionWindow(QMainWindow):
             lambda checked: self.qsettings.setValue("voice_send_at_once", int(checked))
         )
         box.addWidget(self.voice_send_at_once)
+
+        from .everywhere import DEFAULT_HOTKEY, ENABLED_SETTING, HOTKEY_SETTING
+
+        box.addWidget(self._settings_caption(tr("Fluxion везде")))
+        self.everywhere_on = QCheckBox(tr("Окно Fluxion в любой программе по клавише"))
+        self.everywhere_on.setToolTip(tr("Выделите текст в Word, почте, браузере — и нажмите клавишу: "
+                                         "переписать, сократить, перевести, ответить"))
+        self.everywhere_on.setChecked(flag_setting(self.qsettings, ENABLED_SETTING, True))
+        self.everywhere_on.toggled.connect(self._on_everywhere_changed)
+        box.addWidget(self.everywhere_on)
+        from PySide6.QtWidgets import QKeySequenceEdit
+
+        self.everywhere_keys = QKeySequenceEdit(QKeySequence(str(self.qsettings.value(HOTKEY_SETTING, DEFAULT_HOTKEY))))
+        self.everywhere_keys.setMaximumSequenceLength(1)
+        self.everywhere_keys.setToolTip(tr("Нажмите новое сочетание: Ctrl, Alt или Shift и клавиша"))
+        self.everywhere_keys.editingFinished.connect(self._on_everywhere_changed)
+        box.addWidget(self.everywhere_keys)
 
         box.addWidget(self._settings_caption(tr("Агент")))
         row = QHBoxLayout()
@@ -7313,6 +7394,10 @@ class FluxionWindow(QMainWindow):
         ok = "#B4FF39" if theme.name == "dark" else "#2E7D00"  # lime is unreadable on white
         err = "#FF5C5C"
         self._icon_colors = {"fg": text2, "on": accent, "rec": err}
+        self._theme_colors = {"bg1": bg1, "bg2": bg2, "border": border, "text1": text1, "text2": text2,
+                              "accent": accent, "primary": primary}
+        if getattr(self, "everywhere", None) is not None:
+            self.everywhere.window.set_colors(self._theme_colors)
 
         self.setStyleSheet(f"""
             QWidget {{ selection-background-color: {sel_bg}; selection-color: {sel_fg}; }}
@@ -7615,6 +7700,8 @@ class FluxionWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_memory()
+        if getattr(self, "everywhere", None) is not None:
+            self.everywhere.stop()
         self.stop_bots()
         self.stop_phone()
         if getattr(self, "report_worker", None) is not None:
@@ -7764,6 +7851,7 @@ def main() -> int:
             rag_service = None
             window = FluxionWindow()
             window.status_label.setText(tr("Ошибка движка: {exc}", exc=exc))
+        window.start_everywhere()
         if "--minimized" in sys.argv:  # started with Windows for the bots (Связь → Боты в мессенджерах)
             window.showMinimized()
         else:
