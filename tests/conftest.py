@@ -19,8 +19,9 @@ def pytest_unconfigure(config):
     """Python 3.11 only: end the test process without the interpreter's final garbage collection.
     PySide6 miscounts references to None in some calls; after the whole run, with every test passed,
     the final collection then freed None itself and aborted the process ("none_dealloc", Ubuntu CI).
-    None is immortal from Python 3.12, and the app is built with a newer Python."""
-    if sys.version_info >= (3, 12) or "PySide6" not in sys.modules:
+    None is immortal from Python 3.12, and the app is built with a newer Python. Not on Windows:
+    there the run ended well without it, and os._exit made it end with code 1 (Windows CI)."""
+    if sys.version_info >= (3, 12) or sys.platform == "win32" or "PySide6" not in sys.modules:
         return
     sys.stdout.flush()
     sys.stderr.flush()
