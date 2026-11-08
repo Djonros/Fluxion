@@ -7180,6 +7180,14 @@ class FluxionWindow(QMainWindow):
     def _check_updates(self, auto: bool = False) -> None:
         """Menu Помощь → Проверить обновления; *auto*: the background check at start, silent
         without an update, without a connection and for a skipped version."""
+        from core.app_paths import is_store_package
+
+        if is_store_package():
+            # the Microsoft Store updates its copy itself; the read-only package folder
+            # must not be touched by FluxionSetup.exe (Store policy as well)
+            if not auto:
+                self._show_store_updates_info()
+            return
         if not auto:
             self.statusBar().showMessage(tr("Проверка обновлений…"))
         worker = UpdateWorker(APP_VERSION)
@@ -7189,6 +7197,18 @@ class FluxionWindow(QMainWindow):
         worker.finished.connect(self._forget_update_worker)
         worker.finished.connect(worker.deleteLater)
         worker.start()
+
+    def _show_store_updates_info(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("Обновления"))
+        box.setIcon(QMessageBox.Information)
+        box.setText(tr("Эту копию Fluxion обновляет Microsoft Store. Новые версии приходят сами; "
+                       "проверить вручную можно в Store, в разделе «Загрузки»."))
+        open_btn = box.addButton(tr("Открыть Microsoft Store"), QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Close)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl("ms-windows-store://downloadsandupdates"))
 
     def _on_update_done(self, info) -> None:
         self._on_update_result(info, auto=getattr(self, "_update_auto", False))
@@ -7205,9 +7225,10 @@ class FluxionWindow(QMainWindow):
 
     def auto_check_updates(self) -> bool:
         """At start (main): the background check, at most once a day. Returns whether it started."""
+        from core.app_paths import is_store_package
         from core.update import should_auto_check
 
-        if os.environ.get("FLUXION_NO_UPDATE_CHECK") == "1":
+        if os.environ.get("FLUXION_NO_UPDATE_CHECK") == "1" or is_store_package():
             return False
         if not should_auto_check(self.qsettings.value(self.UPDATES_LAST_KEY, 0), enabled=self._auto_updates_enabled()):
             return False

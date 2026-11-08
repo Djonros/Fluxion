@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to store-identity.json and fill from Partner Center: Product management -> Product identity. Values below are placeholders for a local test build.",
+  "IdentityName": "Fluxion.Test",
+  "Publisher": "CN=00000000-0000-0000-0000-000000000000",
+  "PublisherDisplayName": "Fluxion",
+  "DisplayName": "Fluxion",
+  "Description": "Local AI assistant for engineers: chat, documents, code and CAD checks on your own computer."
+}

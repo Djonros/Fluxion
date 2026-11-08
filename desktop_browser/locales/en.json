@@ -1081,5 +1081,7 @@
  "Перевести": "Translate",
  "Пробел": "Space",
  "Окно Fluxion в любой программе по клавише": "The Fluxion window in any program by a key",
- "В чат": "To the chat"
+ "В чат": "To the chat",
+ "Эту копию Fluxion обновляет Microsoft Store. Новые версии приходят сами; проверить вручную можно в Store, в разделе «Загрузки».": "This copy of Fluxion is updated by the Microsoft Store. New versions arrive on their own; to check manually, open the Store's Downloads section.",
+ "Открыть Microsoft Store": "Open Microsoft Store"
 }

@@ -47,13 +47,65 @@ def is_portable() -> bool:
     return is_frozen() and (exe_dir() / PORTABLE_MARKER).is_file()
 
 
+_PACKAGE_UNKNOWN = object()
+_package_name_cache: object = _PACKAGE_UNKNOWN
+APPMODEL_ERROR_NO_PACKAGE = 15700
+ERROR_INSUFFICIENT_BUFFER = 122
+
+
+def _query_package_full_name() -> str:
+    """Package full name of this process (MSIX), "" outside a package or off Windows."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        func = ctypes.windll.kernel32.GetCurrentPackageFullName  # Windows 8+
+        func.argtypes = [ctypes.POINTER(wintypes.UINT), wintypes.LPWSTR]
+        func.restype = wintypes.LONG
+        length = wintypes.UINT(0)
+        rc = func(ctypes.byref(length), None)
+        if rc != ERROR_INSUFFICIENT_BUFFER or not length.value:
+            return ""  # APPMODEL_ERROR_NO_PACKAGE: an ordinary process
+        buf = ctypes.create_unicode_buffer(length.value)
+        if func(ctypes.byref(length), buf) != 0:
+            return ""
+        return buf.value
+    except (OSError, AttributeError, ValueError):
+        return ""
+
+
+def package_full_name() -> str:
+    """MSIX package of this run (the Microsoft Store build), "" otherwise. Cached.
+
+    ``FLUXION_STORE_BUILD=1`` pretends to be packaged: checking the Store
+    behaviour (no in-app updater) without installing the package.
+    """
+    global _package_name_cache
+    if os.environ.get("FLUXION_STORE_BUILD") == "1":
+        return "Fluxion.Test_0.0.0.0_x64__dev"
+    if _package_name_cache is _PACKAGE_UNKNOWN:
+        _package_name_cache = _query_package_full_name()
+    return str(_package_name_cache)
+
+
+def is_store_package() -> bool:
+    """The copy from the Microsoft Store (an MSIX package): the Store updates it.
+
+    Its program folder (``WindowsApps``) is read-only, the in-app updater and
+    FluxionSetup.exe must not touch it, and the HKCU Run key is virtualized.
+    """
+    return bool(package_full_name())
+
+
 def is_installed() -> bool:
     """A copy put in place by FluxionSetup.exe (its uninstaller is next to the exe).
 
     Only such a copy updates itself in one click; a portable or unpacked .7z
-    copy and a run from the sources are updated by hand.
+    copy, the Microsoft Store copy and a run from the sources are not.
     """
-    if not is_frozen() or is_portable():
+    if not is_frozen() or is_portable() or is_store_package():
         return False
     return any(exe_dir().glob("unins*.exe"))
 

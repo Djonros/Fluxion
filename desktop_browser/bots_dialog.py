@@ -104,7 +104,11 @@ def autostart_command() -> str:
 
 
 def autostart_available() -> bool:
-    return sys.platform == "win32" and bool(getattr(sys, "frozen", False))
+    """The Run key: a frozen build, not the Microsoft Store one (its HKCU writes are
+    virtualized, Windows would never see the value)."""
+    from core.app_paths import is_store_package
+
+    return sys.platform == "win32" and bool(getattr(sys, "frozen", False)) and not is_store_package()
 
 
 def autostart_enabled() -> bool:
