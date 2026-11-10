@@ -1698,6 +1698,9 @@ class CodingAgent:
                 errors="replace",
                 timeout=self.test_timeout,
                 cwd=str(self.project_root),
+                # no .pyc: a module imported by an earlier run and edited within the same second
+                # to the same size would otherwise be run from its stale bytecode
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
                 **no_window(),
             )
         except subprocess.TimeoutExpired:

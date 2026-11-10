@@ -78,3 +78,20 @@ def test_new_failures_must_be_fixed_and_the_same_result_twice_stops(tmp_path):
     second = a._try_verify_gate()
     assert "Второй прогон подряд" in second and "Не повторяй" in second
     assert a._try_verify_gate() is None  # no third round
+
+
+def test_a_quick_same_size_edit_is_not_run_from_stale_bytecode(tmp_path):
+    """The baseline imports the module; an edit within the same second to the same size must still count."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "calc.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "import sys, os\nsys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))\n"
+        "from calc import f\n\n\ndef test_f():\n    assert f() == 2\n", encoding="utf-8")
+    a = CodingAgent(backend=SimpleNamespace(), project_root=str(tmp_path), allow_write=True,
+                    git_enabled=False, action_format="text", verify_mode="always")
+    a._take_test_baseline()
+    assert a._baseline_failures == {"tests/test_calc.py::test_f"}
+    write(a, "calc.py", "def f():\n    return 2\n")  # the same size, at once
+    assert a._try_verify_gate() is None or a._tests_ok
+    assert a._tests_ok
+    assert not (tmp_path / "__pycache__").exists()
