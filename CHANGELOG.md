@@ -5,7 +5,7 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.29.0] — 2026-11-10
 
 ### Added
 - «Повторить», «Повторить агентом», «Изменить» under the last message of the user and «Ответить заново» under the answer: the last question once more with the modes that are on now, or through the agent, in place of the old question and answer (in the chat and in the history of the model). A request that looks like changing files while the agent is off brings a banner «Повторить агентом». Up in an empty input gives the last message back.
@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - «Проверять правки тестами» (chat settings): «Авто» by default — the agent runs the tests only in a project with tests of its own, elsewhere the syntax is checked quietly with no line in the answer; «Всегда»; «Никогда». Before the first change the failing tests are noted and only new failures must be fixed; the same failures twice in a row stop the checks and the agent says what does not pass.
+- Microsoft Store: an MSIX package (`scripts/build_msix.ps1`, `installer/msix`); a copy installed from the Store checks no updates of its own («Проверить обновления» opens the Store) and hides the start at Windows sign-in.
+- For the owner: `fluxion-commit.bat` (commit chosen files, push to main on top of newer commits, nothing pushed on a conflict) and `fluxion-version.bat x.y.z` (the version, the release date, the CHANGELOG section, a draft of RELEASE_NOTES_RU.md; `scripts/bump_version.py`).
+
+### Fixed
+- The agent's test runs write no bytecode: a module imported by the baseline run and edited within the same second to the same size was run from its stale `.pyc`, and the check saw the code before the change.
 
 ## [0.28.0] — 2026-11-04
 
