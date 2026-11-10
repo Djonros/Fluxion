@@ -114,6 +114,14 @@ PLAN_TASK_PREFIX = (
 PLAN_RUN_PREFIX = tr("Реализуй план:\n")
 PLAN_RUN_URL = "fluxion://run-plan"
 COPY_URL = "fluxion://copy/"  # + index of the answer in _messages
+RETRY_URL = "fluxion://retry"  # the last message once more, with the modes that are on now
+RETRY_AGENT_URL = "fluxion://retry-agent"  # the last message once more, through the agent
+EDIT_URL = "fluxion://edit"  # the last message back into the input
+# a request that most likely means changing files of the project: the chat cannot, the agent can
+FILE_EDIT_RE = re.compile(
+    r"\b(исправ|поправ|почин|измени|переименуй|перепиши\s+(?:файл|код|функци|модул)|рефактор|добавь\s+в\s+"
+    r"(?:файл|код|модул|класс|функци)|создай\s+(?:файл|модул|тест)|удали\s+из|внеси\s+правк|"
+    r"fix\b|refactor|rename\b|edit\s+the)", re.IGNORECASE)
 COPY_ICON = "fluxion-icon:copy"
 FILE_ICON = "fluxion-icon:file"
 THINK_ICON = "fluxion-icon:thinking"  # the spinner frame, replaced on each tick (_on_think_tick)
@@ -2875,6 +2883,15 @@ class FluxionWindow(QMainWindow):
         if target.startswith(SPEAK_URL):
             self._toggle_speak_answer(target[len(SPEAK_URL):])
             return
+        if target == RETRY_URL:
+            self.retry_last(agent=False)
+            return
+        if target == RETRY_AGENT_URL:
+            self.retry_last(agent=True)
+            return
+        if target == EDIT_URL:
+            self.edit_last()
+            return
         if target.startswith(COPY_URL):
             index = target[len(COPY_URL):]
             if index.isdigit():
@@ -3001,6 +3018,7 @@ class FluxionWindow(QMainWindow):
         self.prompt.returnPressed.connect(self.send_message)
         self.prompt.agentRequested.connect(self.send_agent_once)
         self.prompt.filesAttached.connect(self.attach_files)
+        self.prompt.recallRequested.connect(self.edit_last)
         self.prompt.setContextMenuPolicy(Qt.CustomContextMenu)
         self.prompt.customContextMenuRequested.connect(self._prompt_menu)
         for keys in ("Ctrl+Return", "Ctrl+Enter"):
@@ -3074,7 +3092,12 @@ class FluxionWindow(QMainWindow):
         self.chat_style.setToolTip(tr("Писать служебки, пояснительные записки и письма заказчикам вашим стилем (Pro). "
                                    "Образцы — Связь → «Мой стиль письма…»"))
         self.chat_style.toggled.connect(self._on_chat_style_toggled)
-        for box in (self.chat_agent_files, self.chat_plan, self.chat_style):
+        self.chat_archive = QCheckBox(tr("Архив КД"), modes)
+        self.chat_archive.setToolTip(tr("Искать и в архиве КД: чертежи, модели КОМПАС-3D, PDF (Pro). "
+                                        "Архив — Конструктор → «Архив КД…»"))
+        self.chat_archive.setChecked(flag_setting(self.qsettings, "chat/archive", True))
+        self.chat_archive.toggled.connect(self._on_chat_archive_toggled)
+        for box in (self.chat_agent_files, self.chat_plan, self.chat_style, self.chat_archive):
             box.toggled.connect(self._refresh_composer_chips)
         self._attachments: list[dict] = []
         self._refresh_outline_icons()
@@ -3218,6 +3241,21 @@ class FluxionWindow(QMainWindow):
         row.addWidget(self.agent_iterations)
         row.addStretch()
         box.addLayout(row)
+        verify_row = QHBoxLayout()
+        verify_row.setSpacing(10)
+        verify_row.addWidget(QLabel(tr("Проверять правки тестами:")))
+        self.agent_verify = QComboBox()
+        for mode, title in (("auto", tr("Авто")), ("always", tr("Всегда")), ("never", tr("Никогда"))):
+            self.agent_verify.addItem(title, mode)
+        self.agent_verify.setToolTip(tr("Авто — только если в проекте есть свои тесты (иначе молча проверяется "
+                                        "синтаксис); агент отвечает только за новые падения, и после двух одинаковых "
+                                        "прогонов подряд останавливается и показывает, что не прошло"))
+        saved = str(self.qsettings.value("agent/verify", "auto") or "auto")
+        self.agent_verify.setCurrentIndex(max(0, self.agent_verify.findData(saved)))
+        self.agent_verify.currentIndexChanged.connect(self._on_agent_verify_changed)
+        verify_row.addWidget(self.agent_verify)
+        verify_row.addStretch()
+        box.addLayout(verify_row)
         self.agent_unlimited = QCheckBox(tr("Без лимита"))
         self.agent_unlimited.setToolTip(
             tr("Pro: агент работает, пока не закончит задачу (жёсткий потолок — 200 итераций)")
@@ -3236,6 +3274,9 @@ class FluxionWindow(QMainWindow):
         box.addWidget(self.agent_git_button)
         self._refresh_git_button()
         self._refresh_agent_settings()
+
+    def _on_agent_verify_changed(self, _index: int) -> None:
+        self.qsettings.setValue("agent/verify", self.agent_verify.currentData())
 
     @staticmethod
     def _settings_caption(text: str) -> QLabel:
@@ -5383,11 +5424,70 @@ class FluxionWindow(QMainWindow):
 
     def send_message(self) -> None:
         """Send the prompt: to the agent when a chip asks for it, else to the chat."""
-        self._submit(agent_once=False)
+        self._send(agent_once=False)
 
     def send_agent_once(self) -> None:
         """Ctrl+Enter: run this one message through the agent; chips stay as they are."""
-        self._submit(agent_once=True)
+        self._send(agent_once=True)
+
+    def _send(self, agent_once: bool) -> None:
+        """Submit the input and remember the text as it was typed on the user's message: «Повторить»
+        and «Изменить» give back this text, not what the chat showed (a command, a plan)."""
+        typed = self.prompt.text().strip()
+        before = len(self._messages)
+        self._submit(agent_once)
+        user = next((e for e in self._messages[before:] if e["role"] == "user"), None)
+        if user is None:
+            return
+        user["typed"] = typed
+        agent = bool(agent_once or self.chat_agent_files.isChecked() or self.chat_plan.isChecked())
+        user["agent"] = agent
+        if not agent and self.agent_factory is not None and FILE_EDIT_RE.search(typed):
+            self.banners.show_warning(tr("Похоже, нужно менять файлы проекта — это умеет агент. Повторить с агентом?"),
+                                      tr("Повторить агентом"), self._retry_last_with_agent, key="retry_agent")
+
+    # ── «Повторить», «Изменить», «Ответить заново»: the last message once more ──
+
+    def _last_user_index(self) -> int | None:
+        for index in range(len(self._messages) - 1, -1, -1):
+            if self._messages[index]["role"] == "user":
+                return index
+        return None
+
+    def _forget_last_turn(self, index: int) -> None:
+        """Drop the last question and its answer from the chat and from the model's history."""
+        shown = self._messages[index]["text"]
+        del self._messages[index:]
+        for j in range(len(self.history) - 1, -1, -1):
+            if self.history[j]["role"] == "user" and self.history[j]["content"] == shown:
+                del self.history[j:]
+                break
+        if not any(entry is self._plan_entry for entry in self._messages):
+            self._plan_entry = None
+
+    def retry_last(self, agent: bool = False) -> None:
+        """«Повторить» / «Повторить агентом» / «Ответить заново»: the last message once more, in place of the
+        old question and answer — with the modes that are on now, or through the agent."""
+        index = self._last_user_index()
+        if index is None or self.generating or self.agent_running or not self._messages[index].get("typed"):
+            return
+        typed = self._messages[index]["typed"]
+        self.banners.dismiss_key("retry_agent")
+        self._forget_last_turn(index)
+        self.prompt.setText(typed)
+        self._send(agent_once=agent)
+        self._save_memory()
+
+    def _retry_last_with_agent(self) -> None:
+        self.retry_last(agent=True)
+
+    def edit_last(self) -> None:
+        """«Изменить» and Up in an empty field: the last message back into the input to correct it."""
+        index = self._last_user_index()
+        if index is None or not self._messages[index].get("typed"):
+            return
+        self.prompt.setText(self._messages[index]["typed"])
+        self.prompt.setFocus()
 
     # ── composer: «+», attached files, chips of the modes ─────────────────
 
@@ -5547,8 +5647,10 @@ class FluxionWindow(QMainWindow):
             self._chips_flow.addWidget(self._composer_chip(
                 "image" if item["image"] else "file", f'{item["name"]} · {human_size(item["size"])}',
                 lambda _checked=False, path=item["path"]: self._remove_attachment(path), tooltip=item["path"]))
-        for box, icon in ((self.chat_agent_files, "pen"), (self.chat_plan, "list"), (self.chat_style, "feather")):
-            if box.isChecked():
+        archive_on = self._chat_archive() is not None
+        for box, icon in ((self.chat_agent_files, "pen"), (self.chat_plan, "list"), (self.chat_style, "feather"),
+                          (self.chat_archive, "archive")):
+            if box.isChecked() and (box is not self.chat_archive or archive_on):
                 self._chips_flow.addWidget(self._composer_chip(
                     icon, box.text(), lambda _checked=False, b=box: b.setChecked(False), active=True,
                     tooltip=box.toolTip()))
@@ -5580,6 +5682,15 @@ class FluxionWindow(QMainWindow):
             act.setEnabled(box.isEnabled())
             act.setToolTip(box.toolTip())
             act.toggled.connect(box.setChecked)
+        ready = self._archive_index() is not None
+        archive = menu.addAction(self._menu_icon("archive", ready and self.chat_archive.isChecked()),
+                                 self.chat_archive.text() + "\tPRO")
+        archive.setCheckable(True)
+        archive.setChecked(ready and self.chat_archive.isChecked())
+        archive.setEnabled(ready)
+        archive.setToolTip(self.chat_archive.toolTip() if ready else
+                           tr("Архив КД не подключён: Конструктор → «Архив КД…», добавьте папки и обновите индекс (Pro)."))
+        archive.toggled.connect(self.chat_archive.setChecked)
         once = menu.addAction(self._menu_icon("play"), tr("Разово агентом") + "\tCtrl+Enter", self.send_agent_once)
         once.setEnabled(self.agent_factory is not None)
         menu.addSeparator()
@@ -5725,6 +5836,7 @@ class FluxionWindow(QMainWindow):
         self._set_generating(True)
         if self.assistant is not None:
             self.assistant.use_project = not self._project_forgotten()
+            self.assistant.archive = self._chat_archive() if source is None else None
         self.worker = ChatWorker(self.assistant, question or text, history, self)
         self.worker.target = resolve_target(getattr(self.settings, "language", "auto"), text)
         self.worker.style = self._writing_style_block(text)
@@ -5913,6 +6025,31 @@ class FluxionWindow(QMainWindow):
         from .archive_dialog import ArchiveDialog
 
         ArchiveDialog(self._style_dir(), self).exec()
+
+    def _archive_index(self):
+        """The design archive with something in it, kept open for the chat and the agent; None without
+        Pro or before the first index. The database file is not created by asking."""
+        from licensing import feature_enabled
+        from rag.archive import DB_NAME, PRO_FEATURE, ArchiveIndex
+
+        if not feature_enabled(PRO_FEATURE) or not (Path(self._style_dir()) / DB_NAME).is_file():
+            return None
+        index = getattr(self, "_chat_archive_index", None)
+        if index is None:
+            index = self._chat_archive_index = ArchiveIndex(self._style_dir())
+        try:
+            return index if index.file_count else None
+        except Exception:
+            return None
+
+    def _chat_archive(self):
+        """The archive the chat searches along with the project: «+» → «Архив КД» on, and indexed."""
+        if not self.chat_archive.isChecked():
+            return None
+        return self._archive_index()
+
+    def _on_chat_archive_toggled(self, checked: bool) -> None:
+        self.qsettings.setValue("chat/archive", int(checked))
 
     def _archive_source(self):
         """The archive index for an «/архив» question, or None (no Pro, nothing indexed yet)."""
@@ -7031,6 +7168,8 @@ class FluxionWindow(QMainWindow):
         strategy = getattr(getattr(result, "strategy", None), "name", "")
         if strategy:
             parts.append(strategy.lower())
+        if getattr(result, "archive_used", 0):
+            parts.append(tr("архив КД: {value}", value=result.archive_used))
         if getattr(result, "rag_used", False):
             parts.append(tr("RAG: {value} источн.", value=len(getattr(result, 'rag_sources', []) or [])))
         if getattr(result, "web_used", False):
@@ -7094,6 +7233,7 @@ class FluxionWindow(QMainWindow):
             content = WELCOME_HTML
         else:
             parts = []
+            last_user = self._last_user_index()
             for index, entry in enumerate(self._messages):
                 if entry["role"] == "banner":
                     parts.append(f"<p><i>⚠ {html.escape(entry['text'])}</i></p>")
@@ -7115,6 +7255,13 @@ class FluxionWindow(QMainWindow):
 
                 body = render_chat_html(entry["text"]) or "…"
                 parts.append(f"<div>{body}</div>")
+                busy = self.generating or self.agent_running
+                if entry["role"] == "user" and entry.get("typed") and index == last_user and not busy:
+                    links = [f'<a href="{RETRY_URL}">{tr("Повторить")}</a>',
+                             f'<a href="{EDIT_URL}">{tr("Изменить")}</a>']
+                    if self.agent_factory is not None and not entry.get("agent"):
+                        links.insert(1, f'<a href="{RETRY_AGENT_URL}">{tr("Повторить агентом")}</a>')
+                    parts.append("<p><small>" + "&nbsp;&nbsp;·&nbsp;&nbsp;".join(links) + "</small></p>")
                 if entry.get("sources") and not (index == len(self._messages) - 1 and self.generating):
                     links = "<br>".join(
                         (f'[{s["n"]}] ' if "n" in s else "• ")
@@ -7129,11 +7276,14 @@ class FluxionWindow(QMainWindow):
                         icon, label = SPEAK_ICON_STOP, tr("Остановить озвучку")
                     else:
                         icon, label = SPEAK_ICON, tr("Озвучить")
+                    again = ""
+                    if last_user is not None and index > last_user and self._messages[last_user].get("typed"):
+                        again = f'&nbsp;&nbsp;&nbsp;<a href="{RETRY_URL}">↻ {tr("Ответить заново")}</a>'
                     parts.append(
                         f'<p><a href="{COPY_URL}{index}"><img src="{COPY_ICON}" width="16" height="16"'
                         f' style="vertical-align: middle"> {tr("Копировать")}</a>&nbsp;&nbsp;&nbsp;'
                         f'<a href="{SPEAK_URL}{index}"><img src="{icon}" width="16" height="16"'
-                        f' style="vertical-align: middle"> {label}</a></p>'
+                        f' style="vertical-align: middle"> {label}</a>{again}</p>'
                     )
                 if entry is self._plan_entry and not self.generating:
                     parts.append(tr('<p><a href="{PLAN_RUN_URL}">▶ Выполнить план</a></p>', PLAN_RUN_URL=PLAN_RUN_URL))
@@ -7723,6 +7873,9 @@ class FluxionWindow(QMainWindow):
         self._save_memory()
         if getattr(self, "everywhere", None) is not None:
             self.everywhere.stop()
+        if getattr(self, "_chat_archive_index", None) is not None:
+            self._chat_archive_index.close()
+            self._chat_archive_index = None
         self.stop_bots()
         self.stop_phone()
         if getattr(self, "report_worker", None) is not None:
@@ -7856,6 +8009,8 @@ def main() -> int:
                     git_enabled=git_tools_enabled(qs),
                     lang=getattr(settings, "language", "auto"),
                     write_confirm=None if paid else trial_gate.confirm,
+                    archive=window._chat_archive(),  # search_archive: the design archive, when on
+                    verify_mode=str(qs.value("agent/verify", "auto") or "auto"),
                 )
 
             window = FluxionWindow(

@@ -169,9 +169,9 @@ def test_the_assistant_answers_from_the_archive_with_sources(tmp_path):
     assistant = Assistant(backend=backend, settings=Settings(), rag_service=None, web_search=None)
     result, stream = assistant.ask_stream("материал бокового лонжерона", source=index)
     assert "".join(stream) == "Ок" and result.rag_used
-    assert result.citations[0]["label"] == "714094.2801094 - Боковой лонжерон.cdw"
+    assert result.citations[0]["label"] == "Архив КД: 714094.2801094 - Боковой лонжерон.cdw"
     context = "\n".join(m["content"] for m in seen[0])
-    assert "[1] 714094.2801094 - Боковой лонжерон.cdw" in context and "09Г2С" in context
+    assert "[1] Архив КД: 714094.2801094 - Боковой лонжерон.cdw" in context and "09Г2С" in context
     assert RAGService.build_context  # the same context builder as the project index
     index.close()
 
@@ -361,3 +361,87 @@ def test_the_archive_reads_documents_of_all_kinds(tmp_path):
     hits = index.search("стояночная тормозная система")
     assert hits and hits[0].kind == "Документ Word" and hits[0].product == "714097"
     index.close()
+
+
+def test_the_chat_searches_the_project_and_the_archive_together(tmp_path):
+    from core.config import Settings
+    from orchestrator.assistant import Assistant
+    from orchestrator.strategy import Strategy
+
+    root = archive_tree(tmp_path / "Архив")
+    index = ArchiveIndex(tmp_path / "data", [str(root)], ocr=False)
+    index.update()
+    project_hit = SimpleNamespace(content="def frame(): ...", file_path="src/frame.py", name="frame",
+                                  node_type="function", score=0.9, start_line=1, end_line=2)
+    rag = SimpleNamespace(search=lambda query, top_k=5: [project_hit])
+    seen = []
+    backend = SimpleNamespace(stream=lambda messages, gen=None: seen.append(messages) or iter(["Ок"]))
+    assistant = Assistant(backend=backend, settings=Settings(), rag_service=rag, web_search=None)
+    assistant.archive = index
+    result, stream = assistant.ask_stream("материал бокового лонжерона", force_strategy=Strategy.RAG)
+    "".join(stream)
+    assert result.archive_used >= 1 and result.rag_sources[0].startswith("src/frame.py")
+    assert any(c["label"].startswith("Архив КД: 714094.2801094") for c in result.citations)
+    system = seen[0][0]["content"]
+    assert "подключён архив КД" in system and "файлов" in system
+    context = "\n".join(m["content"] for m in seen[0])
+    assert "src/frame.py" in context and "Архив КД: 714094.2801094" in context
+
+
+def test_a_designation_sends_the_question_to_the_archive_whatever_the_router_says(tmp_path):
+    from core.config import Settings
+    from orchestrator.assistant import Assistant
+    from orchestrator.strategy import Strategy
+
+    root = archive_tree(tmp_path / "Архив")
+    index = ArchiveIndex(tmp_path / "data", [str(root)], ocr=False)
+    index.update()
+    backend = SimpleNamespace(stream=lambda messages, gen=None: iter(["Ок"]))
+    assistant = Assistant(backend=backend, settings=Settings(), rag_service=None, web_search=None)
+    assistant.archive = index
+    result, _ = assistant.ask_stream("что за деталь 714094.2801094", force_strategy=Strategy.DIRECT)
+    assert result.archive_used >= 1
+    result, _ = assistant.ask_stream("как дела", force_strategy=Strategy.DIRECT)
+    assert result.archive_used == 0  # a chat question: the archive is left alone
+
+
+def test_the_agent_searches_the_archive(tmp_path):
+    from orchestrator.agent import CodingAgent
+
+    root = archive_tree(tmp_path / "Архив")
+    index = ArchiveIndex(tmp_path / "data", [str(root)], ocr=False)
+    index.update()
+    agent = CodingAgent(backend=SimpleNamespace(), project_root=str(tmp_path), archive=index, action_format="text")
+    assert "search_archive" in agent.prompt_tool_names() and "search_archive" in agent.system_prompt
+    found = agent._dispatch_tool("search_archive", "714094.2801094")
+    assert found.success and "Боковой лонжерон" in found.output
+    plain = CodingAgent(backend=SimpleNamespace(), project_root=str(tmp_path), action_format="text")
+    assert "search_archive" not in plain.prompt_tool_names() and "search_archive" not in plain.system_prompt
+
+
+def test_the_archive_chip_of_the_chat_window(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+
+    import licensing
+    from desktop_browser.app import FluxionWindow
+
+    QApplication.instance() or QApplication([])
+    monkeypatch.setenv("FLUXION_DISABLE_WEBENGINE", "1")
+    window = FluxionWindow(qsettings=QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat))
+    monkeypatch.setattr(window, "_style_dir", lambda: str(tmp_path / "data"))
+    assert window._chat_archive() is None  # no archive: nothing opened, no file made
+    assert not (tmp_path / "data").exists()
+    root = archive_tree(tmp_path / "Архив")
+    ArchiveIndex(tmp_path / "data", [str(root)], ocr=False).update()
+    monkeypatch.setattr(licensing, "feature_enabled", lambda feature: True)
+    assert window._chat_archive() is not None and window.chat_archive.isChecked()  # on by default
+    window._refresh_composer_chips()
+    assert window._chips_flow.count() >= 1  # «Архив КД» over the input
+    window.chat_archive.setChecked(False)
+    assert window._chat_archive() is None
+    window.close()

@@ -1083,5 +1083,17 @@
  "Окно Fluxion в любой программе по клавише": "La fenêtre Fluxion dans tout programme par une touche",
  "В чат": "Vers le chat",
  "Эту копию Fluxion обновляет Microsoft Store. Новые версии приходят сами; проверить вручную можно в Store, в разделе «Загрузки».": "Cette copie de Fluxion est mise à jour par le Microsoft Store. Les nouvelles versions arrivent d'elles-mêmes ; pour vérifier manuellement, ouvrez la section Téléchargements du Store.",
- "Открыть Microsoft Store": "Ouvrir le Microsoft Store"
+ "Открыть Microsoft Store": "Ouvrir le Microsoft Store",
+ "Похоже, нужно менять файлы проекта — это умеет агент. Повторить с агентом?": "Il semble falloir modifier des fichiers du projet — l'agent sait le faire. Répéter avec l'agent ?",
+ "Повторить агентом": "Répéter avec l'agent",
+ "Изменить": "Modifier",
+ "Ответить заново": "Répondre à nouveau",
+ "Искать и в архиве КД: чертежи, модели КОМПАС-3D, PDF (Pro). Архив — Конструктор → «Архив КД…»": "Chercher aussi dans les archives techniques : plans, modèles KOMPAS-3D, PDF (Pro). Les archives — Conception → « Archives techniques… »",
+ "архив КД: {value}": "archives techniques : {value}",
+ "Архив КД не подключён: Конструктор → «Архив КД…», добавьте папки и обновите индекс (Pro).": "Les archives techniques ne sont pas connectées : Conception → « Archives techniques… », ajoutez les dossiers et mettez à jour l'index (Pro).",
+ "Проверять правки тестами:": "Vérifier les modifications par les tests :",
+ "Авто": "Auto",
+ "Всегда": "Toujours",
+ "Никогда": "Jamais",
+ "Авто — только если в проекте есть свои тесты (иначе молча проверяется синтаксис); агент отвечает только за новые падения, и после двух одинаковых прогонов подряд останавливается и показывает, что не прошло": "Auto — seulement si le projet a ses propres tests (sinon la syntaxe est vérifiée en silence) ; l'agent ne répond que des nouveaux échecs et, après deux exécutions identiques d'affilée, il s'arrête et montre ce qui n'est pas passé"
 }

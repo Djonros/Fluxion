@@ -67,8 +67,11 @@ DOCUMENT_SUFFIXES = (".pdf", ".docx", ".xlsx", ".pptx", ".csv",
 
 
 def citation_label(r) -> str:
-    """"Договор.pdf, стр. 3" for a fragment of a document; "" for code."""
+    """"Договор.pdf, стр. 3" for a fragment of a document, "Архив КД: …" for one of the design
+    archive (any file of it: drawings of KOMPAS-3D too); "" for code."""
     name = ntpath.basename(r.file_path)  # a Windows path, also where CI runs on Linux
+    if getattr(r, "node_type", "") == "archive":
+        return f"Архив КД: {name}, {r.name}" if r.name else f"Архив КД: {name}"
     if not name.lower().endswith(DOCUMENT_SUFFIXES):
         return ""
     return f"{name}, {r.name}" if r.name else name

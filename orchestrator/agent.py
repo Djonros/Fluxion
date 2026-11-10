@@ -108,6 +108,17 @@ _REPEAT_OBSERVATION = (
 )
 
 _VERIFY_BUDGET = 2
+# «Проверять правки тестами»: "auto" — only a project with tests of its own (else a quiet syntax
+# check), "always" — every change, "never" — no check
+VERIFY_MODES = ("auto", "always", "never")
+_FAILED_TEST_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
+_TEST_FILE_RE = re.compile(r"^(?:test_.*|.*_test)\.py$")
+_SKIP_DIRS = {".git", ".venv", "venv", "env", "node_modules", "__pycache__", "build", "dist", ".tox", "site-packages"}
+
+
+def failed_tests(output: str) -> set[str]:
+    """The failing tests of a pytest run, by node id ("tests/test_a.py::test_b")."""
+    return set(_FAILED_TEST_RE.findall(output or ""))
 
 _LANG_PROMPT_NAMES = {"ru": "Russian", "en": "English"}
 
@@ -186,6 +197,8 @@ _TOOLS_READ = """\
   grep <pattern> [<path>]     - Regex search in all text files; path defaults to '.'
   search_code <query>         - Semantic search in the indexed project (find code
                                 by meaning, e.g. `search_code where is auth handled`)
+  search_archive <query>      - Search the design archive of the plant (drawings, models,
+                                PDF) by words or a designation, e.g. `search_archive 792720 кронштейн`
   run_tests [<args>]          - Run pytest with optional args (e.g. a test file)
   web_search <query>          - Search the web for information
   git_status                  - Show git status (modified/untracked files)
@@ -286,6 +299,9 @@ TOOL_SPECS: dict[str, tuple[str, list[tuple[str, str, bool, str]]]] = {
     ]),
     "search_code": ("Semantic search in the indexed project: find code by meaning", [
         ("query", _S, True, "what you are looking for, in natural language"),
+    ]),
+    "search_archive": ("Search the design archive of the plant (drawings, models, PDF) by words or a designation", [
+        ("query", _S, True, "words or a designation, e.g. 792720.2801214 or кронштейн фонаря"),
     ]),
     "run_tests": ("Run pytest", [
         ("args", _S, False, "optional pytest arguments, e.g. tests/test_calc.py"),
@@ -519,6 +535,8 @@ class CodingAgent:
         context_char_budget: int = _CONTEXT_CHAR_BUDGET,
         action_format: str = "auto",
         write_confirm: Callable[[str, str], bool] | None = None,
+        archive=None,
+        verify_mode: str = "always",
     ):
         """Create an agent bound to *project_root*.
 
@@ -528,6 +546,7 @@ class CodingAgent:
         file is changed; returning False cancels that change.
         """
         self.backend = backend
+        self.archive = archive  # the design archive (rag/archive.ArchiveIndex) for search_archive; None — none
         self.project_root = Path(project_root).resolve()
         self.rag_service = rag_service
         self.web_search = web_search
@@ -547,6 +566,11 @@ class CodingAgent:
         self.git_enabled = git_enabled
         self.verify_after_write = verify_after_write
         self.verify_budget = verify_budget
+        self.verify_mode = verify_mode if verify_mode in VERIFY_MODES else "auto"
+        self._baseline_failures: set[str] | None = None  # tests failing before the first change
+        self._last_failures: tuple | None = None  # the result of the last check: the same twice — stop
+        self._quiet_verify = False  # «auto» in a project without tests: syntax only, nothing said
+        self._has_tests: bool | None = None
         self.lang = (lang or "auto").strip().lower()
         self._lang_target: str | None = None
         self._lang_fixes = 0
@@ -567,6 +591,7 @@ class CodingAgent:
             "read_file": self._tool_read_file,
             "grep": self._tool_grep,
             "search_code": self._tool_search_code,
+            "search_archive": self._tool_search_archive,
             "run_tests": self._tool_run_tests,
             "web_search": self._tool_web_search,
             "write_file": self._tool_write_file,
@@ -602,6 +627,8 @@ class CodingAgent:
         names = ["list_files", "read_file", "grep"]
         if self.rag_service is not None:
             names.append("search_code")
+        if self.archive is not None:
+            names.append("search_archive")
         if self.allow_exec:
             names.append("run_tests")
         if self.web_search is not None:
@@ -643,6 +670,10 @@ class CodingAgent:
         if self.rag_service is None:
             prompt = re.sub(
                 r"^  search_code .*\n(?:^ {20,}.*\n)*", "", prompt, flags=re.MULTILINE
+            )
+        if self.archive is None:
+            prompt = re.sub(
+                r"^  search_archive .*\n(?:^ {20,}.*\n)*", "", prompt, flags=re.MULTILINE
             )
         return prompt
 
@@ -876,7 +907,8 @@ class CodingAgent:
         if not result.success and result.steps:
             last = result.steps[-1]
             result.final_answer = last.observation or "Agent ran out of iterations."
-        if not self.verify_after_write or not self._ever_dirty:
+        if not self.verify_after_write or not self._ever_dirty or self.verify_mode == "never" or (
+                self._quiet_verify and self._tests_ok):
             result.verification = "not_required"
         elif self._tests_ok:
             result.verification = "syntax_only" if self._syntax_only else "passed"
@@ -961,7 +993,7 @@ class CodingAgent:
                 f"{field('path')}\n{_DELIM_OLD}\n{field('old')}\n{_DELIM_NEW}\n{field('new')}"
             ), None
         single = {
-            "list_files": "path", "search_code": "query", "run_tests": "args",
+            "list_files": "path", "search_code": "query", "search_archive": "query", "run_tests": "args",
             "web_search": "query", "git_commit": "message", "finish": "answer",
         }
         if name in single:
@@ -1072,9 +1104,51 @@ class CodingAgent:
             "will be blocked. Change approach or finish with your best answer."
         )
 
+    def _project_has_tests(self) -> bool:
+        """Python tests of the project itself (test_*.py, *_test.py), outside venvs and builds."""
+        if self._has_tests is None:
+            self._has_tests = False
+            seen = 0
+            for folder, dirs, files in os.walk(self.project_root):
+                dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+                seen += len(files)
+                if any(_TEST_FILE_RE.match(name) for name in files):
+                    self._has_tests = True
+                    break
+                if seen > 20000:
+                    break
+        return self._has_tests
+
+    def _tests_wanted(self) -> bool:
+        if not self.verify_after_write or self.verify_mode == "never":
+            return False
+        return self.verify_mode == "always" or self._project_has_tests()
+
+    def _take_test_baseline(self) -> None:
+        """Before the first change: which tests fail already — the agent answers only for new failures."""
+        if self._baseline_failures is not None:
+            return
+        self._baseline_failures = set()
+        if not self.allow_exec or not self._tests_wanted() or not self._project_has_tests():
+            return
+        result = self._tool_run_tests("")
+        if not result.success:
+            self._baseline_failures = failed_tests(result.output)
+
     def _try_verify_gate(self) -> str | None:
         """Финал с непроверенными правками невозможен: авто-прогон тестов."""
         if not self.verify_after_write or not self._dirty_files or self._tests_ok:
+            return None
+        if self.verify_mode == "never":
+            return None
+        if not self._tests_wanted():  # «auto» without tests: the syntax quietly, no line in the answer
+            errors = self._syntax_errors()
+            if errors and self._verify_used < self.verify_budget:
+                self._verify_used += 1
+                return "[verification gate] syntax check FAILED:\n" + "\n".join(errors) + "\nИсправь код перед завершением."
+            self._quiet_verify = True
+            self._tests_ok = not errors
+            self._dirty_files.clear()
             return None
         if self._verify_used >= self.verify_budget:
             return None
@@ -1117,9 +1191,27 @@ class CodingAgent:
         if result.exit_code == 5 or any(marker in low for marker in _NO_TESTS_MARKERS):
             return self._syntax_gate(files, "pytest-тестов в проекте нет")
         tail = (result.output or result.error)[-2000:]
+        failed = failed_tests(result.output)
+        new = failed - (self._baseline_failures or set())
+        if failed and not new:  # what fails failed before the changes too: not the agent's doing
+            self._syntax_only = False
+            return True, (
+                f"[verification gate] Изменены: {files}. Новых падений нет; тесты, которые падали и до правок: "
+                f"{', '.join(sorted(failed))}. Можно завершать, упомяни это в ответе."
+            )
+        signature = tuple(sorted(new)) or (tail[-300:],)
+        if signature == self._last_failures:  # the same result twice in a row: no more rounds
+            self._verify_used = self.verify_budget
+            return False, (
+                f"[verification gate] Изменены: {files}. Второй прогон подряд — те же падения: "
+                f"{', '.join(signature) if new else tail[-600:]}. Не повторяй попытки: заверши ответ, честно перечисли "
+                "непроходящие тесты и что ты изменил."
+            )
+        self._last_failures = signature
         return False, (
             f"[verification gate] Изменены: {files}. Авто-прогон run_tests: FAILED:\n{tail}\n"
-            "Исправь код и запусти run_tests перед завершением."
+            + (f"Новые падения после твоих правок: {', '.join(sorted(new))}. " if new else "")
+            + "Исправь код и запусти run_tests перед завершением."
         )
 
     def _syntax_errors(self) -> list[str]:
@@ -1440,6 +1532,25 @@ class CodingAgent:
 
         return ToolResult("grep", args, output)
 
+    def _tool_search_archive(self, args: str) -> ToolResult:
+        """Search the design archive by words or a designation; the found files with their pieces."""
+        query = args.strip().strip('"').strip("'")
+        if not query:
+            return ToolResult("search_archive", args, "", False, "No query provided")
+        if self.archive is None:
+            return ToolResult("search_archive", args, "", False, "The design archive is not connected")
+        try:
+            hits = self.archive.search(query, top_k=_SEARCH_TOP_K)
+        except Exception as exc:
+            logger.warning("search_archive failed: %s", exc)
+            return ToolResult("search_archive", args, "", False, f"Archive search failed ({exc})")
+        if not hits:
+            return ToolResult("search_archive", args, "Nothing found in the archive. Try other words or a designation.")
+        blocks = [f"[{i}] {h.file_path}" + (f" ({h.name})" if h.name else "") + f"\n{h.content[:800]}"
+                  for i, h in enumerate(hits, 1)]
+        out = "Found in the design archive (files outside the project, read-only):\n\n" + "\n\n".join(blocks)
+        return ToolResult("search_archive", args, _truncate_middle(out, _TOOL_OUTPUT_LIMIT))
+
     def _tool_search_code(self, args: str) -> ToolResult:
         """Semantic search over the RAG index, limited to this project."""
         query = args.strip().strip('"').strip("'")
@@ -1754,6 +1865,7 @@ class CodingAgent:
         if not self._write_allowed(fpath, "write"):
             return ToolResult("write_file", args, "", False, _WRITE_CANCELLED)
 
+        self._take_test_baseline()  # before the first change: which tests fail already
         try:
             self._ensure_checkpoint()
             self._backup_file(fpath)
@@ -1865,6 +1977,7 @@ class CodingAgent:
         if not self._write_allowed(fpath, "edit"):
             return ToolResult("edit_file", args, "", False, _WRITE_CANCELLED)
 
+        self._take_test_baseline()  # before the first change: which tests fail already
         try:
             self._ensure_checkpoint()
             self._backup_file(fpath)

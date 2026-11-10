@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -19,6 +20,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RAG_FALLBACK_THRESHOLD = 0.3
+ARCHIVE_HITS = 3  # pieces of the design archive next to those of the project
+# a question about the design documentation: the archive is searched whatever the router chose
+ARCHIVE_HINT_RE = re.compile(r"\d{6}\.\d{7}|\bчерт[её]ж|спецификац|сборочн\w*\s+черт|\bкд\b|архив|"
+                             r"извещени|обозначени", re.IGNORECASE)
 
 
 @dataclass
@@ -33,6 +38,7 @@ class AskResult:
     web_used: bool = False
     web_sources: list[str] = field(default_factory=list)
     messages: list[dict[str, str]] = field(default_factory=list)
+    archive_used: int = 0  # pieces of the design archive among the RAG ones
 
 
 class Assistant:
@@ -58,6 +64,8 @@ class Assistant:
         self.history: list[dict[str, str]] = []
         # False after «Забыть проект»: answers do not look into the project index
         self.use_project = True
+        # the design archive (rag/archive.ArchiveIndex) searched together with the project; None — off
+        self.archive = None
         self._last_rag_results: list = []
         self._last_web_contexts: list = []
 
@@ -120,6 +128,9 @@ class Assistant:
         # ── RAG ──
         if strategy in (Strategy.RAG, Strategy.RAG_THEN_WEB) and self.rag_service and self.use_project:
             self._do_rag(query, result)
+        if self.archive is not None and (strategy in (Strategy.RAG, Strategy.RAG_THEN_WEB)
+                                         or ARCHIVE_HINT_RE.search(query)):
+            self._do_archive(query, result)
 
         # ── WEB (always, or fallback from weak RAG) ──
         if strategy == Strategy.WEB and self.web_search:
@@ -156,6 +167,38 @@ class Assistant:
             ]
         self._last_rag_results = results
 
+    def _do_archive(self, query: str, result: AskResult) -> None:
+        """Pieces of the design archive after those of the project; cited as «Архив КД: …»."""
+        try:
+            hits = self.archive.search(query, top_k=ARCHIVE_HITS)
+        except Exception:
+            logger.warning("Archive search failed", exc_info=True)
+            hits = []
+        if not hits:
+            return
+        from rag.service import citation_label
+
+        project = list(self._last_rag_results) if result.rag_used else []
+        self._last_rag_results = project + list(hits)
+        result.rag_used = True
+        result.archive_used = len(hits)
+        result.rag_sources += [f"{h.file_path}::{h.name or h.node_type}" for h in hits]
+        result.citations += [{"n": len(project) + i, "file": h.file_path, "label": citation_label(h)}
+                             for i, h in enumerate(hits, 1)]
+
+    def archive_note(self) -> str:
+        """What the model is told about the connected archive (so it knows it is there)."""
+        if self.archive is None:
+            return ""
+        try:
+            count = self.archive.file_count
+        except Exception:
+            return ""
+        return (f"К Fluxion подключён архив КД предприятия: {count} файлов (чертежи и модели КОМПАС-3D, PDF, "
+                "документы). Фрагменты из него в контексте помечены «Архив КД». Если спрашивают про чертёж, "
+                "деталь или изделие, а в контексте их нет — скажи, что в архиве не нашлось, и предложи спросить "
+                "точнее: «/архив» и обозначение.")
+
     def _do_web(self, query: str, result: AskResult) -> None:
         try:
             contexts = self.web_search.run(query)
@@ -184,8 +227,11 @@ class Assistant:
 
         if result.rag_used and self._last_rag_results:
             from rag.service import RAGService
-            ctx_text = RAGService.build_context(self._last_rag_results)
+            ctx_text = RAGService.build_context(self._last_rag_results, max_chunks=max(5, len(self._last_rag_results)))
             rag_snippets = [("rag", ctx_text)]
+        note = self.archive_note()
+        if note:
+            style = f"{style}\n\n{note}" if style else note
 
         if result.web_used and self._last_web_contexts:
             from web.pipeline import WebSearch as WS

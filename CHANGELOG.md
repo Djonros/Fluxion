@@ -5,6 +5,15 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- «Повторить», «Повторить агентом», «Изменить» under the last message of the user and «Ответить заново» under the answer: the last question once more with the modes that are on now, or through the agent, in place of the old question and answer (in the chat and in the history of the model). A request that looks like changing files while the agent is off brings a banner «Повторить агентом». Up in an empty input gives the last message back.
+- The design archive in the chat: with «+» → «Архив КД» on (Pro, on by default once indexed) the chat searches the project and the archive together — up to 5 pieces of the project and 3 of the archive, cited «Архив КД: …» and opened on a click, «архив КД: N» over the answer; a question with a designation (792720.2801214) or about a drawing, specification, КД goes to the archive whatever the router chose. The model is told the archive is connected and how many files it holds. The agent gets the tool `search_archive`.
+
+### Changed
+- «Проверять правки тестами» (chat settings): «Авто» by default — the agent runs the tests only in a project with tests of its own, elsewhere the syntax is checked quietly with no line in the answer; «Всегда»; «Никогда». Before the first change the failing tests are noted and only new failures must be fixed; the same failures twice in a row stop the checks and the agent says what does not pass.
+
 ## [0.28.0] — 2026-11-04
 
 ### Added

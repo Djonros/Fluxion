@@ -31,6 +31,7 @@ class ChatInput(QPlainTextEdit):
     returnPressed = Signal()        # Enter: send
     agentRequested = Signal()       # Ctrl+Enter: run this message through the agent
     filesAttached = Signal(list)    # paths of files dropped or pasted, of a pasted picture
+    recallRequested = Signal()      # Up in an empty field: the last message back
 
     MIN_LINES = 1
     MAX_LINES = 8
@@ -70,6 +71,9 @@ class ChatInput(QPlainTextEdit):
                 self.agentRequested.emit()
                 return
             self.returnPressed.emit()
+            return
+        if event.key() == Qt.Key_Up and not self.toPlainText() and not event.modifiers():
+            self.recallRequested.emit()
             return
         super().keyPressEvent(event)
 

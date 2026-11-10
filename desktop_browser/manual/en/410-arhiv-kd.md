@@ -6,7 +6,7 @@ Answers from the archive of design documentation with links to the files: «what
 
 ## How to start
 
-Menu **Design → «Design archive…»**; questions — in the chat: `/архив question`.
+Menu **Design → «Design archive…»**. Once the archive is indexed, the chat searches it together with the project by itself: the source in the answer is marked «Архив КД: …», the file opens on a click. It is switched on and off with **+** at the input field → «Design archive». A question with a designation (e.g. 792720.2801214) or the words «drawing», «specification» always goes to the archive. The agent searches the archive too (the «search the design archive» tool). A question to the archive only — `/архив question`.
 
 ## Step by step
 
