@@ -6,7 +6,8 @@
      "notify_tray": true, "notify_bots": false,
      "connectors": {"folders": {"enabled": true, "cloud": false, "settings": {...}}},
      "rules": [{"connector": "folders", "kind": "file.created", "mask": "*.a3d",
-                "action": "notify"}]}
+                "action": "notify"}],
+     "apps": [...]}                    # programs as tools of the assistant: apps.py
 
 ``cloud`` — whether the events of a connector may be given to a cloud model; off by default.
 """
@@ -17,6 +18,8 @@ import os
 import threading
 import time
 from pathlib import Path
+
+from .apps import normalize_app
 
 RETENTION_DEFAULT = 30
 RETENTION_LIMITS = (1, 365)
@@ -65,6 +68,7 @@ def normalize(data) -> dict:
         "notify_bots": bool(data.get("notify_bots")),
         "connectors": {str(k): _connector(v) for k, v in connectors.items()},
         "rules": [r for r in (_rule(x) for x in data.get("rules") or []) if r],
+        "apps": [a for a in (normalize_app(x) for x in data.get("apps") or []) if a],
     }
 
 

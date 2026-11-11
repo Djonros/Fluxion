@@ -12,11 +12,12 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton,
                                QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
+from assistant import apps as app_kinds
 from assistant import config
 from assistant.activity import DEFAULT_EXCLUDE as ACTIVITY_EXCLUDE
 from assistant.folders import DEFAULT_EXCLUDE as FOLDER_EXCLUDE
@@ -32,6 +33,48 @@ PAGE = "lichnyi-pomoshchnik"
 
 class AssistantHost(QObject):
     notice = Signal(str, bool)  # text, to the bots too
+
+
+class HelperWorker(QThread):
+    """«/помощник …»: the agent of the assistant calls the tools of the apps in a background thread.
+    A tool that needs the user's «Да» asks the window (``ask``, a blocking queued signal)."""
+
+    step = Signal(str)
+    done = Signal(str)
+    failed = Signal(str)
+    ask = Signal(str, str)  # what the tool is, its arguments → the window sets ``answer``
+
+    def __init__(self, hub, backend, task: str, context: str = "", cloud: bool = False, parent=None):
+        super().__init__(parent)
+        self.hub, self.backend, self.task, self.context, self.cloud = hub, backend, task, context, cloud
+        self.answer = False
+        self.agent = None
+
+    def confirm(self, tool, args: dict) -> bool:
+        import json
+
+        self.answer = False
+        self.ask.emit(f"{tool.app_name}: {tool.name}", json.dumps(args, ensure_ascii=False, indent=1)[:1500])
+        return self.answer
+
+    def stop(self) -> None:
+        if self.agent is not None:
+            self.agent.stopped = True
+
+    def run(self) -> None:
+        from assistant.agent import HelperAgent
+
+        try:
+            tools = self.hub.agent_tools(self.cloud)
+            self.agent = HelperAgent(self.backend, tools, self.confirm, self.step.emit)
+            text = self.agent.run(self.task, self.context)
+        except Exception as exc:
+            self.failed.emit(tr("Помощник не справился: {exc}", exc=exc))
+            return
+        errors = self.hub.app_errors()
+        if errors:
+            text += "\n\n" + tr("Не подключились: {apps}", apps="; ".join(f"{k} — {v}" for k, v in errors.items()))
+        self.done.emit(text)
 
 
 def connector_texts() -> dict[str, dict]:
@@ -64,6 +107,194 @@ def kind_titles() -> dict[str, str]:
 
 def action_titles() -> dict[str, str]:
     return {"notify": tr("уведомление на компьютере"), "bots": tr("уведомление и сообщение в боты")}
+
+
+def policy_titles() -> dict[str, str]:
+    return {"auto": tr("сам"), "ask": tr("спросить меня"), "off": tr("выключен")}
+
+
+def kind_names() -> dict[str, str]:
+    return {"mcp": tr("MCP-сервер"), "cli": tr("Командная строка"), "http": tr("Веб-API")}
+
+
+def preset_names() -> list[str]:
+    return [tr("Файлы в папке"), tr("Git-репозиторий"), tr("База SQLite"), tr("Память (заметки)"),
+            tr("Свой MCP-сервер"), tr("Программа с командной строкой"), tr("Веб-API")]
+
+
+class AppDialog(QDialog):
+    """«Добавить приложение»: an MCP server, a program with a command line or a web API, its tools."""
+
+    def __init__(self, parent=None, app: dict | None = None, taken: set[str] = frozenset()):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Приложение для помощника"))
+        self.resize(700, 600)
+        self.app = dict(app) if app else None
+        self.taken = set(taken)
+        box = QVBoxLayout(self)
+        form = QFormLayout()
+        self.preset = QComboBox()
+        self.preset.addItem(tr("— выбрать готовое —"), -1)
+        for i, name in enumerate(preset_names()):
+            self.preset.addItem(name, i)
+        self.preset.activated.connect(self._use_preset)
+        if app is None:
+            form.addRow(tr("Готовое:"), self.preset)
+        self.name = QLineEdit()
+        form.addRow(tr("Название:"), self.name)
+        self.kind = QComboBox()
+        for key, title in kind_names().items():
+            self.kind.addItem(title, key)
+        self.kind.currentIndexChanged.connect(self._kind_changed)
+        form.addRow(tr("Тип:"), self.kind)
+        self.command = QLineEdit()
+        form.addRow(tr("Команда:"), self.command)
+        self.args = QLineEdit()
+        self.args.setPlaceholderText(tr("через пробел; путь с пробелами — в кавычках"))
+        form.addRow(tr("Аргументы:"), self.args)
+        self.url = QLineEdit()
+        self.url.setPlaceholderText("https://example.local/api/find?q={input}")
+        form.addRow(tr("Адрес:"), self.url)
+        self.method = QComboBox()
+        self.method.addItems(["GET", "POST"])
+        form.addRow(tr("Метод:"), self.method)
+        self.header = QLineEdit()
+        self.header.setPlaceholderText("Authorization")
+        form.addRow(tr("Заголовок ключа:"), self.header)
+        self.key = QLineEdit()
+        self.key.setEchoMode(QLineEdit.Password)
+        self.key.setPlaceholderText(tr("хранится в диспетчере учётных данных Windows"))
+        form.addRow(tr("Ключ:"), self.key)
+        self.description = QLineEdit()
+        self.description.setPlaceholderText(tr("что умеет: помощник читает это, чтобы понять, когда звать"))
+        form.addRow(tr("Описание:"), self.description)
+        box.addLayout(form)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.setObjectName("hint")
+        box.addWidget(self.hint)
+        self.cloud = QCheckBox(tr("Облачной модели можно пользоваться этим приложением"))
+        box.addWidget(self.cloud)
+        row = QHBoxLayout()
+        check = QPushButton(tr("Проверить"))
+        check.clicked.connect(self.check)
+        row.addWidget(check)
+        self.check_label = QLabel()
+        self.check_label.setWordWrap(True)
+        row.addWidget(self.check_label, 1)
+        box.addLayout(row)
+        self.tools = QTableWidget(0, 3)
+        self.tools.setHorizontalHeaderLabels([tr("Инструмент"), tr("Что делает"), tr("Запускать")])
+        self.tools.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        box.addWidget(self.tools, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        box.addWidget(buttons)
+        self._policies = dict((app or {}).get("tools") or {})
+        if app:
+            self.name.setText(app["name"])
+            self.kind.setCurrentIndex(max(self.kind.findData(app["kind"]), 0))
+            self.command.setText(app["command"])
+            self.args.setText(" ".join(f'"{a}"' if " " in a else a for a in app["args"]))
+            self.url.setText(app["url"])
+            self.method.setCurrentText(app["method"])
+            self.header.setText(app["header"])
+            self.description.setText(app["description"])
+            self.cloud.setChecked(app["cloud"])
+        self._kind_changed()
+
+    def _use_preset(self) -> None:
+        index = self.preset.currentData()
+        if index is None or index < 0:
+            return
+        preset = app_kinds.PRESETS[index]
+        args = list(preset.get("args") or [])
+        if "{folder}" in args:
+            folder = QFileDialog.getExistingDirectory(self, tr("Папка для приложения"))
+            if not folder:
+                return
+            args = [folder if a == "{folder}" else a for a in args]
+        if "{file}" in args:
+            file, _ = QFileDialog.getOpenFileName(self, tr("Файл базы"))
+            if not file:
+                return
+            args = [file if a == "{file}" else a for a in args]
+        self.name.setText(preset_names()[index])
+        self.kind.setCurrentIndex(max(self.kind.findData(preset["kind"]), 0))
+        self.command.setText(preset.get("command", ""))
+        self.args.setText(" ".join(f'"{a}"' if " " in a else a for a in args))
+        self.url.setText(preset.get("url", ""))
+
+    def _kind_changed(self) -> None:
+        kind = self.kind.currentData()
+        for widget, kinds in ((self.args, ("mcp",)), (self.url, ("http",)), (self.method, ("http",)),
+                              (self.header, ("http",)), (self.key, ("http",)),
+                              (self.command, ("mcp", "cli")), (self.description, ("cli", "http"))):
+            widget.setEnabled(kind in kinds)
+        self.hint.setText({
+            "mcp": tr("MCP-сервер — программа, которая отдаёт свои инструменты помощнику. Готовые серверы есть для "
+                      "файлов, Git, баз данных, 1С, Битрикс24, Jira и многих других; часто их запускают через npx "
+                      "(нужен Node.js) или uvx (нужен uv)."),
+            "cli": tr("Команда целиком, {input} заменится тем, что передаст помощник. Например: "
+                      "\"C:\\Программы\\поиск.exe\" --текст {input}"),
+            "http": tr("Адрес с {input}: для GET он подставится в адрес, для POST уйдёт телом {\"input\": …}."),
+        }[kind])
+
+    def value(self) -> dict:
+        import shlex
+
+        try:
+            args = [a[1:-1] if len(a) >= 2 and a[0] == a[-1] == '"' else a
+                    for a in shlex.split(self.args.text(), posix=False)]
+        except ValueError:
+            args = self.args.text().split()
+        app_id = (self.app or {}).get("id") or app_kinds.slug(self.name.text(), self.taken)
+        return app_kinds.normalize_app({
+            "id": app_id, "name": self.name.text().strip(), "kind": self.kind.currentData(),
+            "enabled": (self.app or {}).get("enabled", True), "cloud": self.cloud.isChecked(),
+            "command": self.command.text().strip(), "args": args, "env": (self.app or {}).get("env") or {},
+            "url": self.url.text().strip(), "method": self.method.currentText(), "header": self.header.text().strip(),
+            "description": self.description.text().strip(), "tools": self.policy_values()})
+
+    def policy_values(self) -> dict:
+        out = dict(self._policies)
+        for r in range(self.tools.rowCount()):
+            out[self.tools.item(r, 0).text()] = self.tools.cellWidget(r, 2).currentData()
+        return out
+
+    def check(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        app = self.value()
+        self.save_key(app)
+        self.check_label.setText(tr("Проверяю… первый запуск через npx может занять минуту."))
+        QApplication.processEvents()
+        tools, error = app_kinds.check(app)
+        if error:
+            self.check_label.setText(tr("Не работает: {error}", error=error))
+            return
+        self.check_label.setText(tr("Работает. Инструментов: {count}", count=len(tools)))
+        self.show_tools(tools)
+
+    def show_tools(self, tools) -> None:
+        self.tools.setRowCount(0)
+        for tool in tools:
+            r = self.tools.rowCount()
+            self.tools.insertRow(r)
+            self.tools.setItem(r, 0, QTableWidgetItem(tool.name))
+            self.tools.setItem(r, 1, QTableWidgetItem(tool.description.splitlines()[0] if tool.description else ""))
+            combo = QComboBox()
+            for key, title in policy_titles().items():
+                combo.addItem(title, key)
+            combo.setCurrentIndex(max(combo.findData(self._policies.get(tool.name, tool.policy)), 0))
+            self.tools.setCellWidget(r, 2, combo)
+
+    def save_key(self, app: dict) -> None:
+        if app["kind"] == "http" and self.key.text():
+            from assistant.secrets import set_secret
+
+            set_secret(app_kinds.secret_name(app), self.key.text())
 
 
 class ConnectorBox(QGroupBox):
@@ -162,6 +393,7 @@ class AssistantDialog(QDialog):
         self.tabs = QTabWidget()
         box.addWidget(self.tabs, 1)
         self.tabs.addTab(self._sources_tab(), tr("Источники"))
+        self.tabs.addTab(self._apps_tab(), tr("Приложения"))
         self.tabs.addTab(self._rules_tab(), tr("Уведомления"))
         self.tabs.addTab(self._journal_tab(), tr("Что знает Fluxion"))
 
@@ -198,6 +430,87 @@ class AssistantDialog(QDialog):
         box.addWidget(hint)
         box.addStretch(1)
         return page
+
+    # ── Приложения ──
+    def _apps_tab(self) -> QWidget:
+        page = QWidget()
+        box = QVBoxLayout(page)
+        intro = QLabel(tr("Любая программа становится инструментом помощника: MCP-сервер, программа с командной "
+                          "строкой или веб-API. В чате: /помощник и задача словами. Действие, которое может что-то "
+                          "изменить, выполняется только после вашего «Да»."))
+        intro.setWordWrap(True)
+        box.addWidget(intro)
+        self.apps_table = QTableWidget(0, 3)
+        self.apps_table.setHorizontalHeaderLabels([tr("Приложение"), tr("Тип"), tr("Включено")])
+        self.apps_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.apps_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.apps_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.apps_table.doubleClicked.connect(lambda _i: self._edit_app())
+        box.addWidget(self.apps_table, 1)
+        self.app_list = [dict(a) for a in self.data["apps"]]
+        self._fill_apps()
+        row = QHBoxLayout()
+        for title, slot in ((tr("Добавить приложение…"), self._add_app), (tr("Изменить…"), self._edit_app),
+                            (tr("Включить / выключить"), self._toggle_app), (tr("Убрать"), self._drop_app)):
+            button = QPushButton(title)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+        row.addStretch(1)
+        box.addLayout(row)
+        errors = self.hub.app_errors() if self.hub is not None else {}
+        if errors:
+            label = QLabel(tr("Не подключились: {apps}", apps="; ".join(f"{k} — {v}" for k, v in errors.items())))
+            label.setWordWrap(True)
+            box.addWidget(label)
+        return page
+
+    def _fill_apps(self) -> None:
+        self.apps_table.setRowCount(0)
+        names = kind_names()
+        for app in self.app_list:
+            r = self.apps_table.rowCount()
+            self.apps_table.insertRow(r)
+            for c, text in enumerate((app["name"], names.get(app["kind"], app["kind"]),
+                                      tr("да") if app["enabled"] else tr("нет"))):
+                self.apps_table.setItem(r, c, QTableWidgetItem(text))
+
+    def _add_app(self) -> None:
+        dialog = AppDialog(self, taken={a["id"] for a in self.app_list})
+        if dialog.exec() == QDialog.Accepted:
+            app = dialog.value()
+            dialog.save_key(app)
+            if app is not None:
+                self.app_list.append(app)
+                self._fill_apps()
+        dialog.deleteLater()
+
+    def _edit_app(self) -> None:
+        r = self.apps_table.currentRow()
+        if not 0 <= r < len(self.app_list):
+            return
+        dialog = AppDialog(self, self.app_list[r])
+        if dialog.exec() == QDialog.Accepted:
+            app = dialog.value()
+            dialog.save_key(app)
+            if app is not None:
+                self.app_list[r] = app
+                self._fill_apps()
+        dialog.deleteLater()
+
+    def _toggle_app(self) -> None:
+        r = self.apps_table.currentRow()
+        if 0 <= r < len(self.app_list):
+            self.app_list[r]["enabled"] = not self.app_list[r]["enabled"]
+            self._fill_apps()
+            self.apps_table.selectRow(r)
+
+    def _drop_app(self) -> None:
+        r = self.apps_table.currentRow()
+        if 0 <= r < len(self.app_list):
+            from assistant.secrets import delete_secret
+
+            delete_secret(app_kinds.secret_name(self.app_list.pop(r)))
+            self._fill_apps()
 
     # ── Уведомления ──
     def _rules_tab(self) -> QWidget:
@@ -367,6 +680,7 @@ class AssistantDialog(QDialog):
         for item in self.boxes:
             data["connectors"][item.cid] = item.value()
         data["rules"] = self.rule_values()
+        data["apps"] = self.app_list
         data["notify_tray"] = self.notify_tray.isChecked()
         data["retention_days"] = self.retention.value()
         return data

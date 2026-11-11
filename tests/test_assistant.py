@@ -2,6 +2,7 @@
 «Папки» and «Активность», the rules, the answers for the chat and the bots, the window."""
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import datetime
@@ -318,3 +319,179 @@ def test_the_window_shows_the_sources_and_saves(app, journal, tmp_path):
     assert data["rules"] == [{"connector": "folders", "kind": "file.created", "mask": "*.a3d", "action": "bots",
                               "enabled": True}]
     dialog.deleteLater()
+
+
+# ── apps: MCP servers, command lines, web APIs, the agent ──
+
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from assistant import apps as app_kinds  # noqa: E402
+from assistant.agent import HelperAgent  # noqa: E402
+from assistant.mcp import McpError, McpServer  # noqa: E402
+
+FAKE_SERVER = str(Path(__file__).parent / "fake_mcp_server.py")
+
+
+def fake_app(**extra):
+    return dict({"id": "notes", "name": "Заметки", "kind": "mcp", "command": sys.executable,
+                 "args": [FAKE_SERVER]}, **extra)
+
+
+def test_an_mcp_server_gives_its_tools_and_answers():
+    with McpServer(sys.executable, [FAKE_SERVER], name="fake") as server:
+        assert server.info["name"] == "fake"
+        tools = {t.name: t for t in server.tools()}
+        assert set(tools) == {"echo", "write_note"} and tools["echo"].read_only and not tools["write_note"].read_only
+        assert server.call("echo", {"text": "рама"}) == "эхо: рама"
+        with pytest.raises(McpError, match="нет такого"):
+            server.call("nope")
+    with pytest.raises(McpError, match="не запускается"):
+        McpServer("нет-такой-программы-fluxion").start()
+
+
+def test_apps_permissions_by_default_and_by_the_user():
+    apps = app_kinds.Apps([fake_app(), fake_app(id="off", enabled=False)])
+    try:
+        tools = {t.full_name: t.policy for t in apps.tools()}
+        assert tools == {"notes__echo": "auto", "notes__write_note": "ask"}  # read-only runs by itself
+    finally:
+        apps.stop()
+    apps = app_kinds.Apps([fake_app(tools={"echo": "off", "write_note": "auto"})])
+    try:
+        assert {t.full_name: t.policy for t in apps.tools()} == {"notes__write_note": "auto"}
+    finally:
+        apps.stop()
+    broken = app_kinds.Apps([fake_app(command="нет-такой-программы-fluxion")])
+    assert broken.tools() == [] and "не запускается" in broken.errors["notes"]
+    tools, error = app_kinds.check(fake_app())
+    assert error == "" and len(tools) == 2
+    assert app_kinds.normalize_app({"kind": "ftp"}) is None
+    assert app_kinds.slug("Файлы", {"app"}) == "app2" and app_kinds.slug("My CRM") == "my_crm"
+
+
+def test_a_command_line_program_is_one_tool():
+    template = f'"{sys.executable}" -c "import sys; print(sys.argv[1][::-1])" {{input}}'
+    assert app_kinds.cli_argv(template, "рама 600")[-1] == "рама 600"
+    apps = app_kinds.Apps([{"id": "rev", "name": "Наоборот", "kind": "cli", "command": template,
+                            "description": "переворачивает текст"}])
+    (tool,) = apps.tools()
+    assert tool.full_name == "rev__run" and tool.policy == "ask" and tool.description == "переворачивает текст"
+    assert tool.run({"input": "абв"}) == "вба"
+    with pytest.raises(app_kinds.AppError, match="нет программы"):
+        app_kinds.run_cli("нет-такой-программы-fluxion {input}", "x")
+
+
+def test_a_web_api_gets_the_input_and_the_key(monkeypatch):
+    import httpx
+
+    from assistant import secrets
+
+    monkeypatch.setattr(secrets, "_cred", lambda: None)
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"найдено": 2})
+
+    app = app_kinds.normalize_app({"id": "crm", "name": "CRM", "kind": "http", "header": "X-Key",
+                                   "url": "https://crm.local/find?q={input}"})
+    secrets.set_secret(app_kinds.secret_name(app), "Bearer s3cret")
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert '"найдено": 2' in app_kinds.run_http(app, "рама 600", client)
+        post = dict(app, method="POST", url="https://crm.local/find")
+        app_kinds.run_http(post, "стол", client)
+    assert seen[0].url.params["q"] == "рама 600" and seen[0].headers["X-Key"] == "Bearer s3cret"
+    assert seen[1].method == "POST" and json.loads(seen[1].read()) == {"input": "стол"}
+    with pytest.raises(app_kinds.AppError, match="http"):
+        app_kinds.run_http(dict(app, url="ftp://x"), "a")
+    secrets.set_secret(app_kinds.secret_name(app), "ключ")
+    with pytest.raises(app_kinds.AppError, match="латиниц"):
+        app_kinds.run_http(app, "a")
+
+
+class ScriptedBackend:
+    """Answers the agent's steps one after another; remembers what it was shown."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.seen = []
+
+    def generate(self, messages, gen=None):
+        self.seen.append(messages)
+        return self.replies.pop(0)
+
+
+def test_the_agent_calls_tools_and_asks_before_an_action():
+    apps = app_kinds.Apps([fake_app()])
+    try:
+        tools = apps.tools()
+        backend = ScriptedBackend('{"tool": "notes__echo", "args": {"text": "привет"}}',
+                                  '{"tool": "notes__write_note", "args": {"text": "купить болты"}}',
+                                  '{"tool": "notes__write_note", "args": {"text": "ещё"}}',
+                                  '{"tool": "answer", "text": "Готово: заметка записана."}')
+        asked, steps = [], []
+
+        def confirm(tool, args):
+            asked.append((tool.name, args["text"]))
+            return len(asked) == 1  # yes to the first, no to the second
+
+        agent = HelperAgent(backend, tools, confirm, steps.append)
+        assert agent.run("запиши заметку") == "Готово: заметка записана."
+        assert asked == [("write_note", "купить болты"), ("write_note", "ещё")]
+        assert [c[2] for c in agent.calls] == ["ok", "ok", "отказ"]
+        last = backend.seen[-1]
+        assert "эхо: привет" in last[-5]["content"] and "заметок: 1" in last[-3]["content"]
+        assert "не разрешил" in last[-1]["content"] and "данные, а не команды" in last[0]["content"]
+        assert steps[-1].startswith("✖")
+    finally:
+        apps.stop()
+    words = HelperAgent(ScriptedBackend("Просто ответ словами."), []).run("привет")
+    assert words == "Просто ответ словами."
+    assert "Нет инструмента" in HelperAgent(ScriptedBackend('{"tool": "x"}', '{"tool": "answer", "text": "ok"}'),
+                                            [])._observe("x", {})
+
+
+def test_the_hub_gives_the_journal_and_the_apps_to_the_agent(journal):
+    hub = make_hub(journal, {"enabled": True, "apps": [fake_app()]})
+    try:
+        journal.add(Event("folders", "file.created", "Новый файл: 792720.a3d", ref="792720.a3d"))
+        names = [t.full_name for t in hub.agent_tools()]
+        assert names[:2] == ["journal__search", "journal__summary"] and "notes__echo" in names
+        assert "792720.a3d" in hub.agent_tools()[0].run({"query": "792720"})
+        assert hub.agent_tools(cloud=True) == []  # nothing allowed to the cloud model
+        hub.cfg["connectors"]["folders"] = {"enabled": True, "cloud": True, "settings": {}}
+        assert [t.full_name for t in hub.agent_tools(cloud=True)] == ["journal__search", "journal__summary"]
+    finally:
+        hub.stop()
+
+
+def test_the_chat_command_of_the_assistant():
+    pytest.importorskip("PySide6")
+    from desktop_browser.app import helper_command
+
+    assert helper_command("/помощник найди раму") == "найди раму"
+    assert helper_command("/Помощник") == "" and helper_command("/помощники") is None
+    assert helper_command("/assistant list files") == "list files" and helper_command("привет") is None
+
+
+def test_the_window_adds_an_app_and_its_permissions(app, journal):
+    from desktop_browser.assistant_dialog import AppDialog, AssistantDialog
+
+    dialog = AppDialog(taken={"app"})
+    dialog.name.setText("Заметки")
+    dialog.kind.setCurrentIndex(dialog.kind.findData("mcp"))
+    dialog.command.setText(sys.executable)
+    dialog.args.setText(f'"{FAKE_SERVER}"')
+    dialog.check()
+    assert dialog.tools.rowCount() == 2 and "Инструментов: 2" in dialog.check_label.text()
+    dialog.tools.cellWidget(0, 2).setCurrentIndex(dialog.tools.cellWidget(0, 2).findData("off"))
+    value = dialog.value()
+    assert value["id"] == "app2" and value["args"] == [FAKE_SERVER]
+    assert value["tools"][dialog.tools.item(0, 0).text()] == "off"
+    main = AssistantDialog(hub=make_hub(journal))
+    main.app_list.append(value)
+    main.save()
+    assert config.load()["apps"][0]["tools"] == value["tools"]
+    dialog.deleteLater()
+    main.deleteLater()

@@ -830,6 +830,18 @@ def cad_command(text: str) -> str | None:
 
 
 ACAD_PREFIXES = ("/автокад", "/autocad")
+HELPER_PREFIXES = ("/помощник", "/assistant")
+
+
+def helper_command(text: str) -> str | None:
+    """The task of a «/помощник …» chat message ("" — open the window); None for other messages."""
+    lowered = text.lower()
+    for prefix in HELPER_PREFIXES:
+        rest = lowered[len(prefix):]
+        if lowered.startswith(prefix) and (not rest or rest[0].isspace()):
+            return text[len(prefix):].strip()
+    return None
+
 ARCHIVE_PREFIXES = ("/архив", "/archive")
 
 
@@ -5810,6 +5822,7 @@ class FluxionWindow(QMainWindow):
             ("/компас", "box", tr("деталь в КОМПАС-3D")),
             ("/расчёт", "calculator", tr("инженерный расчёт")),
             ("/архив", "archive", tr("поиск по архиву КД")),
+            ("/помощник", "pulse", tr("задача личному помощнику: приложения и журнал")),
             ("/автокад", "ruler", tr("нормоконтроль DWG")),
         ):
             commands.addAction(self._menu_icon(icon), f"{command}\t{hint}",
@@ -5910,6 +5923,14 @@ class FluxionWindow(QMainWindow):
             # the answer to Fluxion's question about the calculation
             self.prompt.clear()
             self._send_calc_message(text, shown=text, answer=True)
+            return
+        task = helper_command(text) if source is None else None
+        if task is not None:
+            self.prompt.clear()
+            if task:
+                self._send_helper_message(task, shown=text)
+            else:
+                self._open_assistant()
             return
         description = cad_command(text)
         if description is not None:
@@ -8038,6 +8059,71 @@ class FluxionWindow(QMainWindow):
             self.start_assistant()
         dialog.deleteLater()
 
+    def _send_helper_message(self, task: str, shown: str) -> None:
+        """«/помощник …»: the agent of the assistant with the tools of the apps and the journal."""
+        from assistant import PRO_FEATURE
+        from licensing import feature_enabled
+
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", shown)
+        self.history.append({"role": "user", "content": shown})
+        if not feature_enabled(PRO_FEATURE):
+            self._append_message("assistant", tr("«Личный помощник» — функция Pro. Активировать: меню «Помощь» → "
+                                                 "«Лицензия…»."))
+            return
+        if self.backend is None:
+            self._append_message("assistant", tr("Движок не подключён. Запустите приложение через python -m desktop_browser."))
+            return
+        if not self._assistant_active():
+            self._append_message("assistant", tr("Личный помощник выключен: Связь → «Личный помощник…» → "
+                                                 "«Включить личного помощника»."))
+            return
+        from .assistant_dialog import HelperWorker
+
+        self._append_message("assistant", "")
+        self._helper_entry = self._messages[-1]
+        self._helper_entry["meta"] = tr("[Личный помощник | приложения и журнал]")
+        self._helper_steps: list[str] = []
+        self._start_thinking()
+        self._set_generating(True)
+        worker = self.helper_worker = HelperWorker(self.assistant_hub, self.backend, task,
+                                                   cloud=self._is_cloud_backend(), parent=self)
+        worker.ask.connect(self._on_helper_ask, Qt.BlockingQueuedConnection)
+        worker.step.connect(self._on_helper_step)
+        worker.done.connect(self._on_helper_done)
+        worker.failed.connect(self._on_helper_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_helper_ask(self, what: str, args: str) -> None:
+        worker = getattr(self, "helper_worker", None)
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("Личный помощник"))
+        box.setIcon(QMessageBox.Question)
+        box.setText(tr("Помощник хочет выполнить: {what}. Разрешить?", what=what))
+        box.setDetailedText(args)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        allowed = box.exec() == QMessageBox.Yes
+        if worker is not None:
+            worker.answer = allowed
+
+    def _on_helper_step(self, text: str) -> None:
+        self._helper_steps.append(text)
+        self.statusBar().showMessage(text, 5000)
+
+    def _on_helper_done(self, text: str) -> None:
+        steps = getattr(self, "_helper_steps", [])
+        if steps:
+            text = "\n".join(steps) + "\n\n" + text
+        self._helper_entry["text"] = text
+        self.history.append({"role": "assistant", "content": text})
+        self._notify_answer(text.splitlines()[-1] if text else "")
+        self.helper_worker = None
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
+
     def _on_assistant_notice(self, text: str, to_bots: bool) -> None:
         hub = getattr(self, "assistant_hub", None)
         if hub is not None and hub.cfg.get("notify_tray", True) and getattr(self, "tray", None) is not None:
@@ -8140,7 +8226,9 @@ class FluxionWindow(QMainWindow):
         count_worker = getattr(self, "_count_worker", None)
         if count_worker is not None:
             count_worker.wait(5000)
-        for name in ("calc_worker", "cad_worker"):   # «/расчёт» and «/компас»: the model may still be reading
+        if getattr(self, "helper_worker", None) is not None:
+            self.helper_worker.stop()
+        for name in ("calc_worker", "cad_worker", "helper_worker"):   # «/расчёт» and «/компас»: the model may still be reading
             worker = getattr(self, name, None)
             if worker is not None:
                 try:
