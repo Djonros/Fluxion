@@ -5,6 +5,17 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] — 2026-11-11
+
+### Added
+- «Личный помощник» (Pro, «Связь» → «Личный помощник…»): Fluxion follows chosen sources on this computer and keeps a local journal (SQLite with full-text search, `%LOCALAPPDATA%\Fluxion\assistant\journal.db`, kept 30 days by default). Everything is off until turned on, a source is shown to a cloud model only when allowed, a pause button stops all sources.
+- Folders: new, changed, renamed and removed files of the chosen folders (watchdog, a polling fallback), with a mask and exclusions.
+- Activity: which program and document is in front and for how long (KOMPAS, AutoCAD, Excel, browsers by name); idle time is not counted, private browser windows are skipped, no keystrokes or screenshots.
+- Mail: any box over IMAP (read-only, the settings found by the address: known services, Mozilla ISPDB, a guess) and Outlook on this computer; new letters go to the journal, the agent can search and read letters and write a draft — never sends. Passwords are kept in the Windows Credential Manager.
+- Apps: any program connected as an MCP server (stdio), a command line or a web API; presets for files, git, SQLite and memory; each tool is «сам», «спросить» or «выключен». `/помощник <задача>` runs an agent over the journal and the apps, an action that changes something asks «Да/Нет» first.
+- The chat answers questions about the day from the journal («что я делал вчера», «какие письма пришли»); the bots get `/сводка`.
+- Rules: an event by source, kind and mask shows a notice in the tray or goes to the bots. While the assistant works the window closes to the tray; «Выход» in the tray menu quits.
+
 ## [0.29.1] — 2026-11-11
 
 ### Added
