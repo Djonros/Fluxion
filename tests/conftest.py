@@ -112,6 +112,19 @@ def _spent_trial_by_default(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_assistant(tmp_path, monkeypatch):
+    """«Личный помощник» keeps its settings in %APPDATA%\\Fluxion\\assistant.json and its
+    journal in the data folder: never the developer's real ones."""
+    try:
+        import assistant.config as assistant_config
+        import assistant.journal as assistant_journal
+    except Exception:
+        return
+    monkeypatch.setattr(assistant_config, "path", lambda: tmp_path / "assistant.json")
+    monkeypatch.setattr(assistant_journal, "default_path", lambda: tmp_path / "assistant" / "journal.db")
+
+
+@pytest.fixture(autouse=True)
 def _close_app_windows():
     """Windows of the desktop app start background checks (engine status,
     health, model list).  A window left open by a test kept such a thread

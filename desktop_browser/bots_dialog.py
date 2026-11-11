@@ -58,6 +58,10 @@ class BotHost(QObject):
                 return "Архив КД ещё не проиндексирован: в программе Конструктор → «Архив КД…»."
         try:
             extra = {"source": source} if source is not None else {}
+            block = getattr(self.window, "_assistant_block", None)  # «Личный помощник»: «что я делал вчера»
+            journal = block(text) if block is not None else ""
+            if journal:
+                extra["style"] = journal
             _result, stream = assistant.ask_stream(query=text, history=history, **extra)
             return "".join(stream).strip()
         finally:
@@ -66,6 +70,11 @@ class BotHost(QObject):
 
     def backend(self):
         return self.window.backend
+
+    def assistant_report(self, words: str) -> str:
+        """«/сводка»: the day from the journal of «Личный помощник» ("" while it is off)."""
+        hub = getattr(self.window, "assistant_hub", None)
+        return hub.report(words) if hub is not None and hub.active() else ""
 
     def transcribe(self, path) -> str:
         from voice import stt

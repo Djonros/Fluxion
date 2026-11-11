@@ -35,3 +35,6 @@ faster-whisper>=1.1
 sounddevice>=0.5
 soundfile>=0.13  # voice messages of the bots: OGG/Opus, MP3 (bots/audio.py)
 pywin32>=306; sys_platform == "win32"
+
+# «Личный помощник» (assistant/): changes of the watched folders as Windows reports them
+watchdog>=4.0

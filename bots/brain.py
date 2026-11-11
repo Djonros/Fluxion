@@ -12,6 +12,7 @@ A user not in the allow-list gets a six-digit code and nothing else. Then:
     /сравнить A ; B             «Сравнить версии сборки» (Pro)
     /заявка A × 2 ; B × 5       «Заявка на закупку» (Pro)
     /файл …                     a file from the folders open to the bot
+    /сводка [вчера|неделя]      the day from the journal of «Личный помощник» (Pro)
     /статус, /новый, /уведомления, /отмена, /помощь
 
 The texts are Russian, as the reports and calculations of Fluxion are. ``host`` is
@@ -37,6 +38,7 @@ SEND_LIMIT = 45 * 1024 * 1024  # Telegram takes documents up to 50 MB
 REPORT_FEATURE = "assembly_report"
 LASER_FEATURE = "laser_dxf"
 ARCHIVE_FEATURE = "design_archive"
+ASSISTANT_FEATURE = "personal_assistant"
 
 COMMANDS = {
     "help": ("/помощь", "/help", "/start"),
@@ -53,6 +55,7 @@ COMMANDS = {
     "compare": ("/сравнить", "/compare"),
     "purchase": ("/заявка", "/purchase"),
     "file": ("/файл", "/file"),
+    "summary": ("/сводка", "/summary"),
 }
 
 HELP = """Fluxion на вашем компьютере. Пишите вопрос — отвечу, как в чате программы; можно голосом.
@@ -65,6 +68,7 @@ HELP = """Fluxion на вашем компьютере. Пишите вопро�
 /сравнить Рама изм1 ; Рама изм2 — что изменилось (Pro)
 /заявка Рама × 2 ; Стол × 5 — что закупить (Pro)
 /файл Рама.pdf — прислать файл из папок бота
+/сводка вчера — что вы делали и какие файлы менялись (Pro, «Личный помощник»)
 /статус — что с программой; /новый — новый разговор; /уведомления — сообщать о концах заданий
 Сборку можно указать путём или именем файла: ищу в папках, открытых для бота."""
 
@@ -255,6 +259,13 @@ class Brain:
         if not rest:
             return self._send(adapter, msg, "Напишите, что найти: /архив рама 600.000")
         self._ask(adapter, msg, dialog, rest, archive=True, shown=f"/архив {rest}")
+
+    def _cmd_summary(self, adapter, msg, dialog, rest, data):
+        if not self._need_pro(adapter, msg, ASSISTANT_FEATURE, "Личный помощник"):
+            return
+        report = getattr(self.host, "assistant_report", None)
+        text = report(rest) if report is not None else ""
+        self._send(adapter, msg, text or "Личный помощник выключен: в программе Связь → «Личный помощник…».")
 
     def _cmd_report(self, adapter, msg, dialog, rest, data, estimate_only=False):
         title = "Смета" if estimate_only else "Ведомость и металлоёмкость"

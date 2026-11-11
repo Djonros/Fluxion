@@ -2856,6 +2856,8 @@ class FluxionWindow(QMainWindow):
                  tr("Telegram, MAX и ВКонтакте отвечают с этого компьютера, пока Fluxion открыт")),
                 ("phone", tr("Связь с телефоном…"), self._open_phone_dialog, False,
                  tr("Fluxion Mobile спрашивает этот компьютер по домашней сети: фото на вкладке «Ремонт»")),
+                ("pulse", tr("Личный помощник…"), self._open_assistant, True,
+                 tr("Следит за папками и работой в программах: «что я делал вчера», уведомления о новых файлах")),
                 ("-", "", None, False, ""),
                 ("feather", tr("Мой стиль письма…"), self._open_writing_style, True,
                  tr("Служебки, пояснительные записки и письма заказчикам вашим стилем")),
@@ -5948,7 +5950,8 @@ class FluxionWindow(QMainWindow):
             self.assistant.archive = self._chat_archive() if source is None else None
         self.worker = ChatWorker(self.assistant, question or text, history, self)
         self.worker.target = resolve_target(getattr(self.settings, "language", "auto"), text)
-        self.worker.style = self._writing_style_block(text)
+        # «Мой стиль» and the journal of «Личный помощник» both go to the system prompt
+        self.worker.style = "\n\n".join(b for b in (self._writing_style_block(text), self._assistant_block(text)) if b)
         self.worker.source = source
         if files:
             self.worker.files = files
@@ -6363,6 +6366,7 @@ class FluxionWindow(QMainWindow):
             "archive": self._open_archive,
             "calc": self._open_calc,
             "bots": self._open_bots_dialog,
+            "assistant": self._open_assistant,
         }
 
     def open_manual(self, page: str = "") -> None:
@@ -7980,7 +7984,123 @@ class FluxionWindow(QMainWindow):
             self.start_phone()
         dialog.deleteLater()
 
+    # ── «Личный помощник»: the connectors, the tray (package assistant) ──────────
+
+    def start_assistant(self) -> None:
+        """Start the connectors the user turned on (at launch and after the window)."""
+        from assistant.hub import Hub
+
+        from .assistant_dialog import AssistantHost
+
+        if getattr(self, "assistant_hub", None) is None:
+            self._assistant_host = AssistantHost(self)
+            self._assistant_host.notice.connect(self._on_assistant_notice)
+            self.assistant_hub = Hub(on_notice=self._assistant_host.notice.emit)
+        try:
+            self.assistant_hub.start()
+        except Exception as exc:  # a broken journal must not stop Fluxion
+            self.statusBar().showMessage(tr("Личный помощник не запущен: {exc}", exc=exc), 10000)
+        self._refresh_tray()
+
+    def stop_assistant(self) -> None:
+        hub = getattr(self, "assistant_hub", None)
+        if hub is not None:
+            hub.stop()
+
+    def _assistant_active(self) -> bool:
+        hub = getattr(self, "assistant_hub", None)
+        return hub is not None and hub.active()
+
+    def _assistant_block(self, query: str) -> str:
+        """The journal for the system prompt when the question is about the user's day ("" otherwise)."""
+        if not self._assistant_active():
+            return ""
+        try:
+            return self.assistant_hub.context(query, cloud=self._is_cloud_backend())
+        except Exception:
+            return ""
+
+    def _open_assistant(self) -> None:
+        from assistant import PRO_FEATURE
+
+        if not self._pro_feature(PRO_FEATURE, tr("Личный помощник"), tr(
+                "«Личный помощник» — функция Pro: Fluxion следит за выбранными папками и работой в программах, "
+                "отвечает «что я делал вчера», присылает уведомления о новых файлах. Всё хранится только на этом "
+                "компьютере.")):
+            return
+        from .assistant_dialog import AssistantDialog
+
+        if getattr(self, "assistant_hub", None) is None:
+            self.start_assistant()
+        dialog = AssistantDialog(self, self.assistant_hub)
+        if dialog.exec() == QDialog.Accepted:
+            dialog.save()
+            self.start_assistant()
+        dialog.deleteLater()
+
+    def _on_assistant_notice(self, text: str, to_bots: bool) -> None:
+        hub = getattr(self, "assistant_hub", None)
+        if hub is not None and hub.cfg.get("notify_tray", True) and getattr(self, "tray", None) is not None:
+            self.tray.showMessage("Fluxion", text, self.windowIcon(), 8000)
+        else:
+            self.statusBar().showMessage(text, 8000)
+        if to_bots:
+            self._notify_bots(f"Fluxion: {text}")
+
+    def _refresh_tray(self) -> None:
+        """The icon by the clock while the assistant works: the window hides there, not closes."""
+        from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+
+        active = self._assistant_active()
+        tray = getattr(self, "tray", None)
+        if QApplication.instance() is not None:  # hidden in the tray, a closed dialog must not quit Fluxion
+            QApplication.instance().setQuitOnLastWindowClosed(not active)
+        if not active or not QSystemTrayIcon.isSystemTrayAvailable():
+            if tray is not None:
+                tray.hide()
+            return
+        if tray is None:
+            tray = self.tray = QSystemTrayIcon(self.windowIcon(), self)
+            menu = QMenu(self)
+            menu.addAction(tr("Открыть Fluxion"), self._show_from_tray)
+            self._tray_pause = menu.addAction(tr("Пауза на 1 час"), self._toggle_assistant_pause)
+            menu.addAction(tr("Личный помощник…"), lambda: (self._show_from_tray(), self._open_assistant()))
+            menu.addSeparator()
+            menu.addAction(tr("Выход"), self._quit_from_tray)
+            tray.setContextMenu(menu)
+            tray.activated.connect(lambda reason: self._show_from_tray()
+                                   if reason == QSystemTrayIcon.Trigger else None)
+        paused = self.assistant_hub.paused()
+        self._tray_pause.setText(tr("Продолжить") if paused else tr("Пауза на 1 час"))
+        tray.setToolTip(tr("Fluxion: помощник на паузе") if paused else tr("Fluxion: личный помощник работает"))
+        tray.show()
+
+    def _toggle_assistant_pause(self) -> None:
+        hub = self.assistant_hub
+        hub.pause(0 if hub.paused() else 60)
+        self._refresh_tray()
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_from_tray(self) -> None:
+        self._really_quit = True
+        self.close()
+        QApplication.instance().quit()
+
     def closeEvent(self, event) -> None:
+        tray = getattr(self, "tray", None)
+        if (tray is not None and tray.isVisible() and self._assistant_active()
+                and not getattr(self, "_really_quit", False)):
+            event.ignore()  # the assistant keeps working; «Выход» in the tray menu quits
+            self.hide()
+            if not getattr(self, "_tray_told", False):
+                self._tray_told = True
+                tray.showMessage("Fluxion", tr("Fluxion работает в значке у часов: личный помощник включён. "
+                                               "Выйти — правой кнопкой по значку → «Выход»."), self.windowIcon(), 6000)
+            return
         self._save_memory()
         if getattr(self, "everywhere", None) is not None:
             self.everywhere.stop()
@@ -7989,6 +8109,9 @@ class FluxionWindow(QMainWindow):
             self._chat_archive_index = None
         self.stop_bots()
         self.stop_phone()
+        self.stop_assistant()
+        if getattr(self, "tray", None) is not None:
+            self.tray.hide()
         if getattr(self, "report_worker", None) is not None:
             self.report_worker.wait(120000)  # KOMPAS reads a big assembly for a while
         if getattr(self, "acad_worker", None) is not None:
@@ -8160,6 +8283,7 @@ def main() -> int:
                 window.start_phone()
             except Exception as exc:  # nor a broken phone.json
                 window.statusBar().showMessage(tr("Связь с телефоном не запущена: {exc}", exc=exc), 10000)
+            window.start_assistant()
 
         if (
             os.environ.get("FLUXION_DESKTOP_SMOKE") != "1"
