@@ -798,6 +798,10 @@ class ChatWorker(QThread):
             except Exception as exc:
                 self.failed.emit(tr("Ошибка генерации: {exc}", exc=exc))
                 return
+            finally:
+                close = getattr(stream, "close", None)
+                if close is not None:
+                    close()  # «Стоп»: the built-in model is free for the next request at once
             if mismatch and not self._stop:
                 self.text_reset.emit()
                 self.history.append({"role": "user", "content": query})
@@ -1746,23 +1750,69 @@ class AgentWorker(QThread):
 
 
 class IndexWorker(QThread):
-    """Indexes a directory into RAG without blocking the UI thread."""
+    """Indexes what changed in a directory into RAG without blocking the UI thread.
+
+    ``progress`` (done, total, file name) comes for every file; ``stop()`` ends
+    the run between two files, what is done stays in the index."""
 
     done = Signal(int)
     failed = Signal(str)
+    progress = Signal(int, int, str)
 
     def __init__(self, rag_service, path: str, parent=None):
         super().__init__(parent)
         self.rag_service = rag_service
         self.path = path
+        self._stop = False
+        self.stats: dict = {}
+        self.stopped = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def _should_stop(self) -> bool:
+        return self._stop
+
+    def _report(self, done: int, total: int, name: str) -> None:
+        self.progress.emit(int(done), int(total), str(name))
 
     def run(self) -> None:
+        import inspect
+
         try:
-            count = self.rag_service.index(self.path)
+            index = self.rag_service.index
+            try:
+                params = inspect.signature(index).parameters
+            except (TypeError, ValueError):
+                params = {}
+            if "should_stop" in params:
+                count = index(self.path, progress=self._report, should_stop=self._should_stop)
+            else:  # an older service: no progress, no stop
+                count = index(self.path)
+            indexer = getattr(self.rag_service, "_indexer", None)
+            self.stats = dict(getattr(indexer, "last_stats", {}) or {})
+            self.stopped = bool(getattr(indexer, "stopped", False))
         except Exception as exc:
             self.failed.emit(tr("Ошибка индексации: {exc}", exc=exc))
             return
         self.done.emit(int(count))
+
+
+class IndexCountWorker(QThread):
+    """The number of chunks in the index, read away from the window: the first read loads ChromaDB."""
+
+    done = Signal(int)
+
+    def __init__(self, rag_service, parent=None):
+        super().__init__(parent)
+        self.rag_service = rag_service
+
+    def run(self) -> None:
+        try:
+            count = int(self.rag_service.count())
+        except Exception:
+            count = 0
+        self.done.emit(count)
 
 
 # Pages of the main window (QStackedWidget indexes)
@@ -2449,14 +2499,42 @@ class FluxionWindow(QMainWindow):
             self.index_chip.setText("index: off")
             self.index_chip.setProperty("state", "todo")
         else:
-            try:
-                count = self.rag_service.count()
-            except Exception:
-                count = 0
-            self.index_chip.setText(f"index: {count}")
+            count = getattr(self, "_index_count", None)
+            self.index_chip.setText(f"index: {'…' if count is None else count}")
             self.index_chip.setProperty("state", "ok" if count else "todo")
+            self._request_index_count()
         self.index_chip.style().unpolish(self.index_chip)
         self.index_chip.style().polish(self.index_chip)
+
+    def _request_index_count(self) -> None:
+        """Read the number of chunks in the background; the chip and the label show it when it comes."""
+        if self.rag_service is None or getattr(self, "_count_worker", None) is not None:
+            if self.rag_service is not None:
+                self._count_again = True  # asked while a read is going: once more after it
+            return
+        self._count_again = False
+        worker = IndexCountWorker(self.rag_service, self)
+        worker.done.connect(self._on_index_count)
+        worker.finished.connect(self._on_index_count_finished)
+        self._count_worker = worker
+        worker.start()
+
+    def _on_index_count(self, count: int) -> None:
+        self._index_count = int(count)
+        if hasattr(self, "index_chip") and self.rag_service is not None and not self._project_forgotten():
+            self.index_chip.setText(f"index: {count}")
+            self.index_chip.setProperty("state", "ok" if count else "todo")
+            self.index_chip.style().unpolish(self.index_chip)
+            self.index_chip.style().polish(self.index_chip)
+        if hasattr(self, "index_status") and not self.indexing:
+            self.index_status.setText(self._chunks_label())
+
+    def _on_index_count_finished(self) -> None:
+        worker, self._count_worker = getattr(self, "_count_worker", None), None
+        if worker is not None:
+            worker.deleteLater()
+        if getattr(self, "_count_again", False):
+            self._request_index_count()
 
     def _build_engine_popover(self, pop: ChipPopover) -> None:
         backend_name = type(self.backend).__name__ if self.backend is not None else tr("не подключён")
@@ -2724,9 +2802,21 @@ class FluxionWindow(QMainWindow):
         self.act_license = QAction(tr("Лицензия…"), self)
         self.act_license.triggered.connect(self._open_license_dialog)
         m_help.addAction(self.act_license)
+        act_logs = QAction(tr("Открыть папку журналов"), self)
+        act_logs.setToolTip(tr("Журналы программы и «Пакета на лазер»: их можно приложить к сообщению об ошибке"))
+        act_logs.triggered.connect(self._open_logs_folder)
+        m_help.addAction(act_logs)
         act_about = QAction(tr("О Fluxion"), self)
         act_about.triggered.connect(self._show_about)
         m_help.addAction(act_about)
+
+    def _open_logs_folder(self) -> None:
+        """Menu Помощь → Открыть папку журналов: fluxion.log, dxfka.log."""
+        from core.app_log import logs_dir
+
+        folder = logs_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _tool_groups(self) -> list[tuple[str, list[tuple]]]:
         """The tools of the menus Конструктор, Производство, Связь and of «+» → Инструменты:
@@ -3507,10 +3597,9 @@ class FluxionWindow(QMainWindow):
     def _chunks_label(self) -> str:
         if self.rag_service is None:
             return tr("RAG: недоступен (движок не подключён)")
-        try:
-            count = self.rag_service.count()
-        except Exception:
-            count = 0
+        count = getattr(self, "_index_count", None)
+        if count is None:
+            return tr("RAG: считаю чанки в индексе…")
         return tr("RAG: {count} чанков в индексе", count=count)
 
     def refresh_project_status(self) -> None:
@@ -3547,13 +3636,23 @@ class FluxionWindow(QMainWindow):
         self.index_worker = IndexWorker(self.rag_service, path)
         self.index_worker.done.connect(self._on_index_done)
         self.index_worker.failed.connect(self._on_index_failed)
+        self.index_worker.progress.connect(self._on_index_progress)
         self.index_worker.finished.connect(self.index_worker.deleteLater)
         self.index_worker.start()
 
+    def _on_index_progress(self, done: int, total: int, name: str) -> None:
+        if not self.indexing:
+            return
+        if total and done < total:
+            self.index_status.setText(tr("Индексация: {done} из {total} — {name}", done=done + 1, total=total, name=name))
+        elif total:
+            self.index_status.setText(tr("Индексация: {total} файлов просмотрено", total=total))
+
     def _stop_indexing(self) -> None:
-        # Индексация атомарна внутри RAGService — остановка недоступна,
-        # кнопка лишь информирует; оставляем завершение естественным путём.
-        self.index_status.setText(tr("Завершение текущей операции…"))
+        """«Стоп»: the run ends after the current file; what is indexed stays, the next run goes on."""
+        if self.index_worker is not None and self.indexing:
+            self.index_worker.stop()
+            self.index_status.setText(tr("Останавливаю после текущего файла…"))
 
     def _set_indexing_done(self) -> None:
         self.indexing = False
@@ -3562,10 +3661,20 @@ class FluxionWindow(QMainWindow):
         self.index_worker = None
 
     def _on_index_done(self, count: int) -> None:
+        worker = self.index_worker
+        stats = dict(getattr(worker, "stats", {}) or {})
+        stopped = bool(getattr(worker, "stopped", False))
         self._set_indexing_done()
         self._set_project_forgotten(False)
         self.index_status.setText(self._chunks_label())
-        self.project_view.append(tr("<p><b>Готово:</b> проиндексировано {count} чанков. Чат теперь будет сам искать ответы в коде и документах папки.</p>", count=count))
+        if stopped:
+            self.project_view.append(tr("<p><b>Остановлено.</b> Проиндексировано файлов: {files}, чанков: {count}. Следующая индексация продолжит с того же места.</p>", files=stats.get("indexed", 0), count=count))
+        elif stats:
+            if stats.get("full"):
+                self.project_view.append(tr("<p>Индекс обновлён до индексации по изменениям: в этот раз папка прочитана целиком, дальше — только изменённые файлы.</p>"))
+            self.project_view.append(tr("<p><b>Готово:</b> изменённых файлов {indexed} (чанков {count}), без изменений {unchanged}, удалено из индекса {removed}. Чат теперь будет сам искать ответы в коде и документах папки.</p>", indexed=stats.get("indexed", 0), count=count, unchanged=stats.get("unchanged", 0), removed=stats.get("removed", 0)))
+        else:
+            self.project_view.append(tr("<p><b>Готово:</b> проиндексировано {count} чанков. Чат теперь будет сам искать ответы в коде и документах папки.</p>", count=count))
         self._refresh_index_chip()
         self.qsettings.setValue("index_updated_at", datetime.now().strftime("%Y-%m-%d %H:%M"))
         self.qsettings.setValue("index_embed_backend", self._embed_backend_id())
@@ -7021,6 +7130,8 @@ class FluxionWindow(QMainWindow):
         self._start_thinking()
 
         self._set_generating(True)
+        # the agent is made in its worker thread: the switch and the index are read here, in the window's
+        self._agent_archive = self._chat_archive()
         self.agent_worker = AgentWorker(
             self.agent_factory,
             f"{PLAN_TASK_PREFIX}\n\n{task}" if plan else task,
@@ -7901,7 +8012,11 @@ class FluxionWindow(QMainWindow):
             self.agent_worker.stop()
             self.agent_worker.wait(2000)
         if self.index_worker is not None and self.indexing:
+            self.index_worker.stop()  # ends after the current file; the rest goes on next time
             self.index_worker.wait(5000)
+        count_worker = getattr(self, "_count_worker", None)
+        if count_worker is not None:
+            count_worker.wait(5000)
         for name in ("calc_worker", "cad_worker"):   # «/расчёт» and «/компас»: the model may still be reading
             worker = getattr(self, name, None)
             if worker is not None:
@@ -7964,6 +8079,9 @@ def main() -> int:
 
     install_excepthook()
     enable_native_crash_log()
+    from core.app_log import setup_logging
+
+    setup_logging()  # fluxion.log in %LOCALAPPDATA%\Fluxion\logs (Помощь → Открыть папку журналов)
 
     try:
         try:
@@ -8009,7 +8127,8 @@ def main() -> int:
                     git_enabled=git_tools_enabled(qs),
                     lang=getattr(settings, "language", "auto"),
                     write_confirm=None if paid else trial_gate.confirm,
-                    archive=window._chat_archive(),  # search_archive: the design archive, when on
+                    # search_archive: the design archive, when on (read by the window before the start)
+                    archive=getattr(window, "_agent_archive", None),
                     verify_mode=str(qs.value("agent/verify", "auto") or "auto"),
                 )
 

@@ -207,10 +207,11 @@ class RAGService:
 
     # -- public API --------------------------------------------------------
 
-    def index(self, root: str | Path) -> int:
-        """Index a directory tree. Returns chunk count."""
+    def index(self, root: str | Path, progress=None, should_stop=None) -> int:
+        """Index what changed in a directory tree. Returns the chunks stored by this run;
+        ``indexer.last_stats`` and ``indexer.stopped`` say more."""
         self._ensure_init()
-        return self._indexer.index_path(root)
+        return self._indexer.index_path(root, progress=progress, should_stop=should_stop)
 
     def index_file(self, file_path: str | Path) -> int:
         """Index a single file. Returns chunk count."""

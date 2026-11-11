@@ -1095,5 +1095,14 @@
  "Авто": "Auto",
  "Всегда": "Always",
  "Никогда": "Never",
- "Авто — только если в проекте есть свои тесты (иначе молча проверяется синтаксис); агент отвечает только за новые падения, и после двух одинаковых прогонов подряд останавливается и показывает, что не прошло": "Auto — only when the project has tests of its own (else the syntax is checked quietly); the agent answers only for new failures, and after two identical runs in a row it stops and shows what did not pass"
+ "Авто — только если в проекте есть свои тесты (иначе молча проверяется синтаксис); агент отвечает только за новые падения, и после двух одинаковых прогонов подряд останавливается и показывает, что не прошло": "Auto — only when the project has tests of its own (else the syntax is checked quietly); the agent answers only for new failures, and after two identical runs in a row it stops and shows what did not pass",
+ "Индексация: {total} файлов просмотрено": "Indexing: {total} files checked",
+ "<p>Индекс обновлён до индексации по изменениям: в этот раз папка прочитана целиком, дальше — только изменённые файлы.</p>": "<p>The index now updates by changes: this time the whole folder was read, from now on only changed files.</p>",
+ "<p><b>Готово:</b> изменённых файлов {indexed} (чанков {count}), без изменений {unchanged}, удалено из индекса {removed}. Чат теперь будет сам искать ответы в коде и документах папки.</p>": "<p><b>Done:</b> changed files {indexed} ({count} chunks), unchanged {unchanged}, removed from the index {removed}. The chat will now look for answers in the code and documents of the folder by itself.</p>",
+ "Останавливаю после текущего файла…": "Stopping after the current file…",
+ "Индексация: {done} из {total} — {name}": "Indexing: {done} of {total} — {name}",
+ "Журналы программы и «Пакета на лазер»: их можно приложить к сообщению об ошибке": "Logs of the program and of the «Laser package»: attach them to an error report",
+ "RAG: считаю чанки в индексе…": "RAG: counting chunks in the index…",
+ "<p><b>Остановлено.</b> Проиндексировано файлов: {files}, чанков: {count}. Следующая индексация продолжит с того же места.</p>": "<p><b>Stopped.</b> Files indexed: {files}, chunks: {count}. The next indexing continues from the same place.</p>",
+ "Открыть папку журналов": "Open the logs folder"
 }

@@ -117,6 +117,14 @@ def test_forget_project(window, tmp_path, monkeypatch):
 
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
     window._pick_project_folder()
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    deadline = time.time() + 5  # the count is read in the background
+    while window.index_chip.text() != "index: 12" and time.time() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.01)
     assert not window._project_forgotten() and window.index_chip.text() == "index: 12"
 
 

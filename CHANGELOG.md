@@ -5,6 +5,30 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- The log of the program: `%LOCALAPPDATA%\Fluxion\logs\fluxion.log` (2 MB, three old files kept), next to dxfka.log; «Помощь» → «Открыть папку журналов». httpx writes only warnings (its URLs hold the Telegram token), what looks like a bot token is masked.
+
+### Changed
+- The project index updates by changes: unchanged files are skipped, a changed file's old chunks are removed before the new ones, removed files leave the index, another embedding model indexes everything again; .git, node_modules, venv and the like are not even entered. «Стоп» works (after the current file, the next run goes on), the status shows «N из M — файл». An index of 0.29 and earlier is read whole once, without doubles.
+- The chat history lives in SQLite (`chats.db`, one row a chat): a save writes that chat, not the whole history. `chats.json` moves in on the first start and stays as `chats.json.bak`; the 500-chat limit, rename, delete, search as before.
+- The built-in model (llama.cpp) answers one request at a time: the chat, the agent, the bots, «Fluxion везде» and the phone wait their turn instead of sharing a model that is not thread-safe; «Стоп» frees it at once.
+- Token counting without tiktoken (the built program) knows Cyrillic: measured against the Qwen2.5 tokenizer a Russian text has 2.65 characters per token, not 4 — the estimate is now 97–128 % of the real count on texts of a page or more; a long Russian chat no longer overflows the model's window. From the sources, tiktoken that cannot download its table falls back to the estimate.
+- A stream from Ollama or a cloud API gives up after 10 s without a connection or 5 minutes of silence, with a message that says so (it used to wait until «Стоп»); a model download may be silent for an hour.
+- requirements.txt: sentence-transformers, duckdb, tenacity and tqdm removed (not used; sentence-transformers pulled PyTorch into CI).
+
+### Fixed
+- «Пакет на лазер», «/компас», welds: a half-written cache of the COM wrappers of KOMPAS (`%TEMP%\gen_py`, «module 'win32com.gen_py.…' has no attribute 'CLSIDToClassMap'») is rebuilt once, automatically; every detail used to fail with «Нет обёрток API7 — листовое тело не ищу» and «Ни одна стандартная проекция не дала контур». If the wrappers still cannot be made, the package stops at once and says what to do.
+- DXF assembly walk: one component KOMPAS does not give is skipped with a line in the log (it used to empty the whole list); standard parts are the files of Program Files, %ProgramData%\ASCON and the Libs of KOMPAS only (a project folder with «ASCON» in its path lost all its details); details without a designation and a Reference are no longer merged.
+- The sheet bending calculator read «0,5 м» as 0,5 mm (a backspace character in the unit pattern).
+- `/adapters register` of the console version failed (AdapterInfo not imported).
+- Files sent to the bots: only the name of the file is kept (no «..\», no forbidden characters, a reserved name prefixed), an existing file is not overwritten («(2)»), more than 50 MB is not saved.
+- The error text of a failed Ollama/cloud stream raised an error of its own (the response was not read).
+- The design archive is used from several threads under one lock (the chat, the agent, the indexing); a search in a closing archive finds nothing instead of failing; the agent gets the archive read by the window before it starts.
+- The project index count is read in the background (the first read loads ChromaDB and froze the window at start).
+- Tests: the window tests waited 5 s each (the flags of `_drain` were read once) and the health check at the start of every window (a refused connection to localhost takes seconds on Windows): 206 s → 32 s.
+
 ## [0.29.0] — 2026-11-10
 
 ### Added

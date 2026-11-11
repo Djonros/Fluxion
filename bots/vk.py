@@ -14,7 +14,7 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
-from .base import Adapter, Attachment, BotError, Incoming, check
+from .base import Adapter, Attachment, BotError, Incoming, check, save_download
 
 API = "https://api.vk.com/method"
 VERSION = "5.199"
@@ -118,6 +118,4 @@ class Vk(Adapter):
             raise BotError(self.clean(f"ВКонтакте: файл не скачан: {exc}")) from exc
         if response.status_code >= 400:
             raise BotError(f"ВКонтакте: файл не скачан ({response.status_code})")
-        target = Path(folder) / (attachment.name or "file")
-        target.write_bytes(response.content)
-        return target
+        return save_download(folder, attachment.name, response.content, "ВКонтакте")

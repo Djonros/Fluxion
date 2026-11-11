@@ -145,3 +145,14 @@ def _isolate_bots(tmp_path, monkeypatch):
         return
     monkeypatch.setattr(config, "path", lambda: tmp_path / "bots.json")
     config._pending.clear()
+
+
+@pytest.fixture(autouse=True)
+def _tokens_without_network(monkeypatch):
+    """tiktoken downloads its table on the first use: tests count with the estimate, as the
+    built program does, and never reach the network."""
+    try:
+        import core.tokenizer_util as tokens
+    except Exception:
+        return
+    monkeypatch.setattr(tokens, "_encoding", lambda: None)

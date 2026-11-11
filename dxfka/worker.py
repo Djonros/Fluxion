@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from dxfka.compat import PYWIN32_OK, pythoncom
 from dxfka.config import LICENSE_CONTACT_HINT
-from dxfka.kompas.connection import KompasConnection
+from dxfka.kompas.connection import CACHE_HINT, KompasConnection
 from dxfka.kompas.exporter import PartExporter
 from dxfka.kompas.walker import AssemblyWalker
 from typing import Protocol
@@ -176,6 +176,13 @@ class ExportWorker(threading.Thread):
                 return
 
             # ---------- экспорт выбранных деталей ----------
+            if conn.api7_module is None:
+                # Без обёрток API7 листовое тело не найти: все детали
+                # упали бы с одной и той же ошибкой — останавливаемся сразу.
+                raise KompasConnectionError(
+                    "Не удалось создать COM-обёртки КОМПАС (API7) — без них "
+                    "развёртки не получить. " + CACHE_HINT)
+
             out_dir, selected_parts = self.payload
             parts_list: List[PartInfo] = list(selected_parts)
             tmp_dir = tempfile.mkdtemp(prefix="kompas_dxf_")

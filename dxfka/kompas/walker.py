@@ -158,7 +158,7 @@ class AssemblyWalker:
                 if label == "Parts":
                     self.log("warning", f"part.Parts: {exc}")
                 continue
-            items = com_items(collection)
+            items = com_items(collection, self.log)
             if items:
                 if label != "Parts":
                     self.log("info",
@@ -215,7 +215,10 @@ class AssemblyWalker:
         name = safe_str(p7, "Name") or "Без имени"
         ref = safe_str(p7, "Reference")
         if not ref:
-            ref = f"{safe_str(p7, 'Marking')}|{name}|{depth}"
+            # Без Reference повторы не отличить от разных деталей без обозначения:
+            # не склеиваем (одинаковые файлы всё равно сойдутся по пути ниже).
+            # Reference в КОМПАС v24 уникален на всё дерево сборки (проверено).
+            ref = f"noref#{len(refs)}"
         if ref in refs:
             return
         refs.add(ref)

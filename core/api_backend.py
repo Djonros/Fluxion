@@ -16,6 +16,7 @@ import httpx
 from .config import GenerationSettings, Settings
 from .gigachat import auth_headers, request_kwargs
 from .inference import ModelBackend
+from .net_timeouts import STREAM, timeout_message
 
 logger = logging.getLogger(__name__)
 
@@ -111,28 +112,32 @@ class APIBackend(ModelBackend):
         gen: GenerationSettings | None = None,
     ) -> Iterator[str]:
         payload = self._payload(messages, gen, stream=True)
-        with httpx.stream(
-            "POST",
-            f"{self.base_url}/chat/completions",
-            json=payload,
-            headers=self._headers(),
-            timeout=None,
-            **request_kwargs(self.base_url),
-        ) as r:
-            if r.status_code != 200:
-                raise RuntimeError(f"API stream failed ({r.status_code}): {r.text[:300]}")
-            for line in r.iter_lines():
-                if not line or line == "data: [DONE]":
-                    continue
-                if line.startswith("data: "):
-                    line = line[6:]
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                if delta:
-                    yield delta
+        try:
+            with httpx.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers=self._headers(),
+                timeout=STREAM,
+                **request_kwargs(self.base_url),
+            ) as r:
+                if r.status_code != 200:
+                    r.read()
+                    raise RuntimeError(f"API stream failed ({r.status_code}): {r.text[:300]}")
+                for line in r.iter_lines():
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if line.startswith("data: "):
+                        line = line[6:]
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        yield delta
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(timeout_message(exc, self.base_url)) from exc
 
     def is_available(self) -> bool:
         return bool(self.api_key)

@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from .base import Adapter, Attachment, BotError, Incoming, check
+from .base import Adapter, Attachment, BotError, Incoming, check, save_download
 
 API = "https://botapi.max.ru"
 
@@ -115,6 +115,4 @@ class Max(Adapter):
             raise BotError(self.clean(f"MAX: файл не скачан: {exc}")) from exc
         if response.status_code >= 400:
             raise BotError(f"MAX: файл не скачан ({response.status_code})")
-        target = Path(folder) / (attachment.name or "file")
-        target.write_bytes(response.content)
-        return target
+        return save_download(folder, attachment.name, response.content, "MAX")

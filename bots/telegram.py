@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import Adapter, Attachment, BotError, Incoming, check
+from .base import Adapter, Attachment, BotError, Incoming, check, save_download
 
 API = "https://api.telegram.org"
 
@@ -82,6 +82,4 @@ class Telegram(Adapter):
             raise BotError(self.clean(f"Telegram: файл не скачан: {exc}")) from exc
         if response.status_code >= 400:
             raise BotError(f"Telegram: файл не скачан ({response.status_code})")
-        target = Path(folder) / (attachment.name or Path(info["file_path"]).name)
-        target.write_bytes(response.content)
-        return target
+        return save_download(folder, attachment.name or Path(info["file_path"]).name, response.content, "Telegram")

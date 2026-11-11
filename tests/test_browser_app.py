@@ -373,7 +373,9 @@ def test_sessions_migrate_legacy_history(memory_file, tmp_path):
     loaded = load_sessions()
     assert len(loaded) == 1
     assert loaded[0]["messages"] == [{"role": "user", "content": "старый вопрос"}]
-    assert memory_file.exists()
+    from desktop_browser import memory
+
+    assert memory.db_path().exists()  # the chats live in chats.db now
 
 
 def test_window_restores_latest_session(make_window, memory_file):

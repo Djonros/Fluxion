@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -244,6 +245,61 @@ def pieces(text: str, path: Path) -> list[tuple[str, str]]:
     return out
 
 
+class _Rows(list):
+    """The rows of a query, read while the lock was held: fetchone/fetchall work as on a cursor."""
+
+    def fetchone(self):
+        return self[0] if self else None
+
+    def fetchall(self):
+        return list(self)
+
+
+class _LockedDB:
+    """One SQLite connection for several threads (the chat, the agent, the indexing, the bots):
+    every statement and the reading of its rows go under one lock, so two threads never share
+    a cursor. A closed index answers ``ArchiveClosed`` instead of a crash in the middle of a query."""
+
+    def __init__(self, path: str):
+        self._db = sqlite3.connect(path, check_same_thread=False, timeout=30)
+        self._lock = threading.RLock()
+        self.closed = False
+
+    def _check(self) -> None:
+        if self.closed:
+            raise ArchiveClosed("архив КД закрыт")
+
+    def execute(self, sql: str, args=()) -> _Rows:
+        with self._lock:
+            self._check()
+            return _Rows(self._db.execute(sql, args).fetchall())
+
+    def executemany(self, sql: str, rows) -> None:
+        with self._lock:
+            self._check()
+            self._db.executemany(sql, rows)
+
+    def executescript(self, script: str) -> None:
+        with self._lock:
+            self._check()
+            self._db.executescript(script)
+
+    def commit(self) -> None:
+        with self._lock:
+            self._check()
+            self._db.commit()
+
+    def close(self) -> None:
+        with self._lock:  # waits for a query in progress
+            if not self.closed:
+                self.closed = True
+                self._db.close()
+
+
+class ArchiveClosed(sqlite3.ProgrammingError):
+    """The index was closed (the window went away) while another thread still asked it."""
+
+
 class ArchiveIndex:
     """The archive index: a SQLite database with the files read and a full-text table of
     their pieces (table "chunks"), in the data folder of the app."""
@@ -252,7 +308,7 @@ class ArchiveIndex:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / DB_NAME
-        self.db = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30)
+        self.db = _LockedDB(str(self.db_path))
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -383,7 +439,13 @@ class ArchiveIndex:
     # ── search ───────────────────────────────────────────────────────────
     def search(self, query: str, top_k: int = 5, filters: Filters | None = None) -> list[ArchiveHit]:
         """Pieces of the archive for a question, best first; *filters* default to those
-        said in it (products, years)."""
+        said in it (products, years). A closed index (the program is closing) finds nothing."""
+        try:
+            return self._search(query, top_k, filters)
+        except ArchiveClosed:
+            return []
+
+    def _search(self, query: str, top_k: int, filters: Filters | None) -> list[ArchiveHit]:
         filters = filters if filters is not None else parse_filters(query, self.products)
         match = match_query(query, filters)
         if not match:

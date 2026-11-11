@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections.abc import Iterator
 
 from .config import GenerationSettings, Settings
@@ -62,6 +63,11 @@ class LlamaCppBackend(ModelBackend):
         self._runtime.register(
             runtime_key, self._llm, n_gpu_layers=n_gpu_layers, task="chat"
         )
+        # One Llama object is not thread-safe, and the chat, the agent, the
+        # bots, «Fluxion везде» and the phone all ask it. One answer at a time:
+        # the next request waits. A stream holds the lock until it ends, is
+        # closed («Стоп») or fails.
+        self._busy = threading.Lock()
 
     def unload(self) -> None:
         """Drop the model from the registry (frees VRAM on GC)."""
@@ -109,11 +115,12 @@ class LlamaCppBackend(ModelBackend):
         messages: list[dict[str, str]],
         gen: GenerationSettings | None = None,
     ) -> str:
-        result = self._llm.create_chat_completion(
-            messages=messages,
-            stream=False,
-            **self._params(gen),
-        )
+        with self._busy:
+            result = self._llm.create_chat_completion(
+                messages=messages,
+                stream=False,
+                **self._params(gen),
+            )
         return result["choices"][0]["message"]["content"]
 
     def stream(
@@ -121,14 +128,15 @@ class LlamaCppBackend(ModelBackend):
         messages: list[dict[str, str]],
         gen: GenerationSettings | None = None,
     ) -> Iterator[str]:
-        for chunk in self._llm.create_chat_completion(
-            messages=messages,
-            stream=True,
-            **self._params(gen),
-        ):
-            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-            if delta:
-                yield delta
+        with self._busy:  # released when the generator ends, is closed or raises
+            for chunk in self._llm.create_chat_completion(
+                messages=messages,
+                stream=True,
+                **self._params(gen),
+            ):
+                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                if delta:
+                    yield delta
 
     def is_available(self) -> bool:
         return bool(self.model_path) and os.path.isfile(self.model_path)

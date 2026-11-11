@@ -294,9 +294,11 @@ def group_joints(raw: list[tuple]) -> list[Joint]:
 
 def _api5(app7):
     import pythoncom
-    from win32com.client import Dispatch, gencache
+    from win32com.client import Dispatch
 
-    api5 = gencache.EnsureModule("{0422828C-F174-495E-AC5D-D31014DBBE87}", 0, 1, 0)
+    from dxfka.kompas.connection import ensure_module
+
+    api5 = ensure_module("{0422828C-F174-495E-AC5D-D31014DBBE87}")  # a broken gen_py cache is rebuilt
     k5 = Dispatch("Kompas.Application.5")
     kompas = api5.KompasObject(k5._oleobj_.QueryInterface(api5.KompasObject.CLSID, pythoncom.IID_IDispatch))
     return api5, kompas

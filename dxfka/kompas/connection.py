@@ -6,7 +6,7 @@ import shutil
 import sys
 import tempfile
 import time
-from typing import Callable, List
+from typing import Any, Callable, List
 
 from dxfka.compat import (
     Dispatch, GetActiveObject, PYWIN32_OK, gencache, pythoncom)
@@ -80,6 +80,31 @@ def clear_com_cache() -> List[str]:
     return removed
 
 
+# Что сказать пользователю, если обёртки так и не создались.
+CACHE_HINT = ("Закройте Fluxion и КОМПАС-3D, удалите папку %TEMP%\\gen_py "
+              "(Win+R → %TEMP%) и запустите снова.")
+
+
+def ensure_module(guid: str, log: Callable[[str, str], None] = None) -> Any:
+    """
+    gencache.EnsureModule(guid, 0, 1, 0) с восстановлением кеша: если
+    модуль в gen_py недописан (ошибки вида «module 'win32com.gen_py.…' has
+    no attribute 'CLSIDToClassMap' / 'MinorVersion'»), кеш сбрасывается и
+    обёртки генерируются заново — один раз. Исключение второй попытки
+    уходит вызывающему.
+    """
+    try:
+        return gencache.EnsureModule(guid, 0, 1, 0)
+    except Exception as exc:
+        if log is not None:
+            log("warning", f"Кеш COM-обёрток повреждён ({exc}) — пересоздаю")
+        clear_com_cache()
+        module = gencache.EnsureModule(guid, 0, 1, 0)
+        if log is not None:
+            log("info", "Кеш COM-обёрток пересоздан")
+        return module
+
+
 # ======================================================================
 # ПОДКЛЮЧЕНИЕ К КОМПАС (выполняется ТОЛЬКО в рабочем потоке)
 # ======================================================================
@@ -120,18 +145,20 @@ class KompasConnection:
 
         # 1) Библиотеки типов. При отказе (например, в замороженном exe)
         #    продолжаем на динамическом диспатче с локальными константами.
+        #    Повреждённый (недописанный) кеш gen_py сбрасывается и
+        #    генерируется заново — см. ensure_module.
         try:
-            self.constants = gencache.EnsureModule(TYPELIB_CONSTANTS, 0, 1, 0).constants
+            self.constants = ensure_module(TYPELIB_CONSTANTS, self.log).constants
         except Exception as exc:
             self.log("warning", f"Не загрузилась typelib констант ({exc}); "
                                 "использую локальные значения констант")
         try:
-            self.api5_module = gencache.EnsureModule(TYPELIB_API5, 0, 1, 0)
+            self.api5_module = ensure_module(TYPELIB_API5, self.log)
         except Exception as exc:
             self.log("warning", f"Не загрузилась typelib API5 ({exc}); "
                                 "2D-структуры будут динамическими")
         try:
-            self.api7_module = gencache.EnsureModule(TYPELIB_API7, 0, 1, 0)
+            self.api7_module = ensure_module(TYPELIB_API7, self.log)
         except Exception as exc:
             self.log("warning", f"Не загрузилась typelib API7 ({exc}); "
                                 "API7 будет динамическим")

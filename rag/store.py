@@ -74,6 +74,12 @@ class ChromaStore:
             metadata={"hnsw:space": "cosine"},
         )
 
+    def delete_file(self, file_path: str) -> None:
+        """Remove every chunk of one file (before it is indexed again, or when it is gone)."""
+        self._ensure_connected()
+        assert self._collection is not None
+        self._collection.delete(where={"file_path": str(file_path)})
+
     def count(self) -> int:
         self._ensure_connected()
         assert self._collection is not None

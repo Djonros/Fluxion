@@ -1,8 +1,13 @@
 """What every messenger adapter gives and takes."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+MAX_DOWNLOAD = 50 * 1024 * 1024  # a file sent to the bot: bigger is not saved
+_BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 
 
 def proxy_url(text: str) -> str:
@@ -117,3 +122,32 @@ def check(response, what: str) -> dict:
             raise BotError(f"{what}: токен не принят ({detail or response.status_code})")
         raise BotError(f"{what}: {detail or f'ответ {response.status_code}'}")
     return data
+
+
+def safe_name(name: str, fallback: str = "file") -> str:
+    """A file name from a messenger fit for Windows: no folders, no forbidden characters, not too long."""
+    name = str(name or "").replace("\\", "/").split("/")[-1]
+    name = _BAD_CHARS.sub("_", name).strip(" .")
+    if not name or name.split(".")[0].upper() in _RESERVED:
+        name = f"{fallback}_{name}" if name else fallback
+    if len(name) > 150:
+        stem, dot, suffix = name.rpartition(".")
+        name = (stem[:140] + dot + suffix[:9]) if dot and len(suffix) <= 9 else name[:150]
+    return name
+
+
+def save_download(folder: Path, name: str, content: bytes, what: str, fallback: str = "file") -> Path:
+    """Save a downloaded file in *folder* under a safe name; an existing file is kept, the new one gets «(2)»."""
+    if len(content) > MAX_DOWNLOAD:
+        raise BotError(f"{what}: файл больше {MAX_DOWNLOAD // (1024 * 1024)} МБ — не сохранён")
+    folder = Path(folder).resolve()
+    target = folder / safe_name(name, fallback)
+    stem, suffix = target.stem, target.suffix
+    number = 2
+    while target.exists():
+        target = folder / f"{stem} ({number}){suffix}"
+        number += 1
+    if target.resolve().parent != folder:
+        raise BotError(f"{what}: недопустимое имя файла")
+    target.write_bytes(content)
+    return target

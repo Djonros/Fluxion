@@ -63,6 +63,16 @@ def _logs_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(crash, "crash_dir", lambda: tmp_path)
 
 
+@pytest.fixture(autouse=True)
+def _no_health_check_network(monkeypatch):
+    """The window checks Ollama, the model, the search at start, in the background; closing it waits for
+    the check. On Windows a refused connection to localhost takes 2–6 s (it is retried), so every test
+    ended with seconds of waiting. The checks themselves are tested in test_phase14/test_phase18."""
+    import desktop_browser.health as health
+
+    monkeypatch.setattr(health, "check_all", lambda *args, **kwargs: [])
+
+
 def _window(qapp, tmp_path, assistant=None, backend=None, settings=None):
     qsettings = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
     return FluxionWindow(
@@ -70,16 +80,21 @@ def _window(qapp, tmp_path, assistant=None, backend=None, settings=None):
     )
 
 
-def _drain(qapp, window, timeout=5.0):
-    deadline = time.time() + timeout
-    flags = (
+def _busy(window) -> bool:
+    return any((
         window.generating,
         window.agent_running,
         window.indexing,
         window.training_running,
         window.env_installing,
-    )
-    while any(flags) and time.time() < deadline:
+    ))
+
+
+def _drain(qapp, window, timeout=5.0):
+    """Process events until the window's work ends (the flags are read on every turn: they used to be read
+    once, so every test that started something waited the whole *timeout*)."""
+    deadline = time.time() + timeout
+    while _busy(window) and time.time() < deadline:
         qapp.processEvents()
         time.sleep(0.01)
     qapp.processEvents()
@@ -1511,6 +1526,11 @@ def test_project_page_indexes_folder(qapp, tmp_path):
     window = _window(qapp, tmp_path)
     window.rag_service = rag
     window.refresh_project_status()
+    # the count is read in the background (the first read loads ChromaDB): it comes a moment later
+    deadline = time.time() + 5
+    while window.index_status.text() != "RAG: 12 чанков в индексе" and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
     assert window.index_status.text() == "RAG: 12 чанков в индексе"
 
     window.project_path.setText(str(tmp_path))

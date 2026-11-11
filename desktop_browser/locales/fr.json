@@ -1095,5 +1095,14 @@
  "Авто": "Auto",
  "Всегда": "Toujours",
  "Никогда": "Jamais",
- "Авто — только если в проекте есть свои тесты (иначе молча проверяется синтаксис); агент отвечает только за новые падения, и после двух одинаковых прогонов подряд останавливается и показывает, что не прошло": "Auto — seulement si le projet a ses propres tests (sinon la syntaxe est vérifiée en silence) ; l'agent ne répond que des nouveaux échecs et, après deux exécutions identiques d'affilée, il s'arrête et montre ce qui n'est pas passé"
+ "Авто — только если в проекте есть свои тесты (иначе молча проверяется синтаксис); агент отвечает только за новые падения, и после двух одинаковых прогонов подряд останавливается и показывает, что не прошло": "Auto — seulement si le projet a ses propres tests (sinon la syntaxe est vérifiée en silence) ; l'agent ne répond que des nouveaux échecs et, après deux exécutions identiques d'affilée, il s'arrête et montre ce qui n'est pas passé",
+ "Индексация: {total} файлов просмотрено": "Indexation : {total} fichiers parcourus",
+ "<p>Индекс обновлён до индексации по изменениям: в этот раз папка прочитана целиком, дальше — только изменённые файлы.</p>": "<p>L’index se met désormais à jour selon les modifications : cette fois le dossier a été lu en entier, ensuite seuls les fichiers modifiés le seront.</p>",
+ "<p><b>Готово:</b> изменённых файлов {indexed} (чанков {count}), без изменений {unchanged}, удалено из индекса {removed}. Чат теперь будет сам искать ответы в коде и документах папки.</p>": "<p><b>Terminé :</b> fichiers modifiés {indexed} ({count} fragments), inchangés {unchanged}, retirés de l’index {removed}. Le chat cherchera désormais lui-même les réponses dans le code et les documents du dossier.</p>",
+ "Останавливаю после текущего файла…": "Arrêt après le fichier en cours…",
+ "Индексация: {done} из {total} — {name}": "Indexation : {done} sur {total} — {name}",
+ "Журналы программы и «Пакета на лазер»: их можно приложить к сообщению об ошибке": "Journaux du programme et du « Paquet laser » : vous pouvez les joindre à un rapport d’erreur",
+ "RAG: считаю чанки в индексе…": "RAG : comptage des fragments de l’index…",
+ "<p><b>Остановлено.</b> Проиндексировано файлов: {files}, чанков: {count}. Следующая индексация продолжит с того же места.</p>": "<p><b>Arrêté.</b> Fichiers indexés : {files}, fragments : {count}. La prochaine indexation reprendra au même endroit.</p>",
+ "Открыть папку журналов": "Ouvrir le dossier des journaux"
 }

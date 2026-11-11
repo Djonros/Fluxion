@@ -7,11 +7,9 @@ prompt_toolkit>=3.0
 rich>=13.0
 tiktoken>=0.8
 numpy>=2.0
-tqdm>=4.66
 
 # RAG (Phase 2)
 chromadb>=0.5.0
-sentence-transformers>=3.0
 tree-sitter>=0.23
 tree-sitter-python>=0.23
 flashrank>=0.2
@@ -22,8 +20,6 @@ pillow>=10.0  # scans of the design archive before the OCR (rag/ocr.py)
 
 # Web (Phase 4)
 trafilatura>=1.12
-tenacity>=9.0
-duckdb>=1.1
 
 # Licensing (Phase 14)
 cryptography>=42

@@ -9,7 +9,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from dxfka.config import (
-    APP_DIR, LOG_FILE, MAX_NAME_LEN, SETTINGS_FILE, SKIP_PATH_MARKERS,
+    APP_DIR, LOG_FILE, MAX_NAME_LEN, SETTINGS_FILE, SKIP_ROOT_FOLDERS,
     STATE_DIR)
 
 # ======================================================================
@@ -40,10 +40,37 @@ def sanitize_filename(name: str) -> str:
     return cleaned[:MAX_NAME_LEN].strip()
 
 
+def _system_dirs() -> List[str]:
+    """Каталоги программ и %ProgramData%\\ASCON этого компьютера (нижний регистр, с «\\» в конце)."""
+    out = []
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        value = os.environ.get(var, "")
+        if value:
+            out.append(value)
+    data = os.environ.get("ProgramData", "")
+    if data:
+        out.append(os.path.join(data, "ASCON"))
+    return [os.path.normpath(p).lower().rstrip("\\/") + "\\" for p in out]
+
+
 def is_standard_part_path(path: str) -> bool:
-    """True, если путь похож на стандартное/библиотечное изделие (пропускаем)."""
-    low = os.path.normcase(path)
-    return any(marker in low for marker in SKIP_PATH_MARKERS)
+    """
+    True — стандартное/библиотечное изделие (пропускаем): файл из каталога
+    программ (в т.ч. «X:\\Program Files» на любом диске), из %ProgramData%\\ASCON
+    или из папки Libs установки КОМПАС-3D. Папка проекта с «ASCON» в имени —
+    не библиотека.
+    """
+    norm = os.path.normpath(path or "").replace("/", "\\")
+    low = norm.lower()
+    if any(low.startswith(d) for d in _system_dirs()):
+        return True
+    parts = [p for p in low.split("\\") if p]
+    if len(parts) > 1 and parts[0].endswith(":") and parts[1] in SKIP_ROOT_FOLDERS:
+        return True
+    for i, part in enumerate(parts[:-1]):
+        if part.startswith("kompas-3d") and parts[i + 1] == "libs":
+            return True
+    return False
 
 
 def safe_str(obj: Any, attr: str, default: str = "") -> str:
@@ -109,23 +136,30 @@ def com_item(collection: Any, index: int) -> Any:
     return None
 
 
-def com_items(collection: Any) -> list:
+def com_items(collection: Any, log: Any = None) -> list:
     """
-    Список всех элементов коллекции. Пробуем 0-базу и 1-базу:
-    если первый индекс не даёт элемент — переключаемся на вторую базу.
+    Список элементов коллекции. База индексов (0 или 1) — та, на которой
+    отвечает первый элемент. Элемент, который КОМПАС не отдал, пропускается
+    с записью в журнал (*log(level, text)*), остальные остаются: раньше один
+    сбойный компонент обнулял весь список деталей сборки.
     """
     count = com_count(collection)
     if not count:
         return []
     for base in (0, 1):
-        items = []
+        items, missing = [], []
         for i in range(base, base + count):
             item = com_item(collection, i)
             if item is None:
-                items = []
-                break
+                if i == base:
+                    break          # первая не отвечает — другая база
+                missing.append(i)
+                continue
             items.append(item)
         if items:
+            if missing and log is not None:
+                log("warning", f"Не получено элементов коллекции: {len(missing)} из "
+                               f"{count} (индексы {missing[:10]}) — пропущены")
             return items
     return []
 

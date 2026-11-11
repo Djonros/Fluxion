@@ -276,6 +276,7 @@ def build_registry(repl: REPL, backend: OllamaBackend, settings: Settings) -> Co
     def _adapters(args):
         from finetune import QLoRASettings
         from finetune.marketplace import (
+            AdapterInfo,
             AdapterNotFoundError,
             AdapterRegistry,
             DuplicateAdapterError,

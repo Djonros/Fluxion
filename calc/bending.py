@@ -68,7 +68,7 @@ def _die_for(t: float) -> float:
 
 
 def _flanges(text: str) -> list[float]:
-    items = re.findall(rf"{units.NUMBER_RE}\s*(?:мм|см|м)?", text or "")
+    items = re.findall(rf"{units.NUMBER_RE}\s*(?:мм|см|м\b)?", text or "")
     if (text or "").strip() and not items:
         raise CalcError(f"полки «{text}»: нужны длины через «;» — «40; 100; 40»")
     return [units.parse(x, units.LENGTH) for x in items]

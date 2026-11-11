@@ -61,13 +61,20 @@ class _Const:
         return _FALLBACK[name]
 
 
+def _ensure(guid: str):
+    """EnsureModule of a KOMPAS typelib; a half-written gen_py cache is rebuilt once."""
+    from dxfka.kompas.connection import ensure_module
+
+    return ensure_module(guid)
+
+
 def connect():
     """Return (KompasObject API5, constants 3D); start KOMPAS if needed."""
     if os.name != "nt":
         raise KompasError("КОМПАС-3D работает только в Windows.")
     try:
         import pythoncom
-        from win32com.client import Dispatch, gencache
+        from win32com.client import Dispatch
     except ImportError:
         raise KompasError("Нужен пакет pywin32: pip install pywin32") from None
 
@@ -78,14 +85,14 @@ def connect():
         raise KompasError(f"КОМПАС-3D не найден или не запускается ({exc}).") from None
     kompas = app
     try:
-        api5 = gencache.EnsureModule(_TLB_API5, 0, 1, 0)
+        api5 = _ensure(_TLB_API5)
         kompas = api5.KompasObject(
             app._oleobj_.QueryInterface(api5.KompasObject.CLSID, pythoncom.IID_IDispatch)
         )
     except Exception:
         pass  # late binding still works for everything used below
     try:
-        const3d = gencache.EnsureModule(_TLB_CONST_3D, 0, 1, 0).constants
+        const3d = _ensure(_TLB_CONST_3D).constants
     except Exception:
         const3d = None
     kompas.Visible = True
@@ -203,9 +210,7 @@ class _Quiet:
 
 def _api7(kompas, obj):
     """The API7 interface of an API5 object (part, sketch, face)."""
-    from win32com.client import gencache
-
-    gencache.EnsureModule(_TLB_API7, 0, 1, 0)
+    _ensure(_TLB_API7)
     return kompas.TransferInterface(obj, _KS_API7_DUAL, 0)
 
 

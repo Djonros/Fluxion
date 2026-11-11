@@ -7,6 +7,8 @@ from typing import Any
 
 import httpx
 
+from .net_timeouts import DOWNLOAD, STREAM, timeout_message
+
 
 class OllamaError(Exception):
     """Raised when the Ollama server returns an error or is unreachable."""
@@ -49,7 +51,7 @@ class OllamaClient:
             "POST",
             self._url("/api/pull"),
             json={"name": self.model, "stream": stream},
-            timeout=None,
+            timeout=DOWNLOAD,  # a big model: long silences are normal
         ) as r:
             r.raise_for_status()
             for line in r.iter_lines():
@@ -68,7 +70,7 @@ class OllamaClient:
             "POST",
             self._url("/api/create"),
             json={"model": name, "modelfile": modelfile, "stream": True},
-            timeout=None,
+            timeout=DOWNLOAD,
         ) as r:
             r.raise_for_status()
             for line in r.iter_lines():
@@ -117,19 +119,23 @@ class OllamaClient:
         }
         if format is not None:
             payload["format"] = format
-        with httpx.stream(
-            "POST", self._url("/api/chat"), json=payload, timeout=None
-        ) as r:
-            if r.status_code != 200:
-                raise OllamaError(
-                    f"Ollama stream failed ({r.status_code}): {r.text[:300]}"
-                )
-            for line in r.iter_lines():
-                if not line:
-                    continue
-                chunk = json.loads(line)
-                if chunk.get("done") and not chunk.get("message"):
-                    continue
-                delta = chunk.get("message", {}).get("content", "")
-                if delta:
-                    yield delta
+        try:
+            with httpx.stream(
+                "POST", self._url("/api/chat"), json=payload, timeout=STREAM
+            ) as r:
+                if r.status_code != 200:
+                    r.read()
+                    raise OllamaError(
+                        f"Ollama stream failed ({r.status_code}): {r.text[:300]}"
+                    )
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    if chunk.get("done") and not chunk.get("message"):
+                        continue
+                    delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        yield delta
+        except httpx.TimeoutException as exc:
+            raise OllamaError(timeout_message(exc, "Ollama")) from exc
