@@ -70,6 +70,12 @@ def result_text(result: dict) -> str:
     return text
 
 
+def child_env(extra: dict | None = None) -> dict:
+    """The environment of a child program: ours, UTF-8 for a Python child (its pipes are cp1252
+    on Windows otherwise and Cyrillic fails), then the app's own variables."""
+    return {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", **(extra or {})}
+
+
 class McpServer:
     def __init__(self, command: str, args: list[str] | None = None, env: dict | None = None,
                  cwd: str | None = None, name: str = ""):
@@ -87,7 +93,7 @@ class McpServer:
 
     # ── the process ──
     def start(self, timeout: float = START_TIMEOUT) -> dict:
-        env = dict(os.environ, **self.env)
+        env = child_env(self.env)
         try:
             self._proc = subprocess.Popen(
                 [resolve(self.command), *self.args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

@@ -13,7 +13,7 @@ Private windows of browsers (InPrivate, инкогнито) are not written.
 """
 from __future__ import annotations
 
-import os
+import ntpath
 import sys
 import threading
 import time
@@ -39,8 +39,8 @@ NAMES = {  # programs the user knows by another name than the exe
 
 
 def app_name(exe: str) -> str:
-    base = os.path.basename(exe).lower()
-    return NAMES.get(base) or os.path.splitext(os.path.basename(exe))[0] or "?"
+    base = ntpath.basename(exe).lower()
+    return NAMES.get(base) or ntpath.splitext(ntpath.basename(exe))[0] or "?"
 
 
 def _windows_probe():
@@ -99,7 +99,7 @@ class ActivityConnector(Connector):
         self._thread: threading.Thread | None = None
 
     def skipped(self, exe: str, title: str) -> bool:
-        if os.path.basename(exe).lower() in self.exclude:
+        if ntpath.basename(exe).lower() in self.exclude:
             return True
         low = title.lower()
         return any(mark in low for mark in PRIVATE_MARKS)
@@ -141,7 +141,7 @@ class ActivityConnector(Connector):
         if end - start < SHORTEST:
             return None
         name = app_name(exe)
-        event = Event(self.id, "app.focus", f"{name} — {title}" if title else name, ref=os.path.basename(exe),
+        event = Event(self.id, "app.focus", f"{name} — {title}" if title else name, ref=ntpath.basename(exe),
                       detail=exe, time=start, duration=round(end - start))
         self.emit(event)
         return event

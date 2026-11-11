@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from . import secrets
-from .mcp import OUTPUT_LIMIT, McpError, McpServer, _no_window
+from .mcp import OUTPUT_LIMIT, McpError, McpServer, _no_window, child_env
 
 KINDS = ("mcp", "cli", "http")
 POLICIES = ("auto", "ask", "off")
@@ -136,7 +136,7 @@ def run_cli(template: str, value: str, timeout: int = CLI_TIMEOUT) -> str:
 
     argv[0] = resolve(argv[0])
     try:
-        done = subprocess.run(argv, capture_output=True, timeout=timeout, **_no_window())
+        done = subprocess.run(argv, capture_output=True, timeout=timeout, env=child_env(), **_no_window())
     except FileNotFoundError as exc:
         raise AppError(f"нет программы «{argv[0]}»") from exc
     except subprocess.TimeoutExpired as exc:
