@@ -4,6 +4,7 @@
 import json
 import logging
 import logging.handlers
+import ntpath
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -49,8 +50,8 @@ def _system_dirs() -> List[str]:
             out.append(value)
     data = os.environ.get("ProgramData", "")
     if data:
-        out.append(os.path.join(data, "ASCON"))
-    return [os.path.normpath(p).lower().rstrip("\\/") + "\\" for p in out]
+        out.append(ntpath.join(data, "ASCON"))
+    return [ntpath.normpath(p).lower().rstrip("\\/") + "\\" for p in out]
 
 
 def is_standard_part_path(path: str) -> bool:
@@ -60,7 +61,7 @@ def is_standard_part_path(path: str) -> bool:
     или из папки Libs установки КОМПАС-3D. Папка проекта с «ASCON» в имени —
     не библиотека.
     """
-    norm = os.path.normpath(path or "").replace("/", "\\")
+    norm = ntpath.normpath(path or "")  # Windows paths, on Linux too (CI)
     low = norm.lower()
     if any(low.startswith(d) for d in _system_dirs()):
         return True
