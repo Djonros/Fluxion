@@ -18,11 +18,13 @@ from .activity import ActivityConnector
 from .apps import Apps, AppTool
 from .connector import Connector, Event
 from .folders import FolderConnector
+from .mail import MailConnector
 from .journal import DAY, Journal, start_of_day
 
 CONNECTORS: dict[str, type[Connector]] = {
     FolderConnector.id: FolderConnector,
     ActivityConnector.id: ActivityConnector,
+    MailConnector.id: MailConnector,
 }
 
 
@@ -49,7 +51,8 @@ _ASKS = re.compile(
     r"что я (делал|делала|сделал|сделала)|чем я занимал|над чем я работал|на что ушл|"
     r"сколько (времени|часов|ч\b)|какие файлы|что (менял|изменил|появил|нового в папк)|"
     r"(нов|изменённ|измененн)\w* файл|журнал помощник|сводк\w* (за|по)|мой день|моя неделя|"
-    r"what did i do|what have i done|which files|what files|how many hours", re.I)
+    r"(что|какие|какое|кто) .{0,20}(почт|письм)|(нов|важн|непрочитан)\w* письм|на почт\w* (за|сегодня|вчера)|"
+    r"what did i do|what have i done|which files|what files|how many hours|new (mail|emails?)", re.I)
 
 
 def period(query: str, now: float | None = None) -> tuple[float, float, str]:
@@ -204,6 +207,15 @@ class Hub:
                     lines.append(f"- {datetime.fromtimestamp(e.time):%d.%m %H:%M} {e.title} ({e.ref})")
                 if len(files) > 30:
                     lines.append(f"- … и ещё {len(files) - 30}")
+        if connectors is None or "mail" in connectors:
+            letters = self.journal.events(since, until, connector="mail", limit=500)
+            if letters:
+                lines.append(f"Почта {head}: писем {len(letters)}:")
+                for e in letters[:40]:
+                    lines.append(f"- {datetime.fromtimestamp(e.time):%d.%m %H:%M} {e.title[len('Письмо от '):]}"
+                                 f" [{e.ref}]" + ("; есть вложения" if "вложения" in e.detail else ""))
+                if len(letters) > 40:
+                    lines.append(f"- … и ещё {len(letters) - 40}")
         if not lines:
             return f"За период «{head}» в журнале помощника ничего нет."
         return "\n".join(lines)
@@ -250,6 +262,10 @@ class Hub:
 
     def agent_tools(self, cloud: bool = False) -> list[AppTool]:
         tools = self.journal_tools(cloud)
+        for cid, conn in list(self.running.items()):
+            allowed = config.connector(self.cfg, cid)["cloud"]
+            if not cloud or allowed:
+                tools += conn.tools(allowed)
         if self.apps is not None:
             tools += [t for t in self.apps.tools() if not cloud or t.cloud]
         return tools

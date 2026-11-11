@@ -301,7 +301,7 @@ def test_the_window_shows_the_sources_and_saves(app, journal, tmp_path):
     journal.add(Event("folders", "file.created", "Новый файл: рама.a3d", ref="рама.a3d"))
     hub = make_hub(journal)
     dialog = AssistantDialog(hub=hub)
-    assert [b.cid for b in dialog.boxes] == ["folders", "activity"]
+    assert [b.cid for b in dialog.boxes] == ["folders", "activity", "mail"]
     assert dialog.table.rowCount() == 1 and "рама.a3d" in dialog.table.item(0, 2).text()
     dialog.search.setText("нет такого")
     dialog.fill_journal()
@@ -495,3 +495,245 @@ def test_the_window_adds_an_app_and_its_permissions(app, journal):
     assert config.load()["apps"][0]["tools"] == value["tools"]
     dialog.deleteLater()
     main.deleteLater()
+
+
+# ── «Почта» ──
+
+import imaplib  # noqa: E402
+from email.message import EmailMessage  # noqa: E402
+
+from assistant import mail  # noqa: E402
+
+
+def letter(n, sender="Петров <petrov@zavod.ru>", subject="Рама 600.000", body="Добрый день!", html_body=None,
+           attach=False, when="Tue, 10 Nov 2026 10:00:00 +0300"):
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"], msg["Date"] = sender, "me@zavod.ru", subject, when
+    msg["Message-ID"] = f"<m{n}@zavod.ru>"
+    if body is None:
+        msg.set_content(html_body, subtype="html")  # a letter in HTML only
+    else:
+        msg.set_content(body)
+        if html_body:
+            msg.add_alternative(html_body, subtype="html")
+    if attach:
+        msg.add_attachment(b"%PDF", maintype="application", subtype="pdf", filename="чертёж.pdf")
+    return msg.as_bytes()
+
+
+class FakeImap:
+    def __init__(self, messages, password="pw"):
+        self.messages, self.password = dict(messages), password
+        self.appended, self.readonly, self.logged_out = [], None, False
+
+    def login(self, user, password):
+        if password != self.password:
+            raise imaplib.IMAP4.error("b'[AUTHENTICATIONFAILED] Invalid credentials'")
+
+    def select(self, folder, readonly=False):
+        self.readonly = readonly
+        return "OK", [str(len(self.messages)).encode()]
+
+    def response(self, name):
+        return name, [b"77"]
+
+    def uid(self, command, *args):
+        uids = sorted(self.messages)
+        if command == "SEARCH":
+            criteria = args[1:]
+            if criteria[:1] == ("UID",):
+                start = int(criteria[1].split(":")[0])
+                found = [u for u in uids if u >= start] or uids[-1:]  # "n:*" always gives the last one
+            elif criteria[:1] == ("UNSEEN",):
+                found = uids[:1]
+            else:
+                found = uids
+            return "OK", [" ".join(map(str, found)).encode()]
+        wanted = [int(x) for x in args[0].split(",")]
+        data = []
+        for u in wanted:
+            raw = self.messages[u]
+            part = raw.split(b"\n\n", 1)[0] + b"\n\n" if "HEADER" in args[1] else raw
+            data += [(f"{u} (UID {u} BODY[] {{{len(part)}}}".encode(), part), b")"]
+        return "OK", data
+
+    def list(self):
+        return "OK", [b'(\\HasNoChildren) "/" INBOX', b'(\\HasNoChildren \\Drafts) "/" "&BCcENQRABD0EPgQyBDgEOgQ4-"']
+
+    def append(self, folder, flags, date, message):
+        self.appended.append((folder, flags, message))
+        return "OK", [b"APPEND completed"]
+
+    def logout(self):
+        self.logged_out = True
+
+
+IMAP_ACCOUNT = {"id": "work", "kind": "imap", "address": "me@zavod.ru", "imap_host": "imap.zavod.ru",
+                "imap_port": 993}
+
+
+def test_mail_servers_are_found_by_the_address():
+    assert mail.autoconfig("ivanov@yandex.ru")["imap_host"] == "imap.yandex.ru"
+    assert "паролем приложения" in mail.autoconfig("a@gmail.com")["hint"]
+    xml = ('<clientConfig><emailProvider><incomingServer type="pop3"><hostname>pop.x.ru</hostname><port>995</port>'
+           '</incomingServer><incomingServer type="imap"><hostname>mail.%EMAILDOMAIN%</hostname><port>993</port>'
+           '</incomingServer><outgoingServer type="smtp"><hostname>smtp.x.ru</hostname><port>587</port>'
+           '</outgoingServer></emailProvider></clientConfig>')
+    found = mail.autoconfig("a@x.ru", fetch=lambda domain: xml)
+    assert (found["imap_host"], found["imap_port"], found["smtp_port"], found["source"]) == ("mail.x.ru", 993, 587,
+                                                                                             "ispdb")
+    guess = mail.autoconfig("a@zavod.ru", fetch=lambda domain: "")
+    assert guess["imap_host"] == "imap.zavod.ru" and guess["source"] == "guess"
+    with pytest.raises(mail.MailError):
+        mail.autoconfig("без собаки")
+
+
+def test_an_imap_box_reads_without_marking_and_writes_only_drafts():
+    fake = FakeImap({5: letter(5, attach=True), 6: letter(6, sender="=?utf-8?b?0KHQuNC00L7RgNC+0LI=?= <s@x.ru>",
+                                                           subject="Счёт", body=None,
+                                                           html_body="<p>Оплата <b>до 20.11</b></p>")})
+    with mail.ImapBox(IMAP_ACCOUNT, "pw", factory=lambda h, p: fake) as box:
+        state = {}
+        first = box.new_letters(state)
+        assert [l.uid for l in first] == ["5", "6"] and state == {"validity": "77", "last": 6}
+        assert first[0].attachments and first[1].sender == "Сидоров <s@x.ru>" and fake.readonly is True
+        assert box.new_letters(state) == []  # "7:*" gives the last letter again: not new
+        fake.messages[7] = letter(7, subject="Срочно: болты")
+        assert [l.subject for l in box.new_letters(state)] == ["Срочно: болты"] and state["last"] == 7
+        assert [l.uid for l in box.search("петров болты")] == ["7"]
+        text = box.read("6")
+        assert "Тема: Счёт" in text and "Оплата до 20.11" in text and "<b>" not in text
+        assert "Вложения: чертёж.pdf" in box.read("5")
+        message = mail.build_draft(IMAP_ACCOUNT, "", "", "Будет в пятницу.", box.original("7"))
+        assert box.draft(message) == "&BCcENQRABD0EPgQyBDgEOgQ4-"
+    folder, flags, raw = fake.appended[0]
+    assert flags == "\\Draft" and b"In-Reply-To: <m7@zavod.ru>" in raw and b"To: petrov@zavod.ru" in raw
+    assert fake.logged_out
+    with pytest.raises(mail.MailError, match="не пустил: \\[AUTHENTICATIONFAILED"):
+        mail.ImapBox(IMAP_ACCOUNT, "wrong", factory=lambda h, p: FakeImap({})).open()
+    with pytest.raises(mail.MailError, match="пароль"):
+        mail.ImapBox(IMAP_ACCOUNT, "").open()
+
+
+def test_the_mail_connector_writes_new_letters_and_offers_tools(tmp_path, journal):
+    fake = FakeImap({5: letter(5)})
+    opener = lambda account: mail.ImapBox(account, "pw", factory=lambda h, p: fake)  # noqa: E731
+    got = []
+    conn = mail.MailConnector({"accounts": [IMAP_ACCOUNT]}, opener=opener, state_file=tmp_path / "state.json")
+    conn._emit = got.append
+    conn.poll()
+    assert [e.title for e in got] == ["Письмо от Петров <petrov@zavod.ru>: Рама 600.000"] and got[0].ref == "work:5"
+    fake.messages[6] = letter(6, subject="Счёт", attach=True)
+    conn2 = mail.MailConnector({"accounts": [IMAP_ACCOUNT]}, opener=opener, state_file=tmp_path / "state.json")
+    conn2._emit = got.append
+    conn2.poll()  # the state survives a restart: only the new letter
+    assert [e.ref for e in got] == ["work:5", "work:6"] and "есть вложения" in got[1].detail
+    tools = {t.name: t for t in conn2.tools()}
+    assert {n: t.policy for n, t in tools.items()} == {"search": "auto", "read": "auto", "draft": "ask"}
+    assert "[work:6]" in tools["search"].run({"query": "счёт"})
+    assert "Добрый день!" in tools["read"].run({"id": "work:5"})
+    assert "Отправит пользователь сам" in tools["draft"].run({"reply_to": "work:5", "body": "Принято."})
+    assert b"Subject: Re: =?utf-8?" in fake.appended[0][2] or b"Re: " in fake.appended[0][2]
+    broken = mail.MailConnector({"accounts": [dict(IMAP_ACCOUNT, imap_host="")]}, state_file=tmp_path / "s2.json")
+    broken._emit = got.append
+    broken.poll()
+    assert not broken.ok and "сервер IMAP" in broken.state
+    hub = make_hub(journal)
+    for e in got:
+        journal.add(e)
+    since, until, label = period("что пришло на почту сегодня", got[0].time + 60)
+    assert "Почта" in hub.summary(start_of_day(got[0].time), until + DAY, "за день")
+
+
+class FakeItem:
+    def __init__(self, entry, subject, sender="Петров", address="petrov@zavod.ru", body="Текст", files=()):
+        self.EntryID, self.Subject, self.SenderName, self.SenderEmailAddress = entry, subject, sender, address
+        self.Body, self.To, self.Class = body, "me", 43
+        self.ReceivedTime = datetime.now()
+        names = list(files)
+
+        class Attachments:
+            Count = len(names)
+
+            @staticmethod
+            def Item(i):
+                return type("A", (), {"FileName": names[i - 1]})()
+
+        self.Attachments = Attachments
+        self.saved = False
+
+    def Reply(self):
+        reply = FakeItem("r", "RE: " + self.Subject, body="> " + self.Body)
+        return reply
+
+    def Save(self):
+        self.saved = True
+
+
+class FakeOutlook:
+    def __init__(self, items):
+        self.items, self.created = items, []
+        outlook = self
+
+        class Items(list):
+            def Sort(self, key, descending):
+                self.sort(key=lambda i: i.ReceivedTime, reverse=descending)
+
+        class Inbox:
+            UnReadItemCount = 2
+
+            @property
+            def Items(self):
+                return Items(outlook.items)
+
+        class Namespace:
+            def GetDefaultFolder(self, n):
+                return Inbox()
+
+            def GetItemFromID(self, entry):
+                return next(i for i in outlook.items if i.EntryID == entry)
+
+        self.namespace = Namespace()
+
+    def GetNamespace(self, name):
+        return self.namespace
+
+    def CreateItem(self, kind):
+        item = FakeItem("new", "")
+        self.created.append(item)
+        return item
+
+
+def test_outlook_of_this_computer_is_read_the_same_way():
+    app = FakeOutlook([FakeItem("A1", "Рама", files=["спец.pdf"]), FakeItem("A2", "Болты")])
+    with mail.OutlookBox({"id": "outlook", "kind": "outlook"}, app=app) as box:
+        state = {}
+        assert sorted(l.subject for l in box.new_letters(state)) == ["Болты", "Рама"]
+        assert box.new_letters(state) == [] and box.unseen() == 2
+        app.items.append(FakeItem("A3", "Счёт"))
+        assert [l.uid for l in box.new_letters(state)] == ["A3"]
+        assert "Вложения: спец.pdf" in box.read("A1") and box.search("болт")[0].uid == "A2"
+        msg = mail.build_draft({"address": ""}, "x@y.ru", "Тема", "Привет")
+        assert box.draft(msg) == "Черновики Outlook" and app.created[0].saved and app.created[0].To == "x@y.ru"
+
+
+def test_the_window_adds_a_mailbox(app, monkeypatch):
+    from assistant import secrets
+
+    from desktop_browser.assistant_dialog import MailAccountDialog
+
+    monkeypatch.setattr(secrets, "_cred", lambda: None)
+    dialog = MailAccountDialog(taken={"ivanov"})
+    dialog.address.setText("ivanov@mail.ru")
+    dialog._autofill()
+    assert dialog.host.text() == "imap.mail.ru" and dialog.login.text() == "ivanov@mail.ru"
+    assert "внешнего приложения" in dialog.hint.text()
+    dialog.password.setText("app-pass")
+    account = dialog.value()
+    assert account == {"id": "ivanov2", "kind": "imap", "address": "ivanov@mail.ru", "login": "ivanov@mail.ru",
+                       "imap_host": "imap.mail.ru", "imap_port": 993}
+    dialog.save_password(account)
+    assert secrets.get_secret(mail.secret_name(account)) == "app-pass"
+    dialog.kind.setCurrentIndex(1)
+    assert dialog.value()["kind"] == "outlook" and not dialog.host.isEnabled()
+    dialog.deleteLater()

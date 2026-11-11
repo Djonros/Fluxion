@@ -225,6 +225,7 @@ a = Analysis(
         "assistant.agent",
         "assistant.mcp",
         "assistant.secrets",
+        "assistant.mail",
         "desktop_browser.assistant_dialog",
         "watchdog.observers",
         "watchdog.observers.read_directory_changes",

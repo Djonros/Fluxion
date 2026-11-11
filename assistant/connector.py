@@ -3,9 +3,8 @@
 A connector says, before it is turned on, what it reads (``reads``), what it writes to
 the journal (``records``) and what it never does (``never``) — the window shows these
 lines to the user as they are. Running, it gives its events to ``emit``; it may also
-offer tools the chat and, later, the agent call (``tools``), in the shape of MCP:
-a name, a description, a JSON schema of the arguments, ``acts`` for a tool that changes
-something outside Fluxion (such a tool runs only after the user's «Да»).
+offer tools to the agent of the assistant (``tools``, ``apps.AppTool``): a name, a
+description, a JSON schema of the arguments and a permission (``ask`` — only after «Да»).
 """
 from __future__ import annotations
 
@@ -23,15 +22,6 @@ class Event:
     detail: str = ""      # a little more, never the content of a file or a letter
     time: float = field(default_factory=time.time)
     duration: float = 0.0  # seconds, for the activity intervals
-
-
-@dataclass
-class Tool:
-    name: str
-    description: str
-    run: Callable[..., str]
-    schema: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
-    acts: bool = False
 
 
 class Connector:
@@ -67,5 +57,6 @@ class Connector:
         self.state, self.ok = text, False
 
     # ── what it offers ──
-    def tools(self) -> list[Tool]:
+    def tools(self, cloud: bool = False) -> list:
+        """Tools for the agent of the assistant (``apps.AppTool``); *cloud* — the cloud model may use them."""
         return []

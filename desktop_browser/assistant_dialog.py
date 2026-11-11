@@ -96,13 +96,22 @@ def connector_texts() -> dict[str, dict]:
             "never": tr("не записывает нажатия клавиш, не делает снимков экрана, не читает текст окон и адреса "
                         "в браузере, не пишет приватные окна браузера"),
         },
+        "mail": {
+            "title": tr("Почта"),
+            "about": tr("Новые письма любого ящика: «что пришло на почту», поиск, чтение и черновики ответов по "
+                        "вашей просьбе."),
+            "reads": tr("отправителя, тему и время новых писем; текст письма — только когда вы просите помощника"),
+            "records": tr("отправитель, тема, время, есть ли вложения"),
+            "never": tr("не отправляет письма — только сохраняет черновики после вашего «Да»; не отмечает письма "
+                        "прочитанными; ничего не удаляет"),
+        },
     }
 
 
 def kind_titles() -> dict[str, str]:
     return {"": tr("любое событие"), "file.created": tr("новый файл"), "file.modified": tr("изменён файл"),
             "file.moved": tr("переименован файл"), "file.deleted": tr("удалён файл"),
-            "app.focus": tr("работа в программе")}
+            "app.focus": tr("работа в программе"), "mail.new": tr("новое письмо")}
 
 
 def action_titles() -> dict[str, str]:
@@ -297,6 +306,120 @@ class AppDialog(QDialog):
             set_secret(app_kinds.secret_name(app), self.key.text())
 
 
+class MailAccountDialog(QDialog):
+    """A mailbox of «Почта»: any IMAP mail (servers found by the address) or the Outlook of this computer."""
+
+    def __init__(self, parent=None, account: dict | None = None, taken: set[str] = frozenset()):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Почтовый ящик"))
+        self.resize(560, 420)
+        self.account = dict(account or {})
+        self.taken = set(taken)
+        box = QVBoxLayout(self)
+        form = QFormLayout()
+        self.kind = QComboBox()
+        self.kind.addItem(tr("Любая почта по IMAP"), "imap")
+        self.kind.addItem(tr("Outlook на этом компьютере"), "outlook")
+        self.kind.setCurrentIndex(max(self.kind.findData(self.account.get("kind", "imap")), 0))
+        self.kind.currentIndexChanged.connect(self._kind_changed)
+        form.addRow(tr("Тип:"), self.kind)
+        self.address = QLineEdit(self.account.get("address", ""))
+        self.address.setPlaceholderText("ivanov@zavod.ru")
+        self.address.editingFinished.connect(self._autofill)
+        form.addRow(tr("Адрес:"), self.address)
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.Password)
+        self.password.setPlaceholderText(tr("пароль приложения; хранится в диспетчере учётных данных Windows"))
+        form.addRow(tr("Пароль:"), self.password)
+        self.host = QLineEdit(self.account.get("imap_host", ""))
+        form.addRow(tr("Сервер IMAP:"), self.host)
+        self.port = QSpinBox()
+        self.port.setRange(1, 65535)
+        self.port.setValue(int(self.account.get("imap_port") or 993))
+        form.addRow(tr("Порт:"), self.port)
+        self.login = QLineEdit(self.account.get("login", ""))
+        self.login.setPlaceholderText(tr("обычно совпадает с адресом"))
+        form.addRow(tr("Логин:"), self.login)
+        box.addLayout(form)
+        row = QHBoxLayout()
+        find = QPushButton(tr("Найти настройки"))
+        find.clicked.connect(lambda: self._autofill(force=True))
+        row.addWidget(find)
+        check = QPushButton(tr("Проверить"))
+        check.clicked.connect(self.check)
+        row.addWidget(check)
+        row.addStretch(1)
+        box.addLayout(row)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.setObjectName("hint")
+        box.addWidget(self.hint, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        box.addWidget(buttons)
+        self._kind_changed()
+
+    def _kind_changed(self) -> None:
+        imap = self.kind.currentData() == "imap"
+        for widget in (self.password, self.host, self.port, self.login, self.address):
+            widget.setEnabled(imap)
+        if not imap:
+            self.hint.setText(tr("Fluxion читает письма из Outlook, установленного на этом компьютере: подходит для "
+                                 "рабочей почты Exchange и Microsoft 365. Пароль не нужен."))
+
+    def _autofill(self, force: bool = False) -> None:
+        from assistant.mail import MailError, autoconfig
+
+        address = self.address.text().strip()
+        if "@" not in address or (self.host.text() and not force):
+            return
+        try:
+            found = autoconfig(address)
+        except MailError as exc:
+            self.hint.setText(str(exc))
+            return
+        self.host.setText(found["imap_host"])
+        self.port.setValue(int(found["imap_port"]))
+        if not self.login.text():
+            self.login.setText(address)
+        self.hint.setText(found.get("hint") or tr("Настройки найдены. Нажмите «Проверить»."))
+
+    def value(self) -> dict:
+        from assistant.apps import slug
+
+        address = self.address.text().strip()
+        key = self.account.get("id") or slug(address.split("@")[0] if address else "outlook", self.taken)
+        if self.kind.currentData() == "outlook":
+            return {"id": key, "kind": "outlook", "address": ""}
+        return {"id": key, "kind": "imap", "address": address, "login": self.login.text().strip() or address,
+                "imap_host": self.host.text().strip(), "imap_port": self.port.value()}
+
+    def save_password(self, account: dict) -> None:
+        if account["kind"] == "imap" and self.password.text():
+            from assistant.mail import secret_name
+            from assistant.secrets import set_secret
+
+            set_secret(secret_name(account), self.password.text())
+
+    def check(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        from assistant.mail import open_box
+
+        account = self.value()
+        self.save_password(account)
+        self.hint.setText(tr("Проверяю…"))
+        QApplication.processEvents()
+        try:
+            with open_box(account) as mailbox:
+                count = mailbox.unseen()
+        except Exception as exc:
+            self.hint.setText(tr("Не подключился: {error}", error=exc))
+            return
+        self.hint.setText(tr("Подключился. Непрочитанных писем: {count}", count=count))
+
+
 class ConnectorBox(QGroupBox):
     def __init__(self, cid: str, cc: dict, state: tuple[str, bool] | None, parent=None):
         texts = connector_texts().get(cid) or {"title": cid, "about": "", "reads": "", "records": "", "never": ""}
@@ -337,6 +460,24 @@ class ConnectorBox(QGroupBox):
             form.addRow(tr("Какие файлы:"), self.mask)
             self.exclude = QLineEdit(str(settings.get("exclude", FOLDER_EXCLUDE)))
             form.addRow(tr("Не следить за:"), self.exclude)
+        elif cid == "mail":
+            self.accounts = [dict(a) for a in settings.get("accounts") or [] if isinstance(a, dict)]
+            self.account_list = QListWidget()
+            self.account_list.setMaximumHeight(80)
+            box.addWidget(self.account_list)
+            self._fill_accounts()
+            row = QHBoxLayout()
+            for title, slot in ((tr("Добавить ящик…"), self._add_account), (tr("Изменить…"), self._edit_account),
+                                (tr("Убрать ящик"), self._drop_account)):
+                button = QPushButton(title)
+                button.clicked.connect(slot)
+                row.addWidget(button)
+            row.addStretch(1)
+            box.addLayout(row)
+            self.interval = QSpinBox()
+            self.interval.setRange(1, 120)
+            self.interval.setValue(max(int(settings.get("interval") or 120) // 60, 1))
+            form.addRow(tr("Проверять почту, раз в минут:"), self.interval)
         elif cid == "activity":
             self.titles = QCheckBox(tr("Записывать заголовки окон (имя документа); выключено — только программу"))
             self.titles.setChecked(settings.get("titles", True) is not False)
@@ -351,6 +492,42 @@ class ConnectorBox(QGroupBox):
             label.setObjectName("hint")
             box.addWidget(label)
 
+    def _fill_accounts(self) -> None:
+        from assistant.mail import account_title
+
+        self.account_list.clear()
+        self.account_list.addItems([account_title(a) for a in self.accounts])
+
+    def _add_account(self) -> None:
+        dialog = MailAccountDialog(self, taken={a.get("id", "") for a in self.accounts})
+        if dialog.exec() == QDialog.Accepted:
+            account = dialog.value()
+            dialog.save_password(account)
+            self.accounts.append(account)
+            self._fill_accounts()
+        dialog.deleteLater()
+
+    def _edit_account(self) -> None:
+        r = self.account_list.currentRow()
+        if not 0 <= r < len(self.accounts):
+            return
+        dialog = MailAccountDialog(self, self.accounts[r])
+        if dialog.exec() == QDialog.Accepted:
+            account = dialog.value()
+            dialog.save_password(account)
+            self.accounts[r] = account
+            self._fill_accounts()
+        dialog.deleteLater()
+
+    def _drop_account(self) -> None:
+        r = self.account_list.currentRow()
+        if 0 <= r < len(self.accounts):
+            from assistant.mail import secret_name
+            from assistant.secrets import delete_secret
+
+            delete_secret(secret_name(self.accounts.pop(r)))
+            self._fill_accounts()
+
     def _add_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, tr("Папка, за которой следить"))
         if folder and not self.folders.findItems(folder, 0):
@@ -361,6 +538,8 @@ class ConnectorBox(QGroupBox):
         if self.cid == "folders":
             settings = {"folders": [self.folders.item(i).text() for i in range(self.folders.count())],
                         "mask": self.mask.text().strip(), "exclude": self.exclude.text().strip()}
+        elif self.cid == "mail":
+            settings = {"accounts": self.accounts, "interval": self.interval.value() * 60}
         elif self.cid == "activity":
             settings = {"titles": self.titles.isChecked(), "exclude": self.exclude.text().strip()}
         return {"enabled": self.enabled.isChecked(), "cloud": self.cloud.isChecked(), "settings": settings}
@@ -429,7 +608,12 @@ class AssistantDialog(QDialog):
         hint.setObjectName("hint")
         box.addWidget(hint)
         box.addStretch(1)
-        return page
+        from PySide6.QtWidgets import QScrollArea
+
+        scroll = QScrollArea()  # three sources and more: the window stays the same size
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(page)
+        return scroll
 
     # ── Приложения ──
     def _apps_tab(self) -> QWidget:

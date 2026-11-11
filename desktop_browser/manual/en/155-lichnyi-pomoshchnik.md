@@ -2,7 +2,7 @@
 <!-- раздел: Чат и документы | инструмент: assistant | pro -->
 ## What it is for
 
-Fluxion notices what happens on your computer and answers questions about your work: "what did I do yesterday", "how many hours went into 792720 this week", "which models changed in the project folder". It can tell you at once that a new file appeared in a folder — on the screen or in Telegram. Everything is kept on this computer only.
+Fluxion notices what happens on your computer and in your mail and answers questions about your work: "what did I do yesterday", "how many hours went into 792720 this week", "which models changed in the project folder", "what came in the mail". It can tell you at once that a new file appeared in a folder — on the screen or in Telegram. Everything is kept on this computer only.
 
 ## How to start
 
@@ -14,6 +14,7 @@ Menu **Связь (Connect) → "Personal assistant…"**. A Pro feature.
 2. On the **"Sources"** tab turn on what you need. Each source says what it reads, what it records and what it never does.
    - **Folders** — add the folders to watch (a project, "Incoming", the archive folder). "Which files" may stay empty or hold a mask: `*.a3d;*.cdw;*.pdf`. The content of files is never read — only the name, size and time.
    - **Activity** — which window is in front and how long you worked in it. Keystrokes, screenshots and the text of windows are not recorded, nor private browser windows. Programs in "Do not record programs" are not recorded at all; window titles can be turned off — then only the program name is kept.
+   - **Mail** — **"Add mailbox…"**: type the address and the server is filled in (for an unknown domain Fluxion asks the Mozilla database; only the domain is sent), type the password and press **"Check"**. Yandex, Mail.ru and Gmail need an **app password** — the window says where to get it. Work mail on Exchange or Microsoft 365 — the type **"Outlook on this computer"**, no password needed. The password is kept in the Windows Credential Manager. Letters stay unread; the journal gets only the sender, subject and time.
 3. **"The cloud model may see these records"** is off by default: when a cloud model is chosen in the chat, the journal is not given to it.
 4. On the **"Apps"** tab connect any program: **"Add app…"** → a ready one (files in a folder, Git, SQLite database, memory) or your own:
    - **MCP server** — a program that gives its tools to the assistant. Ready servers exist for 1C, Bitrix24, Jira, databases and much more; enter the start command and arguments.
@@ -24,7 +25,8 @@ Menu **Связь (Connect) → "Personal assistant…"**. A Pro feature.
 5. On the **"Notifications"** tab add a rule: source, event, mask, action. For example: Folders — new file — `*.a3d` — notification and a message to the bots. For Telegram messages turn on `/уведомления` in the bot.
 6. Tick **"Start Fluxion minimized when Windows starts"** so the assistant works from the morning, and press **"Save"**.
 7. Ask in the chat in plain words: "what did I do yesterday?", "which files changed this week?". In a bot: `/сводка`, `/сводка вчера`, `/сводка неделя`.
-8. Give a task with apps by the `/помощник` command: "/помощник find the specification of 792720 in the project folder and list the purchased parts". The assistant picks the tools itself; before an "ask me" action Fluxion shows an "Allow?" window.
+8. Ask about mail directly: "what came in the mail today?". To find, read and reply use `/помощник`: "/помощник find Petrov's letter about the frame and prepare a reply that the drawings will be ready on Friday". The reply is saved as a **draft** in the mailbox after your "Yes" — you send it yourself.
+9. Give a task with apps by the `/помощник` command: "/помощник find the specification of 792720 in the project folder and list the purchased parts". The assistant picks the tools itself; before an "ask me" action Fluxion shows an "Allow?" window.
 
 While the assistant is on, the window's close button hides Fluxion to the icon by the clock. Right-click the icon for **"Pause for 1 hour"** (nothing is recorded) and **"Exit"**.
 
@@ -38,6 +40,8 @@ The answer to `/помощник`: which tools were called (⚙) and which you r
 - **The chat does not answer from the journal** — check that the assistant is on and the source works ("Working" under it on the "Sources" tab). Ask with words like "what did I do…", "which files…".
 - **The answer says the journal is not given to the cloud model** — choose a local model or tick "The cloud model may see these records" for the source.
 - **"Folders" says "no folder"** — the folder was renamed or the network drive is not connected: remove it and add it again.
+- **Mail: "the server did not let in"** — an app password is needed, not the ordinary one; in Yandex Mail also allow IMAP (All settings → Email clients).
+- **Mail: Outlook.com or Microsoft 365 do not connect with a password** — that is right, password sign-in is closed there: add the mailbox to Outlook on the computer and choose "Outlook on this computer".
 - **An app says "Does not work"** — try the command in an ordinary command prompt. Servers through `npx` need Node.js, through `uvx` — uv; the first start downloads the server and takes up to a minute.
 - **The cloud model does not see an app** — tick "The cloud model may use this app" for it.
 - **A network folder shows changes late** — this happens with network drives; the changes still reach the journal.
