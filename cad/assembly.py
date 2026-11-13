@@ -56,6 +56,9 @@ class Component:
     # the sheet body of a sheet detail, mm (cad.dfma checks the bend against the thickness); 0 — none
     sheet_thickness: float = 0.0
     bend_radius: float = 0.0
+    # the length of a detail of rolled stock (a tube, an angle, a bar...), mm: from «@L = 558.3 мм»
+    # in its name (the KOMPAS metal structures) or its longest overall size; 0 — not known / not rolled
+    length_mm: float = 0.0
     children: list["Component"] = field(default_factory=list)
 
     @property
@@ -114,6 +117,38 @@ def no_material(raw: str) -> bool:
     if not text or "без указания" in text:
         return True
     return not sortament and bool(DEFAULT_MATERIAL_RE.match(grade.strip()))
+
+
+# rolled stock by the first word of its sortament: it is ordered in metres, not in sheets
+ROLLED_RE = re.compile(
+    r"^\s*(труб\w*|уголок|уголк\w*|швеллер\w*|двутавр\w*|тавр\w*|балк\w*|круг\w*|квадрат\w*|шестигранн\w*|"
+    r"полос\w*|профил\w*|арматур\w*|прут\w*|пруток|катанк\w*|проволок\w*|рельс\w*|шпунт\w*)\b",
+    re.IGNORECASE,
+)
+SHEET_RE = re.compile(r"^\s*(лист\w*|рулон\w*|плит\w*|лента)\b", re.IGNORECASE)
+# «Лонжерон@L = 1408.3 мм»: the length the KOMPAS metal structures write into the name
+LENGTH_IN_NAME_RE = re.compile(r"@\s*L\s*=\s*(\d+(?:[.,]\d+)?)\s*мм", re.IGNORECASE)
+
+
+def rolled(raw: str) -> bool:
+    """A tube, an angle, a channel, a bar... — rolled stock by the material of KOMPAS,
+    whatever the body (a tube modeled as a sheet shell is still a tube)."""
+    sortament, grade = material_parts(raw)
+    return bool(ROLLED_RE.match(sortament or grade))
+
+
+def sheet_detail(c: "Component") -> bool:
+    """A detail cut from a sheet: its material is a sheet, or it has a sheet body and its
+    material is not rolled stock (a tube with the wall of a sheet shell is a tube)."""
+    if rolled(c.material):
+        return False
+    sortament, grade = material_parts(c.material)
+    return bool(SHEET_RE.match(sortament or grade)) or c.sheet_thickness > 0
+
+
+def length_from_name(name: str) -> float:
+    match = LENGTH_IN_NAME_RE.search(name or "")
+    return float(match.group(1).replace(",", ".")) if match else 0.0
 
 
 # ── reading from KOMPAS ──────────────────────────────────────────────────────
@@ -317,8 +352,41 @@ def sheet_of(part, cast) -> tuple[float, float]:
     return thickness, radius
 
 
+def length_of(part, api5, kompas) -> float:
+    """The longest overall size of a detail in its own coordinates, mm (API5: the main body
+    of the part; the API7 sizes are those of the assembly, a tube at an angle gives its
+    diagonal); 0 — not read."""
+    try:
+        part5 = api5.ksPart(kompas.TransferInterface(part, 1, 0))
+        body = part5.GetMainBody()
+        if body is None:
+            return 0.0
+        gab = api5.ksBody(body).GetGabarit()
+    except Exception:
+        return 0.0
+    if not gab or not gab[0]:
+        return 0.0
+    return round(max(abs(gab[4] - gab[1]), abs(gab[5] - gab[2]), abs(gab[6] - gab[3])), 1)
+
+
+def _kompas5():
+    """(API5 wrappers, KompasObject) or (None, None): the lengths of rolled details are read through it."""
+    try:
+        import pythoncom
+        from win32com.client import Dispatch
+
+        from dxfka.config import TYPELIB_API5
+        from dxfka.kompas.connection import ensure_module
+
+        api5 = ensure_module(TYPELIB_API5)
+        k5 = Dispatch("Kompas.Application.5")
+        return api5, api5.KompasObject(k5._oleobj_.QueryInterface(api5.KompasObject.CLSID, pythoncom.IID_IDispatch))
+    except Exception:
+        return None, None
+
+
 def _component(part, cast, with_area: bool, properties=None, features=None, sections=None,
-               sheets=None) -> Component:
+               sheets=None, lengths=None) -> Component:
     standard = bool(_get(part, "Standard", False))
     detail = bool(_get(part, "Detail", False))
     props = properties(part) if properties is not None else {}
@@ -338,11 +406,19 @@ def _component(part, cast, with_area: bool, properties=None, features=None, sect
             area = float(cast(part, "IMassInertiaParam7").Area)
         except Exception:
             area = 0.0
+    name = str(_get(part, "Name", "") or "").strip()
+    material = str(_get(part, "Material", "") or "").strip()
+    length = 0.0
+    if kind == DETAIL:
+        length = length_from_name(name)
+        if not length and lengths is not None and rolled(material):
+            length = lengths(part)
     return Component(
         kind=kind,
         marking=str(_get(part, "Marking", "") or "").strip(),
-        name=str(_get(part, "Name", "") or "").strip(),
-        material=str(_get(part, "Material", "") or "").strip(),
+        name=name,
+        material=material,
+        length_mm=length,
         mass_g=float(_get(part, "Mass", 0.0) or 0.0),
         area_cm2=area,
         file=str(_get(part, "FileName", "") or ""),
@@ -355,16 +431,17 @@ def _component(part, cast, with_area: bool, properties=None, features=None, sect
 
 
 def _walk(part, cast, with_area: bool, properties=None, features=None, sections=None,
-          sections_of=None, sheets=None) -> list[Component]:
+          sections_of=None, sheets=None, lengths=None) -> list[Component]:
     out = []
     for child in _get(part, "Parts", None) or []:
         child = cast(child, "IPart7")
         if bool(_get(child, "Excluded", False)):
             continue  # excluded from the calculation in KOMPAS
-        component = _component(child, cast, with_area, properties, features, sections, sheets)
+        component = _component(child, cast, with_area, properties, features, sections, sheets, lengths)
         if component.kind == ASSEMBLY:  # a bought unit (OTHER) is one item: its insides are not read
             own = sections_of(child) if sections_of is not None else None
-            component.children = _walk(child, cast, with_area, properties, features, own, sections_of, sheets)
+            component.children = _walk(child, cast, with_area, properties, features, own, sections_of, sheets,
+                                       lengths)
         out.append(component)
     return out
 
@@ -380,10 +457,26 @@ def read(path: str | Path, with_area: bool = True, log=print) -> Component:
         from win32com.client import CastTo, Dispatch
     except ImportError as exc:
         raise AssemblyError("Нужен пакет pywin32: pip install pywin32") from exc
+    from dxfka.kompas.connection import broken_cache_error, clear_com_cache, ensure_wrappers
+
+    # CastTo loads the COM wrappers from the gen_py cache: a half-written one is rebuilt first
+    ensure_wrappers(lambda level, text: log(text))
     try:
         app = Dispatch("Kompas.Application.7")
     except Exception as exc:
         raise AssemblyError(f"КОМПАС-3D не запускается: {exc}") from exc
+    try:
+        return _read(app, path, with_area, log, CastTo)
+    except AssemblyError as exc:
+        if not broken_cache_error(exc.__cause__ or exc):
+            raise
+        log("Кеш COM-обёрток КОМПАС повреждён — пересоздаю и читаю сборку ещё раз")
+        clear_com_cache()
+        ensure_wrappers(lambda level, text: log(text))
+        return _read(app, path, with_area, log, CastTo)
+
+
+def _read(app, path: Path, with_area: bool, log, CastTo) -> Component:
     log(f"Открываю сборку только для чтения: {path.name}")
     try:
         with opened(app, path) as doc:
@@ -414,6 +507,20 @@ def read(path: str | Path, with_area: bool = True, log=print) -> Component:
                     sheet_seen[key] = found
                 return found
 
+            api5, kompas5 = _kompas5()
+            length_seen: dict[str, float] = {}
+
+            def lengths(part) -> float:  # read once per detail file
+                if api5 is None:
+                    return 0.0
+                key = str(_get(part, "FileName", "") or "").lower()
+                if key and ">" not in key and key in length_seen:
+                    return length_seen[key]
+                found = length_of(part, api5, kompas5)
+                if key and ">" not in key:
+                    length_seen[key] = found
+                return found
+
             specs: dict[str, SpecSections | None] = {}
 
             def sections_of(part) -> SpecSections | None:  # read once per subassembly file
@@ -426,7 +533,7 @@ def read(path: str | Path, with_area: bool = True, log=print) -> Component:
                 return found
 
             top.children = _walk(top_part, CastTo, with_area, _Properties(app, doc, CastTo), features,
-                                 spec_sections(doc, CastTo), sections_of, sheets)
+                                 spec_sections(doc, CastTo), sections_of, sheets, lengths)
             if with_area:
                 try:
                     top.area_cm2 = float(CastTo(top_part, "IMassInertiaParam7").Area)

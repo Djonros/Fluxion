@@ -105,6 +105,32 @@ def ensure_module(guid: str, log: Callable[[str, str], None] = None) -> Any:
         return module
 
 
+def ensure_wrappers(log: Callable[[str, str], None] = None) -> bool:
+    """
+    Обёртки всех трёх библиотек типов КОМПАС (API7, API5, константы) — с
+    восстановлением испорченного кеша gen_py. Вызывать перед CastTo/ранним
+    связыванием в любом месте программы (ведомость, сравнение, исправление,
+    сварка): CastTo сам грузит модуль из кеша и падает на недописанном файле.
+    True — обёртки API7 есть; False — работать можно только динамически.
+    """
+    ok = True
+    for guid in (TYPELIB_API7, TYPELIB_API5, TYPELIB_CONSTANTS):
+        try:
+            ensure_module(guid, log)
+        except Exception as exc:
+            if log is not None:
+                log("warning", f"Обёртки КОМПАС не созданы ({exc}). {CACHE_HINT}")
+            if guid == TYPELIB_API7:
+                ok = False
+    return ok
+
+
+def broken_cache_error(exc: BaseException) -> bool:
+    """Ошибка из-за испорченного кеша COM-обёрток (повторить после clear_com_cache)."""
+    text = str(exc)
+    return "win32com.gen_py" in text or "CLSIDToClassMap" in text or "MinorVersion" in text
+
+
 # ======================================================================
 # ПОДКЛЮЧЕНИЕ К КОМПАС (выполняется ТОЛЬКО в рабочем потоке)
 # ======================================================================

@@ -379,6 +379,9 @@ def compute(top: Component, log=print) -> list[WeldedAssembly]:
 
     if not top.file or ">" in top.file or not Path(top.file).is_file():
         raise RuntimeError(f"файл изделия не найден: {top.file}")
+    from dxfka.kompas.connection import ensure_wrappers
+
+    ensure_wrappers(lambda level, text: log(text))  # a half-written gen_py cache is rebuilt before CastTo
     app = Dispatch("Kompas.Application.7")
     api5, kompas = _api5(app)
     wanted = {c.key: qty for c, qty in welded_assemblies(top)}

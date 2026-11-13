@@ -157,6 +157,9 @@ def _apply(product_file, fixes, log, fix_one) -> list[str]:
         from win32com.client import CastTo, Dispatch
     except ImportError as exc:
         raise AssemblyError("Нужен пакет pywin32: pip install pywin32") from exc
+    from dxfka.kompas.connection import ensure_wrappers
+
+    ensure_wrappers(lambda level, text: log(text))  # a half-written gen_py cache is rebuilt before CastTo
     product_file = Path(product_file)
     app = Dispatch("Kompas.Application.7")
     for doc in _get(app, "Documents", None) or []:

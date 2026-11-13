@@ -5,6 +5,15 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- «Ведомость и металлоёмкость»: the length of the details of rolled stock (tubes, angles, channels, bars…) — «Длина 1 шт, мм» and «Длина всего, м» on the «Детали» sheet, «Длина всего, м» by sortament on «Металлоёмкость» (and the pieces whose length could not be read); the length comes from «@L = … мм» in the name (the KOMPAS metal structures), else from the longest overall size of the detail. «Заявка на закупку»: «Длина деталей, м» for rolled stock and tubes.
+
+### Fixed
+- «Ведомость и металлоёмкость», «Сравнить версии», «Исправить» and the welds read KOMPAS with a broken cache of the COM wrappers («…has no attribute 'CLSIDToClassMap' / 'MinorVersion'»): the cache is rebuilt before reading and, if the reading still fails on it, once more and read again (it used to work only after «Пакет на лазер» had rebuilt it).
+- Tubes and profiles were counted as sheets when modeled as a sheet shell: a detail whose material is rolled stock (Труба, Уголок, Швеллер, Круг, Полоса, Профиль…) is cut from it, not from a sheet — in the estimate (cutting vs fitting), the purchase list (sheets by thickness), the technology checks and «Пакет на лазер».
+
 ## [0.30.0] — 2026-11-11
 
 ### Added

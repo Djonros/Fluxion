@@ -246,6 +246,10 @@ def sheet_problems(c: Component) -> list[tuple[str, str]]:
     t = c.sheet_thickness
     if t <= 0:
         return []
+    from .assembly import rolled
+
+    if rolled(c.material):  # a tube or a profile with a sheet body: not a sheet detail
+        return []
     out = []
     try:
         from dxfka.utils import thickness_from_material

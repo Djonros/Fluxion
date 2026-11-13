@@ -299,14 +299,10 @@ def weld_metres(report) -> float:
 
 
 def sheet_detail(c) -> bool:
-    if c.sheet_thickness > 0:
-        return True
-    try:
-        from dxfka.utils import thickness_from_material
+    """Cut from a sheet (a tube modeled as a sheet shell is a tube: cad.assembly.sheet_detail)."""
+    from .assembly import sheet_detail as from_sheet
 
-        return bool(thickness_from_material(c.material))
-    except Exception:
-        return False
+    return from_sheet(c)
 
 
 def build(report, norms: dict | None = None) -> Estimate:

@@ -29,6 +29,7 @@ from pathlib import Path
 
 from . import dfma
 from .assembly import (ASSEMBLY, DETAIL, KIND_TITLES, OTHER, STANDARD, Component, material_text, no_material,
+                       rolled,
                        purchased_by_name)
 
 PRO_FEATURE = "assembly_report"  # the report, its warnings and the fixes in the model: Fluxion Pro
@@ -214,16 +215,28 @@ def build(top: Component, decisions: dict | None = None) -> Report:
                   decisions=decisions, fastener_rows=fastener_rows, advice=advice)
 
 
+# where the length of a rolled detail comes from (the «Детали» sheet says it)
+LENGTH_NOTE = ("Длина — у деталей из проката (труба, уголок, швеллер, круг…): из «@L = … мм» в наименовании "
+               "(Металлоконструкции КОМПАС-3D), иначе наибольший габарит детали; у детали, построенной под углом "
+               "прямо в сборке, габарит меньше длины — проверьте.")
+
+
 def _metal(details) -> list[dict]:
     rows: OrderedDict[str, dict] = OrderedDict()
     for line in details:
         c = line.component
         name = NO_MATERIAL if no_material(c.material) else material_text(c.material)
-        row = rows.setdefault(name, {"material": name, "items": 0, "qty": 0, "mass_kg": 0.0, "area_m2": 0.0})
+        row = rows.setdefault(name, {"material": name, "items": 0, "qty": 0, "mass_kg": 0.0, "area_m2": 0.0,
+                                     "length_m": 0.0, "no_length": 0})
         row["items"] += 1
         row["qty"] += line.qty_product
         row["mass_kg"] += c.mass_kg * line.qty_product
         row["area_m2"] += c.area_m2 * line.qty_product
+        if rolled(c.material):
+            if c.length_mm > 0:
+                row["length_m"] += c.length_mm * line.qty_product / 1000
+            else:
+                row["no_length"] += line.qty_product
     total = sum(r["mass_kg"] for r in rows.values()) or 1.0
     out = sorted(rows.values(), key=lambda r: (r["material"] == NO_MATERIAL, -r["mass_kg"]))
     for row in out:
@@ -525,25 +538,37 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
         row[5].alignment = wrap
 
     ws = sheet("Детали", ["Обозначение", "Наименование", "Материал", "Кол. на изделие", "Масса 1 шт, кг",
-                          "Масса всего, кг", "Площадь 1 шт, м²", "Площадь всего, м²"],
-               [24, 42, 46, 10, 14, 15, 14, 15])
+                          "Масса всего, кг", "Площадь 1 шт, м²", "Площадь всего, м²", "Длина 1 шт, мм",
+                          "Длина всего, м"],
+               [24, 42, 46, 10, 14, 15, 14, 15, 14, 14])
     for line in sorted(report.details, key=lambda l: (l.component.marking or "яя", l.component.name)):
         c = line.component
+        length = c.length_mm if c.length_mm > 0 else None
         ws.append([c.marking, c.name, material_text(c.material), line.qty_product, c.mass_kg,
-                   c.mass_kg * line.qty_product, c.area_m2, c.area_m2 * line.qty_product])
+                   c.mass_kg * line.qty_product, c.area_m2, c.area_m2 * line.qty_product, length,
+                   length * line.qty_product / 1000 if length else None])
         link(ws.cell(row=ws.max_row, column=1 if c.marking else 2), c)
     ws.append([])
     ws.append(["", "Итого деталей", "", sum(l.qty_product for l in report.details), "", report.details_mass_kg, "",
-               sum(l.component.area_m2 * l.qty_product for l in report.details)])
+               sum(l.component.area_m2 * l.qty_product for l in report.details), "",
+               sum(l.component.length_mm * l.qty_product for l in report.details) / 1000])
     ws[ws.max_row][1].font = bold
+    ws.append([])
+    ws.append(["", LENGTH_NOTE])
     for row in ws.iter_rows(min_row=5):
         row[4].number_format = row[5].number_format = kg
         row[6].number_format = row[7].number_format = m2
+        row[8].number_format = "#,##0.0"
+        row[9].number_format = "#,##0.00"
 
     ws = sheet("Металлоёмкость", ["Материал / сортамент", "Позиций", "Кол. деталей", "Масса, кг", "Доля",
-                                   "Площадь, м²"], [70, 10, 12, 14, 9, 13])
+                                   "Площадь, м²", "Длина всего, м"], [70, 10, 12, 14, 9, 13, 15])
     for row in report.metal:
-        ws.append([row["material"], row["items"], row["qty"], row["mass_kg"], row["share"], row["area_m2"]])
+        length = row.get("length_m") or None
+        ws.append([row["material"], row["items"], row["qty"], row["mass_kg"], row["share"], row["area_m2"],
+                   length])
+        if row.get("no_length"):
+            ws.append([f"   без длины: {row['no_length']} шт. — длина не прочиталась из модели, добавьте вручную"])
     ws.append([])
     ws.append(["Итого детали", sum(r["items"] for r in report.metal), sum(r["qty"] for r in report.metal),
                report.details_mass_kg, 1.0, sum(r["area_m2"] for r in report.metal)])
@@ -567,6 +592,8 @@ def save_xlsx(report: Report, path: Path, source: str = "") -> Path:
         row[3].number_format = kg
         row[4].number_format = "0.0%"
         row[5].number_format = m2
+        if len(row) > 6:
+            row[6].number_format = "#,##0.00"
 
     ws = sheet("Прочие изделия", ["Обозначение", "Наименование", "Кол. на изделие", "Масса 1 шт, кг",
                                    "Масса всего, кг", "Где"], [24, 50, 10, 14, 15, 40])

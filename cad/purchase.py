@@ -51,6 +51,8 @@ class MassRow:
     mass_kg: float  # with waste
     waste_pct: float
     pieces: int
+    length_m: float = 0.0  # the details, without waste (from the lengths of the report)
+    no_length: int = 0  # pieces whose length is not known
 
 
 @dataclass
@@ -121,7 +123,11 @@ def build(products: list[tuple[dict, int]], norms: dict | None = None) -> Order:
                 if t > 0:
                     row = sheets.setdefault((material, t), {"mass": 0.0, "pieces": 0})
                 else:
-                    row = rolled.setdefault(material, {"mass": 0.0, "pieces": 0})
+                    row = rolled.setdefault(material, {"mass": 0.0, "pieces": 0, "length": 0.0, "no_length": 0})
+                    if item.get("length_mm"):
+                        row["length"] += float(item["length_mm"]) * qty / 1000
+                    else:
+                        row["no_length"] += qty
                 row["mass"] += item["mass_kg"] * qty
                 row["pieces"] += qty
             elif item["kind"] == STANDARD:
@@ -145,7 +151,8 @@ def build(products: list[tuple[dict, int]], norms: dict | None = None) -> Order:
                                      row["pieces"]))
     for material, row in rolled.items():
         w = waste(material)
-        order.rolled.append(MassRow(material, row["mass"] * (1 + w / 100), w, row["pieces"]))
+        order.rolled.append(MassRow(material, row["mass"] * (1 + w / 100), w, row["pieces"], row["length"],
+                                    row["no_length"]))
     order.sheets.sort(key=lambda r: (r.material, r.thickness))
     order.rolled.sort(key=lambda r: -r.mass_kg)
     order.hardware = sorted(hardware.values(), key=lambda r: r.name)
@@ -214,15 +221,18 @@ def save_xlsx(order: Order, path: str | Path) -> Path:
             row[i].number_format = "#,##0.00"
 
     ws = sheet("Прокат и трубы", ["Сортамент / материал", "Масса с отходом, кг", "Отход, %", "Деталей, шт.",
-                                  "Поставщик"], [70, 20, 10, 12, 30])
+                                  "Длина деталей, м", "Поставщик"], [70, 20, 10, 12, 16, 30])
     for r in order.rolled:
-        ws.append([r.material, r.mass_kg, r.waste_pct, r.pieces])
-    ws.append(["Итого", order.rolled_mass_kg, "", sum(r.pieces for r in order.rolled)])
+        ws.append([r.material, r.mass_kg, r.waste_pct, r.pieces, r.length_m or None])
+    ws.append(["Итого", order.rolled_mass_kg, "", sum(r.pieces for r in order.rolled),
+               sum(r.length_m for r in order.rolled) or None])
     ws[ws.max_row][0].font = bold
     ws.append([])
-    ws.append(["Длина в метрах не указана: в Fluxion нет таблиц погонной массы проката."])
+    ws.append(["Длина — сумма длин деталей из отчёта по сборке, без отхода на рез и остатков; у деталей без "
+               "длины (не прочиталась из модели или снимок старой версии) её нет — добавьте вручную."])
     for row in ws.iter_rows(min_row=4):
         row[1].number_format = "#,##0.0"
+        row[4].number_format = "#,##0.00"
 
     for title, rows in (("Крепёж и стандартные", order.hardware), ("Покупные", order.bought)):
         ws = sheet(title, ["Обозначение", "Наименование", "Кол., шт.", "Цена, ₽", "Сумма, ₽", "Поставщик"],

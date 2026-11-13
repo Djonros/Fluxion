@@ -34,14 +34,20 @@ def _item(c, qty: int) -> dict:
     item = {"kind": c.kind, "marking": c.marking, "name": c.name, "material": material_text(c.material),
             "mass_kg": round(c.mass_kg, 4), "qty": qty, "section": c.section,
             "file": ntpath.basename(c.file.split(">", 1)[-1]) if c.file else ""}
-    if c.kind == DETAIL:  # for the purchase list (cad/purchase.py): sheets by thickness
+    if c.kind == DETAIL:  # for the purchase list (cad/purchase.py): sheets by thickness, rolled stock in metres
         item["sheet_t"] = sheet_thickness(c)
+        if getattr(c, "length_mm", 0) > 0:
+            item["length_mm"] = round(c.length_mm, 1)
     return item
 
 
 def sheet_thickness(c) -> float:
     """The thickness of a detail cut from a sheet, mm: the sheet of its material (it is ordered by
     it, as «Пакет на лазер» takes it), else its sheet body; 0 — not from a sheet."""
+    from .assembly import rolled
+
+    if rolled(c.material):  # a tube, an angle...: ordered in metres, whatever its body
+        return 0.0
     try:
         from dxfka.utils import thickness_from_material
 

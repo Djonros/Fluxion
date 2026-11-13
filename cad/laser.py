@@ -46,9 +46,14 @@ def _logger() -> logging.Logger:
 
 
 def cut_from_sheet(part) -> bool:
-    """A detail for the laser: a sheet-metal body, or a material given as a sheet."""
+    """A detail for the laser: a sheet-metal body, or a material given as a sheet; never a tube or a profile
+    (a tube modeled as a sheet shell is cut from a tube, not from a sheet)."""
     from dxfka.utils import thickness_from_material
 
+    from .assembly import rolled
+
+    if rolled(part.material or ""):
+        return False
     return bool(part.is_sheet) or bool(thickness_from_material(part.material or ""))
 
 
