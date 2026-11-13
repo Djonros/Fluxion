@@ -203,10 +203,22 @@ def _pattern(text: str) -> re.Pattern | None:
         return re.compile(re.escape(text), re.IGNORECASE)
 
 
+def _sheet_rule(rule: dict) -> bool:
+    """A rule of the plant's norms for sheets: its name or its pattern says «лист»."""
+    return bool(re.search(r"\bлист", f"{rule.get('name', '')} {rule.get('match', '')}".lower().replace("ё", "е")))
+
+
 def metal_rule(material: str, norms: dict) -> dict | None:
-    """The first metal rule whose pattern is found in *material*; an empty pattern takes anything."""
+    """The first metal rule whose pattern is found in *material*; an empty pattern takes anything.
+    A tube or a profile never takes a rule of sheets («Лист низколегированный» matched by the
+    grade 09Г2С priced a 09Г2С tube as a sheet)."""
+    from .assembly import rolled
+
     text = material_text(material).lower().replace("ё", "е")
+    is_rolled = rolled(material)
     for rule in norms["metal"]:
+        if is_rolled and _sheet_rule(rule):
+            continue
         pattern = _pattern(rule["match"].lower().replace("ё", "е"))
         if pattern is None or pattern.search(text):
             return rule

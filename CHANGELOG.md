@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - «Ведомость и металлоёмкость», «Сравнить версии», «Исправить» and the welds read KOMPAS with a broken cache of the COM wrappers («…has no attribute 'CLSIDToClassMap' / 'MinorVersion'»): the cache is rebuilt before reading and, if the reading still fails on it, once more and read again (it used to work only after «Пакет на лазер» had rebuilt it).
 - Tubes and profiles were counted as sheets when modeled as a sheet shell: a detail whose material is rolled stock (Труба, Уголок, Швеллер, Круг, Полоса, Профиль…) is cut from it, not from a sheet — in the estimate (cutting vs fitting), the purchase list (sheets by thickness), the technology checks and «Пакет на лазер».
+- The estimate priced a tube of low-alloy steel by the sheet rule its grade matched («Труба 114x12 / 09Г2С» → «Лист низколегированный, отход 15 %»): a tube or a profile never takes a rule of sheets.
 
 ## [0.30.0] — 2026-11-11
 

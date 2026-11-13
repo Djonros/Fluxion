@@ -207,3 +207,13 @@ def test_the_laser_package_leaves_tubes_out():
     assert not laser.cut_from_sheet(SimpleNamespace(is_sheet=True, material=TUBE_FRAC))
     assert laser.cut_from_sheet(SimpleNamespace(is_sheet=False, material=SHEET3))
     assert laser.cut_from_sheet(SimpleNamespace(is_sheet=True, material=""))
+
+
+def test_a_tube_of_low_alloy_steel_is_priced_as_a_tube():
+    """532001.8401010: «Труба 114x12 / 09Г2С» took «Лист низколегированный» by its grade."""
+    norms = estimate.normalize(estimate.RECOMMENDED)
+    assert estimate.metal_rule("Труба 114x12 ГОСТ 8732-78 / 09Г2С ГОСТ 8731-74", norms)["name"] == \
+        "Трубы и профильные трубы"
+    assert estimate.metal_rule("Лист$d10 ГОСТ 19903-2015;09Г2С ГОСТ 19281-89$", norms)["name"] == \
+        "Лист низколегированный"
+    assert estimate.metal_rule("Уголок$d50x50x5 ГОСТ 8509-93;09Г2С$", norms)["name"] == "Прокат фасонный"
