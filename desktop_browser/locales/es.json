@@ -1250,5 +1250,12 @@
  "обычно совпадает с адресом": "normalmente igual a la dirección",
  "отправитель, тема, время, есть ли вложения": "remitente, asunto, hora, si hay adjuntos",
  "отправителя, тему и время новых писем; текст письма — только когда вы просите помощника": "el remitente, el asunto y la hora de los correos nuevos; el texto, solo cuando lo pide al asistente",
- "пароль приложения; хранится в диспетчере учётных данных Windows": "contraseña de aplicación; se guarda en el Administrador de credenciales de Windows"
+ "пароль приложения; хранится в диспетчере учётных данных Windows": "contraseña de aplicación; se guarda en el Administrador de credenciales de Windows",
+ "Больше не спрашивать": "No volver a preguntar",
+ "Если в сообщении просьба создать или изменить файлы, а агент выключен, Fluxion сначала предложит включить агента": "Si un mensaje pide crear o cambiar archivos y el agente está apagado, Fluxion primero ofrece activarlo",
+ "Предупреждать, если для запроса нужен агент": "Avisar si la petición necesita el agente",
+ "Включить агента и отправить": "Activar el agente y enviar",
+ "Для этой задачи нужно менять файлы проекта — это делает агент, а чат только ответит текстом. Включить агента?": "Esta tarea requiere cambiar archivos del proyecto: eso lo hace el agente, el chat solo respondería con texto. ¿Activar el agente?",
+ "Отправить в чат как есть": "Enviar al chat tal cual",
+ "{phrase} {seconds} с": "{phrase} {seconds} s"
 }

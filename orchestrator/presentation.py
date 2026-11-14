@@ -115,7 +115,15 @@ def _verify_status(observation: str) -> str:
 
 
 def _tests_status(observation: str) -> str:
+    """What the model got from run_tests, in a few words: the chat says the same (a blocked or repeated
+    run used to show «пройдены» while the model read «blocked»)."""
     low = observation.lower()
+    if low.startswith("[futility breaker]"):
+        return "не запущены: заблокированы после двух провалов подряд, нужна правка файла"
+    if low.startswith("these tests were already run") or low.startswith("this exact action was already"):
+        return "не запущены: тот же запуск, файлы не менялись"
+    if low.startswith("агент остановлен"):
+        return "не запущены"
     if low.startswith("error: pytest is not installed"):
         return "pytest не установлен"
     if low.startswith("error: no tests were collected"):
@@ -123,6 +131,14 @@ def _tests_status(observation: str) -> str:
     if low.startswith("error: running tests is disabled"):
         return "запуск тестов отключён"
     if low.startswith("error:"):
+        import re
+
+        failed = re.search(r"(\d+) failed", low)
+        errors = re.search(r"(\d+) errors?\b", low)
+        if failed:
+            return f"упали {failed.group(1)}"
+        if errors or "error collecting" in low or "errors during collection" in low:
+            return "ошибка при сборе тестов"
         return "есть падения"
     return "пройдены"
 
@@ -185,7 +201,12 @@ def format_tool(step) -> str:
     one_line = " ".join(args.split())
     if len(one_line) > _ARGS_CHARS:
         one_line = one_line[:_ARGS_CHARS] + "…"
-    return f"→ {tool} {one_line}".rstrip()
+    line = f"→ {tool} {one_line}".rstrip()
+    if observation.startswith("[futility breaker]"):
+        return line + " — заблокировано (два провала подряд)"
+    if observation.startswith(("Nothing has changed since", "This exact action was already")):
+        return line + " — повтор, ничего не изменилось"
+    return line
 
 
 def format_agent_step(step) -> str:

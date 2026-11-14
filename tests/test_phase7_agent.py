@@ -552,7 +552,7 @@ class TestAgentRun:
         result = agent.run("Test")
 
         assert calls == ["read_file"]
-        assert "already executed" in result.steps[1].observation
+        assert "Nothing has changed since" in result.steps[1].observation
         assert result.success
 
     def test_system_prompts_forbid_tools_for_greetings(self, tmp_path):

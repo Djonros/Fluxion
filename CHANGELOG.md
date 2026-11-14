@@ -5,6 +5,16 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- A request to change files with the agent off is not sent at once (it went to the chat model, which can only answer in text: «Fluxion worked idle»): a banner offers «Включить агента и отправить», «Отправить в чат как есть» and «Больше не спрашивать»; the chat settings have «Предупреждать, если для запроса нужен агент». The request is recognised by rules (desktop_browser/intent.py: an action on files and a file, a folder, code, a path or a file name), no model; questions («как создать…», «что такое .gitignore», «explain…») are not asked about.
+- The spinner «Думаю…» is shown again while the model thinks: not only before the first word but after the text in a pause of more than 2 s and between the agent's steps (it went away with the first token and the chat looked hung), with the seconds after 3 s («Думаю… 12 с»); it goes away with the next word, the end or «Стоп».
+
+### Fixed
+- The agent: a test run blocked after two failures was shown in the chat as «run_tests: пройдены» while the model read «blocked»; now the chat says what the model got («упали 2», «ошибка при сборе тестов», «не запущены: заблокированы после двух провалов подряд…», «не запущены: тот же запуск, файлы не менялись»). A change of a file unblocks the tools that failed before it — the tests of the fixed code are run (they stayed blocked and the model went round reading the same file). A repeated read or test run tells the model the result is the same as above and the next step (edit_file or finish).
+- edit_file: a snippet found inside an indented body and replaced by several lines written from column 0 keeps the indentation (the second line fell out of the function: a test «passed» with its assert outside it).
+
 ## [0.30.2] — 2026-11-14
 
 ### Fixed

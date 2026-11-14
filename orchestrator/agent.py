@@ -102,6 +102,19 @@ _NOT_A_REPO = (
     "do not call them again; continue with other tools or finish."
 )
 
+def _repeat_observation(tool_name: str) -> str:
+    """What a repeated action gets: nothing changed since, and the next step to take instead."""
+    if tool_name in ("read_file", "list_files", "grep", "search_code", "search_archive"):
+        return ("Nothing has changed since you ran this: the result is the same as in the earlier Observation "
+                "above. Do not read it again. Next step: change the file with edit_file (or write_file), "
+                "or finish with your answer.")
+    if tool_name == "run_tests":
+        return ("These tests were already run on this code and no file has changed since: the result is the "
+                "same as in the earlier Observation above. Next step: fix the code or the test with edit_file, "
+                "then run_tests; or finish and say what fails.")
+    return _REPEAT_OBSERVATION
+
+
 _REPEAT_OBSERVATION = (
     "This exact action was already executed with identical arguments and "
     "nothing has changed since. Do not repeat it: choose a different tool "
@@ -888,9 +901,9 @@ class CodingAgent:
 
             if self._tool_fail_streak.get(tool_name, 0) >= _FUTILITY_LIMIT:
                 step.observation = (
-                    f"[futility breaker] {tool_name} is blocked in this run: two "
-                    "consecutive failures already. Change approach or finish with "
-                    "your best answer."
+                    f"[futility breaker] {tool_name} is blocked: it failed twice in a row and no file "
+                    "has changed since. Change a file with edit_file first (then it may be run again), "
+                    "or finish with your best answer."
                 )
                 stalled += 1
                 if stalled >= _STALL_LIMIT:
@@ -911,7 +924,7 @@ class CodingAgent:
                     result.steps.append(step)
                     yield step
                     break
-                step.observation = _REPEAT_OBSERVATION + self._stall_warning(stalled)
+                step.observation = _repeat_observation(tool_name) + self._stall_warning(stalled)
             else:
                 stalled = 0
                 seen_actions.add(action_key)
@@ -920,8 +933,10 @@ class CodingAgent:
                 futility_note = self._track_futility(tool_name, tool_result.success)
                 if tool_result.success and tool_name in ("write_file", "edit_file", "make_dir", "git_commit"):
                     # The project changed: re-reading files or re-running tests
-                    # is now legitimate, not a loop.
+                    # is now legitimate, not a loop — and a tool blocked after two
+                    # failures (run_tests before the fix) may be tried on the new code.
                     seen_actions.clear()
+                    self._tool_fail_streak.clear()
                 step.observation = self._format_observation(tool_result) + futility_note
 
             messages.append({
@@ -2040,7 +2055,15 @@ class CodingAgent:
 
         occurrences = original.count(old_text)
         if occurrences == 1:
-            updated = original.replace(old_text, new_text, 1)
+            at = original.find(old_text)
+            indent = original[original.rfind("\n", 0, at) + 1:at]
+            if indent and not indent.strip() and "\n" in new_text:
+                # «assert x» found inside an indented body, the new text written from column 0:
+                # its next lines get the same indentation (they fell out of the function, 2026-11-14)
+                first, *rest = new_text.split("\n")
+                if not all(line.startswith(indent) for line in rest if line.strip()):  # not indented already
+                    new_text = "\n".join([first] + [indent + line if line.strip() else line for line in rest])
+            updated = original[:at] + new_text + original[at + len(old_text):]
         elif occurrences > 1:
             return ToolResult(
                 "edit_file", args, "", False,

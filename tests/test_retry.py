@@ -76,7 +76,8 @@ def test_retry_replaces_the_last_question_and_answer(window):
 
 def test_retry_with_the_agent(window):
     window.prompt.setText("исправь опечатку в README")
-    window.send_message()
+    window.send_message()  # the agent is off: asked first
+    window._send_as_chat()
     answer(window)
     window.retry_last(agent=True)
     assert window.sent_to_agent == ["исправь опечатку в README"]
@@ -86,7 +87,9 @@ def test_retry_with_the_agent(window):
 def test_a_request_to_change_files_suggests_the_agent(window):
     window.prompt.setText("исправь ошибку в main.py")
     window.send_message()
-    assert "retry_agent" in window.banners._keys
+    assert "ask_agent" in window.banners._keys and not window._messages  # asked before sending
+    window._send_as_chat()
+    assert "retry_agent" not in window.banners._keys  # «как есть» was the answer: not asked again
     window.prompt.setText("сколько весит лист")
     window.send_message()
 

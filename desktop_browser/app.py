@@ -118,6 +118,7 @@ RETRY_URL = "fluxion://retry"  # the last message once more, with the modes that
 RETRY_AGENT_URL = "fluxion://retry-agent"  # the last message once more, through the agent
 EDIT_URL = "fluxion://edit"  # the last message back into the input
 # a request that most likely means changing files of the project: the chat cannot, the agent can
+AGENT_HINT_SETTING = "chat/ask_agent"  # warn before sending a request to change files with the agent off
 FILE_EDIT_RE = re.compile(
     r"\b(исправ|поправ|почин|измени|переименуй|перепиши\s+(?:файл|код|функци|модул)|рефактор|добавь\s+в\s+"
     r"(?:файл|код|модул|класс|функци)|создай\s+(?:файл|модул|тест)|удали\s+из|внеси\s+правк|"
@@ -127,6 +128,9 @@ FILE_ICON = "fluxion-icon:file"
 THINK_ICON = "fluxion-icon:thinking"  # the spinner frame, replaced on each tick (_on_think_tick)
 # «Думаю…»: one phrase for the whole answer, the next one for the next question
 THINK_PHRASES = (tr("Думаю…"), tr("Раздумываю…"), tr("В раздумье…"))
+# a pause longer than this in an answer or between the agent's steps brings the spinner back
+THINK_PAUSE_S = 2.0
+THINK_SECONDS_FROM = 3  # the seconds are shown after this many: a short wait is not counted
 # Правка and the context menus of the text fields: (icon, text, keys, method of the field)
 EDIT_MENU = (
     ("undo", tr("Отменить"), "Ctrl+Z", "undo"),
@@ -230,7 +234,9 @@ class BannerStack(QFrame):
         self._keys: dict[str, QFrame] = {}
         self.hide()
 
-    def show_warning(self, text: str, action_text: str | None = None, on_action=None, key: str | None = None) -> None:
+    def show_warning(self, text: str, action_text: str | None = None, on_action=None, key: str | None = None,
+                     more_actions=()) -> None:
+        """*more_actions*: further (text, callback) buttons after the first one."""
         if key is not None:
             self.dismiss_key(key)
         banner = QFrame()
@@ -249,6 +255,11 @@ class BannerStack(QFrame):
             btn = QPushButton(action_text)
             btn.setObjectName("bannerAction")
             btn.clicked.connect(on_action)
+            row.addWidget(btn)
+        for text_more, on_more in more_actions:
+            btn = QPushButton(text_more)
+            btn.setObjectName("bannerAction")
+            btn.clicked.connect(on_more)
             row.addWidget(btn)
         close = QPushButton("×")
         close.setObjectName("bannerClose")
@@ -2021,6 +2032,13 @@ class FluxionWindow(QMainWindow):
         self._think_timer = QTimer(self)
         self._think_timer.setInterval(55)
         self._think_timer.timeout.connect(self._on_think_tick)
+        # while an answer is being made: a pause in it brings the spinner back after the text
+        self._pause_timer = QTimer(self)
+        self._pause_timer.setInterval(250)
+        self._pause_timer.timeout.connect(self._on_pause_tick)
+        self._last_activity = 0.0  # time.monotonic() of the last token or agent step
+        self._think_since = 0.0  # when the spinner now shown started
+        self._think_seconds = -1  # the seconds now written next to it
         self._sessions: list[dict] = []
         self._session_id: str | None = None
         self._saved_state: tuple | None = None  # the open chat as last saved or loaded
@@ -3360,6 +3378,12 @@ class FluxionWindow(QMainWindow):
         verify_row.addWidget(self.agent_verify)
         verify_row.addStretch()
         box.addLayout(verify_row)
+        self.agent_hint = QCheckBox(tr("Предупреждать, если для запроса нужен агент"))
+        self.agent_hint.setToolTip(tr("Если в сообщении просьба создать или изменить файлы, а агент выключен, "
+                                      "Fluxion сначала предложит включить агента"))
+        self.agent_hint.setChecked(self._ask_agent_first())
+        self.agent_hint.toggled.connect(self._on_agent_hint_toggled)
+        box.addWidget(self.agent_hint)
         self.agent_unlimited = QCheckBox(tr("Без лимита"))
         self.agent_unlimited.setToolTip(
             tr("Pro: агент работает, пока не закончит задачу (жёсткий потолок — 200 итераций)")
@@ -5553,10 +5577,37 @@ class FluxionWindow(QMainWindow):
         """Ctrl+Enter: run this one message through the agent; chips stay as they are."""
         self._send(agent_once=True)
 
-    def _send(self, agent_once: bool) -> None:
+    def _ask_agent_first(self) -> bool:
+        """«Предупреждать, если для запроса нужен агент» (chat settings), on by default."""
+        return flag_setting(self.qsettings, AGENT_HINT_SETTING, True)
+
+    def _needs_agent(self, typed: str, agent_once: bool) -> bool:
+        """The message asks to change files while the agent is off: say so before sending it."""
+        if agent_once or self.agent_factory is None or not self._ask_agent_first():
+            return False
+        if self.chat_agent_files.isChecked() or self.chat_plan.isChecked():
+            return False
+        if self.generating or self.agent_running:
+            return False
+        from .intent import needs_files
+
+        return needs_files(typed)
+
+    def _send(self, agent_once: bool, checked: bool = False) -> None:
         """Submit the input and remember the text as it was typed on the user's message: «Повторить»
-        and «Изменить» give back this text, not what the chat showed (a command, a plan)."""
+        and «Изменить» give back this text, not what the chat showed (a command, a plan).
+
+        A request to change files with the agent off is not sent: a banner asks first (*checked*: asked)."""
         typed = self.prompt.text().strip()
+        if not checked and typed and self._needs_agent(typed, agent_once):
+            self.banners.show_warning(
+                tr("Для этой задачи нужно менять файлы проекта — это делает агент, а чат только ответит "
+                   "текстом. Включить агента?"),
+                tr("Включить агента и отправить"), self._send_with_agent, key="ask_agent",
+                more_actions=((tr("Отправить в чат как есть"), self._send_as_chat),
+                              (tr("Больше не спрашивать"), self._never_ask_agent)))
+            return
+        self.banners.dismiss_key("ask_agent")
         before = len(self._messages)
         self._submit(agent_once)
         user = next((e for e in self._messages[before:] if e["role"] == "user"), None)
@@ -5565,9 +5616,31 @@ class FluxionWindow(QMainWindow):
         user["typed"] = typed
         agent = bool(agent_once or self.chat_agent_files.isChecked() or self.chat_plan.isChecked())
         user["agent"] = agent
-        if not agent and self.agent_factory is not None and FILE_EDIT_RE.search(typed):
+        if (not agent and not checked and self.agent_factory is not None and self._ask_agent_first()
+                and FILE_EDIT_RE.search(typed)):
             self.banners.show_warning(tr("Похоже, нужно менять файлы проекта — это умеет агент. Повторить с агентом?"),
                                       tr("Повторить агентом"), self._retry_last_with_agent, key="retry_agent")
+
+    def _send_with_agent(self) -> None:
+        """«Включить агента и отправить»: the chip «Агент: файлы» on, the same text sent."""
+        self.banners.dismiss_key("ask_agent")
+        self.chat_agent_files.setChecked(True)
+        self._send(agent_once=False, checked=True)
+
+    def _send_as_chat(self) -> None:
+        """«Отправить в чат как есть»: the text goes to the chat model, the agent stays off."""
+        self.banners.dismiss_key("ask_agent")
+        self._send(agent_once=False, checked=True)
+
+    def _never_ask_agent(self) -> None:
+        """«Больше не спрашивать»: off in the chat settings too; this message goes to the chat."""
+        self.qsettings.setValue(AGENT_HINT_SETTING, 0)
+        if hasattr(self, "agent_hint"):
+            self.agent_hint.setChecked(False)
+        self._send_as_chat()
+
+    def _on_agent_hint_toggled(self, checked: bool) -> None:
+        self.qsettings.setValue(AGENT_HINT_SETTING, int(checked))
 
     # ── «Повторить», «Изменить», «Ответить заново»: the last message once more ──
 
@@ -7196,9 +7269,12 @@ class FluxionWindow(QMainWindow):
         # finish is not shown here: its text is the final answer, added once
         # in _on_chat_agent_done (it used to appear twice).
         text = format_agent_step(step)
+        entry = self._messages[-1]
         if text:
-            entry = self._messages[-1]
             entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + text
+        if self.generating and getattr(step, "tool_name", "") != "finish":
+            self._start_waiting()  # the model thinks about the next step: say so under the steps
+        else:
             self._render_messages()
 
     def _on_chat_agent_done(self, result: dict) -> None:
@@ -7243,10 +7319,13 @@ class FluxionWindow(QMainWindow):
     def _set_generating(self, active: bool) -> None:
         if active:
             self._stop_requested = False
+            self._last_activity = time.monotonic()
+            self._pause_timer.start()
         self.generating = active
         self.send_button.setEnabled(not active)
         self.stop_button.setVisible(active)
         if not active:
+            self._pause_timer.stop()
             self._stop_thinking()
             self.worker = None
             agent_hint = (
@@ -7270,14 +7349,60 @@ class FluxionWindow(QMainWindow):
                 self._think_phrase = (self._think_phrase + 1) % len(THINK_PHRASES)
                 entry["phrase"] = self._think_phrase
         self._think_frame = 0
+        self._think_since = time.monotonic()
+        self._think_seconds = -1
+        self._set_think_frame()
+        self._think_timer.start()
+        self._render_messages()
+
+    def _start_waiting(self) -> None:
+        """The spinner after the text already written: a pause in the answer, the agent's next step."""
+        if not self._messages:
+            return
+        entry = self._messages[-1]
+        if entry.get("thinking") or entry.get("waiting"):
+            self._render_messages()
+            return
+        entry["waiting"] = True
+        if "phrase" not in entry:
+            self._think_phrase = (self._think_phrase + 1) % len(THINK_PHRASES)
+            entry["phrase"] = self._think_phrase
+        self._think_since = time.monotonic()
+        self._think_seconds = -1
         self._set_think_frame()
         self._think_timer.start()
         self._render_messages()
 
     def _stop_thinking(self) -> None:
         self._think_timer.stop()
+        self._last_activity = time.monotonic()
         for entry in self._messages:
             entry.pop("thinking", None)
+            entry.pop("waiting", None)
+
+    def _on_pause_tick(self) -> None:
+        """While an answer is made: a pause of THINK_PAUSE_S brings the spinner back; its seconds go on."""
+        if not self.generating or not self._messages:
+            return
+        entry = self._messages[-1]
+        if entry.get("thinking") or entry.get("waiting"):
+            seconds = int(time.monotonic() - self._think_since)
+            if seconds >= THINK_SECONDS_FROM and seconds != self._think_seconds:
+                self._think_seconds = seconds
+                self._render_messages()
+            return
+        if entry["role"] != "user" and entry["text"].strip() and \
+                time.monotonic() - self._last_activity > THINK_PAUSE_S:
+            self._start_waiting()
+
+    def _think_html(self, entry: dict) -> str:
+        """The spinner line: the turning picture, the phrase and, after a few seconds, how long."""
+        phrase = THINK_PHRASES[entry.get("phrase", 0) % len(THINK_PHRASES)]
+        seconds = int(time.monotonic() - self._think_since) if self._think_since else 0
+        if seconds >= THINK_SECONDS_FROM:
+            phrase = tr("{phrase} {seconds} с", phrase=phrase, seconds=seconds)
+        return (f'<p><img src="{THINK_ICON}" width="34" height="18" style="vertical-align: middle">'
+                f'&nbsp;&nbsp;<span style="color: {self._think_color}">{html.escape(phrase)}</span></p>')
 
     def _on_think_tick(self) -> None:
         """Next frame of the spinner: only its picture changes, the chat is not laid out again."""
@@ -7383,14 +7508,14 @@ class FluxionWindow(QMainWindow):
                         f'<img src="{FILE_ICON}" width="14" height="14" style="vertical-align: middle"> '
                         f'{html.escape(f["name"])}' for f in entry["files"]) + "</small></p>")
                 if entry.get("thinking"):
-                    phrase = THINK_PHRASES[entry.get("phrase", 0) % len(THINK_PHRASES)]
-                    parts.append(f'<p><img src="{THINK_ICON}" width="34" height="18" style="vertical-align: middle">'
-                                 f'&nbsp;&nbsp;<span style="color: {self._think_color}">{html.escape(phrase)}</span></p>')
+                    parts.append(self._think_html(entry))
                     continue
                 from orchestrator.presentation import render_chat_html
 
                 body = render_chat_html(entry["text"]) or "…"
                 parts.append(f"<div>{body}</div>")
+                if entry.get("waiting"):  # a pause in the answer or the agent's next step
+                    parts.append(self._think_html(entry))
                 busy = self.generating or self.agent_running
                 if entry["role"] == "user" and entry.get("typed") and index == last_user and not busy:
                     links = [f'<a href="{RETRY_URL}">{tr("Повторить")}</a>',

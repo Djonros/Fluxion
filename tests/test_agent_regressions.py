@@ -97,14 +97,14 @@ class TestLoop:
         ]
         agent, _ = _agent(tmp_path, replies, allow_write=True, verify_after_write=False)
         result = agent.run("t")
-        assert "already executed" not in result.steps[2].observation
+        assert "Nothing has changed since" not in result.steps[2].observation
         assert "X = 2" in result.steps[2].observation
 
     def test_repeat_still_blocked_without_changes(self, tmp_path):
         (tmp_path / "m.py").write_text("X = 1\n", encoding="utf-8")
         agent, _ = _agent(tmp_path, ["Action: read_file m.py"] * 2 + ["Action: finish ok"])
         result = agent.run("t")
-        assert "already executed" in result.steps[1].observation
+        assert "Nothing has changed since" in result.steps[1].observation
 
     def test_stop_sequences_passed_to_backend(self, tmp_path):
         agent, backend = _agent(tmp_path, ["Action: finish ok"])
@@ -400,7 +400,7 @@ class TestFutilityBreaker:
         agent, _ = _agent(tmp_path, replies, allow_write=True)
         result = agent.run("task")
         assert len(calls) == 3
-        assert agent._tool_fail_streak == {"run_tests": 2}
+        assert agent._tool_fail_streak == {}  # the last write_file unblocked run_tests: new code
         assert result.verification == "passed"
         assert result.final_answer == "ready"
 
@@ -504,7 +504,7 @@ class TestStalledRun:
         observations = [step.observation for step in result.steps]
         assert backend.generate.call_count == 5
         assert "x = 1" in observations[0]
-        assert "already executed" in observations[1]
+        assert "Nothing has changed since" in observations[1]
         assert "futility breaker" not in observations[1]
         assert "2 steps in a row did nothing" in observations[2]
         assert "3 steps in a row did nothing" in observations[3]
