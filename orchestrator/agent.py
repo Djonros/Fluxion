@@ -7,6 +7,7 @@ Tools:
   - run_tests [<args>]          → pytest output (tail kept)
   - web_search <query>          → web context snippets
   - write_file / edit_file      → file changes (write mode only)
+  - make_dir                    → a folder, empty or not (write mode only)
   - git_status / git_diff / git_commit
   - finish <answer>             → final (multi-line) answer
 
@@ -209,6 +210,8 @@ _TOOLS_WRITE = """\
   write_file <path>           - Create or overwrite a file: path on the Action line,
                                 raw file content on the following lines
   edit_file <path>            - Replace one exact snippet (format below)
+  make_dir <path> [<path>…]   - Create folders with their parents (they may stay empty),
+                                e.g. `make_dir backend frontend docs/api`
   git_commit <message>        - Commit the files you changed
 """
 
@@ -312,6 +315,9 @@ TOOL_SPECS: dict[str, tuple[str, list[tuple[str, str, bool, str]]]] = {
     "write_file": ("Create or overwrite a file with the full content", [
         ("path", _S, True, "file path"),
         ("content", _S, True, "complete raw file content (no markdown fences)"),
+    ]),
+    "make_dir": ("Create folders with their parent folders; they may stay empty", [
+        ("path", _S, True, "folder path, or several separated by spaces: backend frontend docs/api"),
     ]),
     "edit_file": ("Replace one exact snippet in an existing file", [
         ("path", _S, True, "file path"),
@@ -493,6 +499,21 @@ def _clean_path(raw: str) -> str:
     return raw.strip().strip("`").strip('"').strip("'").strip()
 
 
+def _folder_names(args: str) -> list[str]:
+    """Folder paths of make_dir: split on new lines, commas, semicolons and spaces; "a b" in quotes
+    stays one name; trailing slashes go."""
+    out: list[str] = []
+    for chunk in re.split(r"[\n,;]+", args or ""):
+        for double, single, plain in _FOLDER_TOKEN_RE.findall(chunk):
+            name = (double or single or plain).strip().strip("`").rstrip("/\\ ")
+            if name and name != ".":
+                out.append(name)
+    return out
+
+
+_FOLDER_TOKEN_RE = re.compile(r"\"([^\"]+)\"|'([^']+)'|(\S+)")
+
+
 def _truncate_middle(text: str, limit: int) -> str:
     """Keep head and tail — the tail of test output holds the summary."""
     if len(text) <= limit:
@@ -596,6 +617,7 @@ class CodingAgent:
             "web_search": self._tool_web_search,
             "write_file": self._tool_write_file,
             "edit_file": self._tool_edit_file,
+            "make_dir": self._tool_make_dir,
             "git_status": self._tool_git_status,
             "git_diff": self._tool_git_diff,
             "git_commit": self._tool_git_commit,
@@ -634,7 +656,7 @@ class CodingAgent:
         if self.web_search is not None:
             names.append("web_search")
         if self.allow_write:
-            names += ["write_file", "edit_file"]
+            names += ["write_file", "edit_file", "make_dir"]
         if self.git_enabled:
             names += ["git_status", "git_diff"]
             if self.allow_write:
@@ -650,6 +672,14 @@ class CodingAgent:
             prompt += (
                 f"\nLanguage: the user writes in {name}. Write your thoughts and the "
                 f"final answer in {name}. Keep code, identifiers and file names as they are.\n"
+            )
+        if self.allow_write and not self._tests_wanted():
+            # A skeleton of folders made the model write run_tests.py and a dummy test to have
+            # something to run, then report «tests passed» (2026-11-14): no tests, no test runs.
+            prompt += (
+                "\nTests: this project has no tests of its own (or checking by tests is off). Do not "
+                "run run_tests and do not create tests or test runners unless the user asks for them; "
+                "when the requested changes are made, finish.\n"
             )
         return prompt
 
@@ -888,7 +918,7 @@ class CodingAgent:
                 tool_result = self._run_tool(tool_name, tool_args, runner)
                 self._note_effect(tool_name, tool_args, tool_result)
                 futility_note = self._track_futility(tool_name, tool_result.success)
-                if tool_result.success and tool_name in ("write_file", "edit_file", "git_commit"):
+                if tool_result.success and tool_name in ("write_file", "edit_file", "make_dir", "git_commit"):
                     # The project changed: re-reading files or re-running tests
                     # is now legitimate, not a loop.
                     seen_actions.clear()
@@ -993,7 +1023,7 @@ class CodingAgent:
                 f"{field('path')}\n{_DELIM_OLD}\n{field('old')}\n{_DELIM_NEW}\n{field('new')}"
             ), None
         single = {
-            "list_files": "path", "search_code": "query", "search_archive": "query", "run_tests": "args",
+            "list_files": "path", "make_dir": "path", "search_code": "query", "search_archive": "query", "run_tests": "args",
             "web_search": "query", "git_commit": "message", "finish": "answer",
         }
         if name in single:
@@ -1051,6 +1081,9 @@ class CodingAgent:
             path = _clean_path(tool_args.lstrip("\n").split("\n", 1)[0])
             if tool_name == "edit_file":
                 path = _clean_path(tool_args.split(_DELIM_OLD, 1)[0])
+            target = self._validate_write_path(path)
+            if target is not None and target.is_dir():
+                return  # write_file of «frontend/» made a folder: nothing to check or test
             self._dirty_files.add(path)
             fpath = self._validate_write_path(path)
             if fpath is not None:
@@ -1850,17 +1883,25 @@ class CodingAgent:
 
         stripped = args.lstrip("\n")
         newline_idx = stripped.find("\n")
+        raw_path = stripped if newline_idx == -1 else stripped[:newline_idx]
+        content = "" if newline_idx == -1 else _strip_code_fence(stripped[newline_idx + 1:])
+        if not content.strip() and _clean_path(raw_path).rstrip().endswith(("/", "\\")):
+            # «write_file frontend/» with nothing in it: the model wants a folder
+            made = self._tool_make_dir(raw_path)
+            return ToolResult("write_file", args, made.output, made.success, made.error)
         if newline_idx == -1:
-            return ToolResult("write_file", args, "", False, "Usage: write_file <path>\\n<content>")
-
-        raw_path = stripped[:newline_idx]
-        content = _strip_code_fence(stripped[newline_idx + 1:])
-        if not content.strip():
-            return ToolResult("write_file", args, "", False, "Usage: write_file <path>\\n<content> (content is empty)")
+            return ToolResult("write_file", args, "", False,
+                              "Usage: write_file <path>\\n<content>. For a folder use make_dir <path>.")
 
         fpath = self._validate_write_path(raw_path)
         if fpath is None:
             return ToolResult("write_file", args, "", False, f"Unsafe or invalid path: {raw_path}")
+        if not content.strip():
+            if fpath.exists():  # emptying an existing file is rarely meant: say how instead
+                return ToolResult("write_file", args, "", False,
+                                  "Usage: write_file <path>\\n<content> (content is empty; the file exists "
+                                  "and is left as it is). For a folder use make_dir <path>.")
+            content = ""  # a new empty file: __init__.py, .gitkeep
 
         if len(content.encode("utf-8")) > _MAX_WRITE_FILE_SIZE:
             return ToolResult("write_file", args, "", False, f"Content exceeds {_MAX_WRITE_FILE_SIZE} bytes")
@@ -1882,6 +1923,47 @@ class CodingAgent:
             "write_file", args,
             f"Wrote {self._rel(fpath)} ({line_count} lines, {len(content)} bytes)."
             + self._syntax_report(fpath),
+        )
+
+    def _tool_make_dir(self, args: str) -> ToolResult:
+        """Create folders (with their parents) inside the project; existing ones are fine.
+
+        Several folders may be given at once, separated by spaces, commas or new
+        lines («backend frontend infra»: a model writes them so); a name with a
+        space in it is put in quotes."""
+        if not self.allow_write:
+            return ToolResult(
+                "make_dir", args, "", False,
+                "Write operations disabled. Start agent with --write or allow_write=True.",
+            )
+        names = _folder_names(args)
+        if not names:
+            return ToolResult("make_dir", args, "", False, "Usage: make_dir <path> [<path> ...]")
+        targets = []
+        for raw_path in names:
+            fpath = self._validate_write_path(raw_path)
+            if fpath is None:
+                return ToolResult("make_dir", args, "", False, f"Unsafe or invalid path: {raw_path}")
+            if fpath.is_file():
+                return ToolResult("make_dir", args, "", False, f"{self._rel(fpath)} is a file, not a folder")
+            targets.append(fpath)
+        new = [f for f in dict.fromkeys(targets) if not f.is_dir()]
+        if not new:
+            return ToolResult("make_dir", args, "Already exist: " + ", ".join(f"{self._rel(f)}/" for f in targets) + ".")
+        for fpath in new:
+            if not self._write_allowed(fpath, "write"):
+                return ToolResult("make_dir", args, "", False, _WRITE_CANCELLED)
+        try:
+            self._ensure_checkpoint()
+            for fpath in new:
+                fpath.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return ToolResult("make_dir", args, "", False, str(exc))
+        made = ", ".join(f"{self._rel(f)}/" for f in new)
+        return ToolResult(
+            "make_dir", args,
+            f"Created {'folder' if len(new) == 1 else 'folders'} {made} (empty; git does not keep empty folders — "
+            "put a README.md or .gitkeep in one if it must be in the repository).",
         )
 
     @staticmethod

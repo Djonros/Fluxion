@@ -5,6 +5,12 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- The agent can make folders: a «make_dir» tool (with the parent folders; an empty folder is said not to be kept by git), and «write_file frontend/» with no content makes the folder instead of failing with «content is empty» — a project skeleton (backend/, frontend/, infra/, docs/, scripts/) used to stop the run on the futility breaker. An empty new file (`__init__.py`, `.gitkeep`) is written; an existing file is never emptied.
+- The agent in a project without tests of its own no longer invents them: it was told to run tests after every change, so for a skeleton of folders it wrote run_tests.py and a dummy test and reported «tests passed». Several folders go in one make_dir («backend frontend docs/api»); the chat shows «→ папка frontend/ создана».
+
 ## [0.30.1] — 2026-11-13
 
 ### Added

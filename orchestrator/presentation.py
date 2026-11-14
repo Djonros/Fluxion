@@ -149,10 +149,20 @@ def format_tool(step) -> str:
         content = _strip_code_fence(content)
         n = content.count("\n") + (0 if content.endswith("\n") or not content else 1)
         failed = observation.startswith("Error:")
+        if not failed and observation.startswith(("Created folder", "Already exist")):
+            folder = path.strip().rstrip("/\\")  # «write_file frontend/»
+            return f"→ папка {folder}/ создана"
         head = f"→ write_file {path.strip()} ({_plural_lines(n)})"
         if failed:
             return head + f" — не удалось: {observation[6:].strip()[:_ARGS_CHARS]}"
         return head + "\n" + _fence(content, _lang_for(path))
+    if tool == "make_dir":
+        from .agent import _folder_names
+
+        names = ", ".join(f"{n}/" for n in _folder_names(args))
+        if observation.startswith("Error:"):
+            return f"→ папки {names} — не удалось: {observation[6:].strip()[:_ARGS_CHARS]}"
+        return f"→ {'папка' if len(_folder_names(args)) == 1 else 'папки'} {names} — готово"
     if tool == "edit_file":
         from .agent import _DELIM_NEW, _DELIM_OLD, _strip_code_fence
 
