@@ -841,6 +841,18 @@ def cad_command(text: str) -> str | None:
 
 
 ACAD_PREFIXES = ("/автокад", "/autocad")
+NESTING_PREFIXES = ("/раскрой", "/nesting")
+
+
+def nesting_command(text: str) -> str | None:
+    """The order of a «/раскрой заявка.xlsx» chat message ("" — choose it); None for other messages."""
+    lowered = text.lower()
+    for prefix in NESTING_PREFIXES:
+        rest = lowered[len(prefix):]
+        if lowered.startswith(prefix) and (not rest or rest[0].isspace()):
+            return text[len(prefix):].strip().strip('"')
+    return None
+
 HELPER_PREFIXES = ("/помощник", "/assistant")
 
 
@@ -2880,6 +2892,8 @@ class FluxionWindow(QMainWindow):
                  tr("DXF всех листовых деталей сборки по папкам толщин (DXFka)")),
                 ("scan", tr("Проверить развёртки DXF…"), self._open_dxf_check, True,
                  tr("Малые отверстия, узкие перемычки и вырезы в развёртках для лазера")),
+                ("grid", tr("Раскрой листа…"), lambda: self._open_nesting(), True,
+                 tr("Детали заявки Excel на деловые остатки и листы: DXF и картинки листов, отчёт. В чате: /раскрой")),
             ]),
             (tr("Связь"), [
                 ("bot", tr("Боты в мессенджерах…"), self._open_bots_dialog, False,
@@ -5897,6 +5911,7 @@ class FluxionWindow(QMainWindow):
             ("/архив", "archive", tr("поиск по архиву КД")),
             ("/помощник", "pulse", tr("задача личному помощнику: приложения и журнал")),
             ("/автокад", "ruler", tr("нормоконтроль DWG")),
+            ("/раскрой", "grid", tr("раскрой листа по заявке Excel")),
         ):
             commands.addAction(self._menu_icon(icon), f"{command}\t{hint}",
                                lambda _checked=False, c=command: self._insert_command(c))
@@ -5983,6 +5998,11 @@ class FluxionWindow(QMainWindow):
                 self.start_acad_check(drawing)
             else:
                 self._open_acad_check()
+            return
+        order = nesting_command(text) if source is None else None
+        if order is not None:
+            self.prompt.clear()
+            self._open_nesting(order)
             return
         calc_question = calc_command(text) if source is None else None
         if calc_question is not None:
@@ -6456,6 +6476,7 @@ class FluxionWindow(QMainWindow):
             "purchase": self._open_purchase,
             "laser": self._open_laser_package,
             "dxf_check": self._open_dxf_check,
+            "nesting": self._open_nesting,
             "acad": self._open_acad_check,
             "archive": self._open_archive,
             "calc": self._open_calc,
@@ -6739,6 +6760,61 @@ class FluxionWindow(QMainWindow):
         self._notify_answer(summary)
         self._notify_bots(tr("Fluxion: заявка готова — {value}", value=Path(path).name))
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _open_nesting(self, order_path: str = "") -> None:
+        """Лазер → Раскрой листа (also «/раскрой заявка.xlsx»): the order, the remnants, the
+        DXF; the nesting runs in the background and its result comes to the chat."""
+        from cad.laser import PRO_FEATURE
+
+        from .nesting_dialog import NestingDialog
+
+        if self.generating or self.agent_running or getattr(self, "report_worker", None) is not None:
+            return
+        if not self._pro_feature(PRO_FEATURE, tr("Раскрой листа"), tr("«Раскрой листа» — функция Pro, как «Пакет на лазер»: детали заявки по форме на деловые остатки и листы, DXF и картинки листов, отчёт.")):
+            return
+        dialog = NestingDialog(self, self.qsettings, self._style_dir(), order_path)
+        if dialog.exec() != QDialog.Accepted or dialog.job is None:
+            return
+        machine, cut = dialog.program_settings()
+        self.start_nesting(dialog.job, dialog.settings(), dialog.out.text().strip(), machine, cut)
+
+    def start_nesting(self, job, settings, out_base: str = "", machine=None, cut=None) -> None:
+        from cad.nesting import output
+
+        from .nesting_dialog import NestingWorker
+
+        self.pages.setCurrentIndex(PAGE_CHAT)
+        self._append_message("user", tr("Раскрой листа: {value}, изделий {count}", value=job.order.path.name,
+                                        count=job.order.products))
+        self._append_message("assistant", "")
+        self._report_entry = self._messages[-1]
+        self._set_generating(True)
+        worker = NestingWorker(job, settings, str(output.default_folder(job.order, out_base or None)), self,
+                               machine, cut)
+        self.report_worker = worker  # one long job at a time; closeEvent waits for it
+        worker.progress.connect(self._on_report_progress)
+        worker.ready.connect(self._on_nesting_ready)
+        worker.failed.connect(self._on_report_failed)
+        worker.finished.connect(lambda: self._on_report_worker_finished(worker))
+        worker.start()
+
+    def _on_nesting_ready(self, job) -> None:
+        paths = job.paths or {}
+        report, folder = paths.get("report"), paths.get("folder")
+        self._report_entry["text"] = job.text + "\n" + tr("Папка: {path}", path=folder)
+        sources = [{"file": str(report), "label": tr("Отчёт раскроя.xlsx")}] if report else []
+        if paths.get("changes"):
+            sources.append({"file": str(paths["changes"]), "label": tr("Остатки — изменения.xlsx")})
+        if folder:
+            sources.append({"file": str(folder), "label": tr("Папка раскроя")})
+        self._report_entry["sources"] = sources
+        self._report_entry["sources_title"] = tr("Ссылки")
+        self._set_generating(False)
+        self._render_messages()
+        self._save_memory()
+        self._notify_answer(job.text)
+        if folder:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _check_flat_patterns(self, folder: str, thickness: float = 0.0) -> str:
         """«Проверка развёрток» of the DXF in *folder*: the workbook in it, a line for the chat."""

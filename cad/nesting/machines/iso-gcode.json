@@ -1,0 +1,109 @@
+{
+  "id": "iso-gcode",
+  "name": "Общий G-code (ISO, Mach3 / PUMOTIX / LinuxCNC)",
+  "process": "plasma",
+  "extension": ".nc",
+  "encoding": "ascii",
+  "newline": "\r\n",
+  "non_ascii": "translit",
+  "decimals": 3,
+  "separator": " ",
+  "program_start": [
+    "(Fluxion: {title})",
+    "G21",
+    "G90",
+    "G40"
+  ],
+  "program_end": [
+    "G00 X0. Y0.",
+    "M30"
+  ],
+  "cut_start": [
+    "G00 X{x} Y{y}",
+    "(Seq {seq} - {name})",
+    "F{feed}",
+    "M03"
+  ],
+  "cut_end": [
+    "M05"
+  ],
+  "thc_off": "",
+  "thc_off_before_end": 0,
+  "line": "G01",
+  "arc_cw": "G02",
+  "arc_ccw": "G03",
+  "modal_motion": true,
+  "modal_axes": true,
+  "arc_center": "incremental",
+  "arcs": true,
+  "line_numbers": false,
+  "technology_note": "Толщина, рез (kerf) мм, подача мм/мин, прожиг с. 5 мм — из программы ProNest (F4793), остальное — примерно для 130 А O2/Air: уточните по таблице ProNest.",
+  "technology": [
+    [
+      3,
+      1.7,
+      6000,
+      0.2
+    ],
+    [
+      4,
+      1.7,
+      5400,
+      0.3
+    ],
+    [
+      5,
+      1.7,
+      4793,
+      0.3
+    ],
+    [
+      6,
+      1.8,
+      4300,
+      0.4
+    ],
+    [
+      8,
+      2.0,
+      3500,
+      0.5
+    ],
+    [
+      10,
+      2.1,
+      2900,
+      0.5
+    ],
+    [
+      12,
+      2.3,
+      2500,
+      0.6
+    ],
+    [
+      16,
+      2.6,
+      1900,
+      0.8
+    ],
+    [
+      20,
+      2.9,
+      1500,
+      1.0
+    ],
+    [
+      25,
+      3.2,
+      1100,
+      1.5
+    ],
+    [
+      30,
+      3.5,
+      800,
+      2.0
+    ]
+  ]
+}

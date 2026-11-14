@@ -146,6 +146,7 @@ _SHAPES = {
     "coin": '<circle cx="12" cy="12" r="9"/><path d="M15 9.5a3 3 0 0 0-3-1.5c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2'
             '-1.3 2-3 2a3 3 0 0 1-3-1.5M12 6v2M12 16v2"/>',
     "zap": '<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',
+    "grid": '<rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 13h9v8M12 3v10M16 8h5"/>',
     "scan": '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>'
             '<circle cx="12" cy="12" r="3"/>',
     "phone": '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>',

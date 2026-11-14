@@ -48,6 +48,7 @@ a = Analysis(
         ("config", "config"),
         ("core/model_catalog.json", "core"),  # catalog of the "Модели" page
         ("cad/materials.json", "cad"),  # materials of "Деталь в КОМПАС" (cad/materials.py)
+        ("cad/nesting/machines", "cad/nesting/machines"),  # machine profiles of «Раскрой листа» (cad/nesting/post.py)
         ("desktop_browser/manual", "desktop_browser/manual"),  # «Инструкция по инструментам» (desktop_browser/manual.py)
         ("desktop_browser/locales", "desktop_browser/locales"),  # interface languages (desktop_browser/i18n.py)
         ("finetune", "finetune"),
@@ -171,6 +172,17 @@ a = Analysis(
         "cad.stamp",
         "cad.acad",
         "cad.acad_check",
+        # «Раскрой листа»: imported lazily from the window and the chat
+        "cad.nesting",
+        "cad.nesting.materials",
+        "cad.nesting.orders",
+        "cad.nesting.stock",
+        "cad.nesting.parts",
+        "cad.nesting.engine",
+        "cad.nesting.output",
+        "cad.nesting.cutting",
+        "cad.nesting.post",
+        "desktop_browser.nesting_dialog",
         "desktop_browser.acad_check_dialog",
         "desktop_browser.manual",
         "desktop_browser.i18n",
