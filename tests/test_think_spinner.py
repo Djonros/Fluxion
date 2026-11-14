@@ -71,3 +71,15 @@ def test_no_spinner_while_idle(window):
     window._last_activity = time.monotonic() - 100
     window._on_pause_tick()
     assert not window._messages[-1].get("waiting")
+
+
+def test_the_same_step_again_is_one_line(window):
+    _asking(window, "сколько весит лист")
+    step = SimpleNamespace(tool_name="write_file", tool_args="docs/a.md\n# A\n", thought="Create the file.",
+                           observation="No change: docs/a.md already has exactly this content")
+    for _ in range(5):
+        window._on_chat_agent_step(step)
+    text = window._messages[-1]["text"]
+    assert text.count("write_file docs/a.md") == 1 and text.endswith("(повторено 5 раз)")
+    window._on_chat_agent_step(SimpleNamespace(tool_name="read_file", tool_args="b.py", thought="", observation="x"))
+    assert window._messages[-1]["text"].count("(повторено 5 раз)") == 1

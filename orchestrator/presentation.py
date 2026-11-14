@@ -118,6 +118,8 @@ def _tests_status(observation: str) -> str:
     """What the model got from run_tests, in a few words: the chat says the same (a blocked or repeated
     run used to show «пройдены» while the model read «blocked»)."""
     low = observation.lower()
+    if low.startswith("error: only tests that were already failing"):
+        return "падают только старые тесты — они падали ещё до правок агента"
     if low.startswith("[futility breaker]"):
         return "не запущены: заблокированы после двух провалов подряд, нужна правка файла"
     if low.startswith("these tests were already run") or low.startswith("this exact action was already"):

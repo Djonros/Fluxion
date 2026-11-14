@@ -102,6 +102,9 @@ _NOT_A_REPO = (
     "do not call them again; continue with other tools or finish."
 )
 
+_UNCHANGED_PREFIX = "No change:"
+
+
 def _repeat_observation(tool_name: str) -> str:
     """What a repeated action gets: nothing changed since, and the next step to take instead."""
     if tool_name in ("read_file", "list_files", "grep", "search_code", "search_archive"):
@@ -929,9 +932,20 @@ class CodingAgent:
                 stalled = 0
                 seen_actions.add(action_key)
                 tool_result = self._run_tool(tool_name, tool_args, runner)
-                self._note_effect(tool_name, tool_args, tool_result)
+                unchanged = tool_result.success and tool_result.output.startswith(_UNCHANGED_PREFIX)
+                if unchanged:  # the same file written again: as idle as a repeated action
+                    stalled += 1
+                    if stalled >= _STALL_LIMIT:
+                        step.observation = _STALLED_ANSWER
+                        result.steps.append(step)
+                        yield step
+                        break
+                    tool_result.output += self._stall_warning(stalled)
+                else:
+                    self._note_effect(tool_name, tool_args, tool_result)
                 futility_note = self._track_futility(tool_name, tool_result.success)
-                if tool_result.success and tool_name in ("write_file", "edit_file", "make_dir", "git_commit"):
+                if tool_result.success and not unchanged and \
+                        tool_name in ("write_file", "edit_file", "make_dir", "git_commit"):
                     # The project changed: re-reading files or re-running tests
                     # is now legitimate, not a loop — and a tool blocked after two
                     # failures (run_tests before the fix) may be tried on the new code.
@@ -1776,9 +1790,26 @@ class CodingAgent:
                 "run_tests", args, output, False, "No tests were collected (pytest exit code 5)",
                 exit_code=5,
             )
+        failed = failed_tests(output)
+        before = self._baseline_failures or set()
+        if failed and before and failed <= before:
+            # only what failed before the agent touched anything: not its task (2026-11-14: a test left
+            # from another task made the model rewrite one file thirty times)
+            return ToolResult(
+                "run_tests", args, output, False,
+                "Only tests that were already failing BEFORE your changes fail: " + ", ".join(sorted(failed))
+                + ". They are not part of your task: do not try to fix them. Your changes broke nothing; "
+                "finish when the task is done.",
+                exit_code=result.returncode,
+            )
+        note = ""
+        if failed and before & failed:
+            note = (" Already failing before your changes (not your task, leave them): "
+                    + ", ".join(sorted(before & failed)) + ". New failures to fix: "
+                    + ", ".join(sorted(failed - before)) + ".")
         return ToolResult(
             "run_tests", args, output, False,
-            f"Tests failed (pytest exit code {result.returncode}); see output below",
+            f"Tests failed (pytest exit code {result.returncode}); see output below.{note}",
             exit_code=result.returncode,
         )
 
@@ -1920,6 +1951,17 @@ class CodingAgent:
 
         if len(content.encode("utf-8")) > _MAX_WRITE_FILE_SIZE:
             return ToolResult("write_file", args, "", False, f"Content exceeds {_MAX_WRITE_FILE_SIZE} bytes")
+
+        if fpath.is_file():
+            try:
+                same = fpath.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n") == \
+                    content.replace("\r\n", "\n")
+            except OSError:
+                same = False
+            if same:  # the same file once more is not a change: the loop is not reset by it (2026-11-14)
+                return ToolResult("write_file", args, f"{_UNCHANGED_PREFIX} {self._rel(fpath)} already has exactly "
+                                  "this content; nothing changed. Do not write it again. Next step: change "
+                                  "something else (the failing tests are in an earlier Observation), or finish.")
 
         if not self._write_allowed(fpath, "write"):
             return ToolResult("write_file", args, "", False, _WRITE_CANCELLED)

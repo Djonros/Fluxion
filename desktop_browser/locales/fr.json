@@ -1257,5 +1257,6 @@
  "Включить агента и отправить": "Activer l’agent et envoyer",
  "Для этой задачи нужно менять файлы проекта — это делает агент, а чат только ответит текстом. Включить агента?": "Cette tâche demande de modifier les fichiers du projet : c’est le rôle de l’agent, le chat ne répondrait que par du texte. Activer l’agent ?",
  "Отправить в чат как есть": "Envoyer au chat tel quel",
- "{phrase} {seconds} с": "{phrase} {seconds} s"
+ "{phrase} {seconds} с": "{phrase} {seconds} s",
+ "(повторено {n} раз)": "(répété {n} fois)"
 }

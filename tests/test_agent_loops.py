@@ -116,3 +116,36 @@ def test_an_edit_inside_an_indented_body_keeps_the_indentation(tmp_path):
     agent._tool_edit_file("t.py\n---OLD---\nassert os.path.exists('docs/a.md')\n---NEW---\n"
                           "x = 1\n    assert x")
     assert (tmp_path / "t.py").read_text(encoding="utf-8").endswith("    x = 1\n    assert x\n")
+
+
+def test_the_same_file_written_again_is_no_change_and_stops_the_loop(tmp_path, monkeypatch):
+    """The FastAPI run of 2026-11-14: write_file docs/data_sources.md with the same text thirty times."""
+    _fake_pytest(monkeypatch, [1] * 10)
+    doc = "Thought: create\nAction: write_file docs/data_sources.md\n# Data Sources\n"
+    replies = [doc] + [doc] * 10 + ["Thought: done\nAction: finish ok"]
+    agent, backend = _agent(tmp_path, replies, allow_write=True, verify_after_write=False)
+    result = agent.run("task")
+    observations = [s.observation for s in result.steps]
+    assert observations[0].startswith("Wrote docs/data_sources.md")
+    assert "already has exactly this content" in observations[1]
+    assert backend.generate.call_count <= 6  # stopped as idle, not after the iteration budget
+    assert "Агент остановлен" in observations[-1]
+
+
+def test_failures_from_before_the_changes_are_not_the_task(tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_old.py").write_text("def test_old():\n    assert False\n", encoding="utf-8")
+    outputs = iter(["FAILED tests/test_old.py::test_old - assert False\n1 failed"] * 3)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout=next(outputs), stderr="")
+
+    monkeypatch.setattr("orchestrator.agent.subprocess.run", fake_run)
+    replies = ["Thought: create\nAction: write_file backend/app/main.py\napp = 1\n",
+               "Thought: t\nAction: run_tests", "Thought: done\nAction: finish ok"]
+    agent, _ = _agent(tmp_path, replies, allow_write=True, verify_after_write=True, verify_mode="auto")
+    result = agent.run("task")
+    run = result.steps[1].observation
+    assert "already failing BEFORE your changes" in run and "tests/test_old.py::test_old" in run
+    assert _tests_status(run) == "падают только старые тесты — они падали ещё до правок агента"
+

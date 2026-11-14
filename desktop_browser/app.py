@@ -7271,7 +7271,15 @@ class FluxionWindow(QMainWindow):
         text = format_agent_step(step)
         entry = self._messages[-1]
         if text:
-            entry["text"] = (entry["text"] + "\n" if entry["text"] else "") + text
+            if text == entry.get("last_step") and "steps_before" in entry:
+                # the same step again: one line «(повторено N раз)», not a sheet of copies
+                entry["repeats"] = entry.get("repeats", 1) + 1
+                entry["text"] = entry["steps_before"] + text + "\n" + tr("(повторено {n} раз)", n=entry["repeats"])
+            else:
+                entry["steps_before"] = entry["text"] + "\n" if entry["text"] else ""
+                entry["repeats"] = 1
+                entry["text"] = entry["steps_before"] + text
+            entry["last_step"] = text
         if self.generating and getattr(step, "tool_name", "") != "finish":
             self._start_waiting()  # the model thinks about the next step: say so under the steps
         else:
