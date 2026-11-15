@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-RELEASE_DATE = "2026-11-14"
+RELEASE_DATE = "2026-11-15"
 UPDATE_PERIOD_DAYS = 365
 
 
