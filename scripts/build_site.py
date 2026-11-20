@@ -14,6 +14,7 @@ catalog's HTTP dependency (used only for downloads) is stubbed if missing.
 from __future__ import annotations
 
 import argparse
+import datetime
 import html
 import importlib.util
 import json
@@ -190,6 +191,46 @@ def pricing_values(pricing: dict) -> dict[str, str]:
     }
 
 
+# ── seller details, offer ────────────────────────────────────────────────────
+
+OFFER_DATE = datetime.date(2026, 11, 20)
+
+
+def seller_values(seller: dict, pricing: dict, site_url: str) -> dict[str, str]:
+    """Return the template values of the «Реквизиты» and «Оферта» pages."""
+    email = html.escape(pricing["contact_email"])
+    name = html.escape(seller.get("name", "").strip() or "ИП/самозанятый — данные уточняются")
+    inn = html.escape(seller.get("inn", "").strip() or "—")
+    wallet = html.escape(seller.get("wallet", "").strip() or "—")
+    address = html.escape(seller.get("address", "").strip() or "—")
+    return {
+        "SITE_URL": html.escape(site_url, quote=True),
+        "SELLER_NAME": name,
+        "SELLER_INN": inn,
+        "SELLER_WALLET": wallet,
+        "SELLER_ADDRESS": address,
+        "CONTACT_EMAIL": email,
+        "OFFER_DATE": OFFER_DATE.strftime("%d.%m.%Y"),
+        "PRO_PRICE": html.escape(format_price(int(pricing["pro_price"]))),
+        "LAUNCH_PRICE": html.escape(format_price(int(pricing.get("launch_price") or pricing["pro_price"]))),
+        "RENEWAL_PRICE": html.escape(format_price(int(pricing["renewal_price"]))),
+    }
+
+
+def build_offer(out: Path, values: dict[str, str]) -> None:
+    template = (WEBSITE / "offer.html").read_text(encoding="utf-8")
+    (out / "offer").mkdir(parents=True, exist_ok=True)
+    page = render(template, values)
+    (out / "offer" / "index.html").write_text(page, encoding="utf-8")
+
+
+def build_details(out: Path, values: dict[str, str]) -> None:
+    template = (WEBSITE / "details.html").read_text(encoding="utf-8")
+    (out / "details").mkdir(parents=True, exist_ok=True)
+    page = render(template, values)
+    (out / "details" / "index.html").write_text(page, encoding="utf-8")
+
+
 # ── build ────────────────────────────────────────────────────────────────────
 
 def build(out: Path) -> Path:
@@ -253,6 +294,15 @@ def build(out: Path) -> Path:
     }
     template = (WEBSITE / "index.html").read_text(encoding="utf-8")
     (out / "index.html").write_text(render(template, values), encoding="utf-8")
+
+    page_values = {
+        **values,
+        "DOCS_URL": html.escape("../docs/", quote=True),
+        **seller_values(config.get("seller", {}), config["pricing"], config.get("site_url", "")),
+    }
+    build_details(out, page_values)
+    build_offer(out, page_values)
+
     (out / ".nojekyll").write_text("", encoding="utf-8")  # serve files as-is on GitHub Pages
     return out
 

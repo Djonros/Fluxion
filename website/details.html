@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Реквизиты — Fluxion</title>
+  <meta name="description" content="Реквизиты получателя платежей за лицензию Fluxion Pro: самозанятый, приём платежей через ЮMoney.">
+  <link rel="icon" type="image/png" href="../favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;700&display=swap">
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .doc { max-width: 760px; padding: 2.5rem 0 0; }
+    .doc h1 { font-family: var(--display); font-weight: 700; font-size: var(--step-3); margin: 0 0 1.2rem; }
+    .doc h2 { font-family: var(--display); font-weight: 500; font-size: var(--step-1); margin: 2.2rem 0 0.9rem; }
+    .doc p, .doc li { color: var(--muted); max-width: var(--measure); }
+    .doc .updated { color: var(--muted); font-size: var(--step--1); margin-top: 3rem; }
+    .doc table { width: 100%; border-collapse: collapse; font-size: var(--step-0); }
+    .doc tbody th, .doc tbody td { border-bottom: 1px solid var(--line); padding: 0.7rem 1rem; text-align: left; vertical-align: top; }
+    .doc tbody th { width: 22ch; font-weight: 500; color: var(--text); }
+    .doc tbody tr:last-child th, .doc tbody tr:last-child td { border-bottom: 0; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <a class="wordmark" href="../" aria-label="Fluxion, на главную">F-L-U-X-I-O-N</a>
+  </header>
+
+  <main>
+    <section class="doc">
+      <h1>Реквизиты</h1>
+      <p>Платежи за лицензию Fluxion Pro принимаются через ЮMoney: оплату проводит расчётный центр системы — АО «НОУТИЛИУС», получателем средств выступает продавец, указанный ниже. Оплатить можно картой или из кошелька ЮMoney со страницы <a href="../#pro">«Цены»</a>.</p>
+      <p>После оплаты напишите на <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>: сумму и дату платежа и почту для ключа. Ключ <code>.key</code> приходит ответным письмом.</p>
+
+      <h2>Получатель платежей</h2>
+      <table>
+        <tbody>
+          <tr><th scope="row">Продавец</th><td>{{SELLER_NAME}}</td></tr>
+          <tr><th scope="row">Статус</th><td>самозанятый (плательщик налога на профессиональный доход)</td></tr>
+          <tr><th scope="row">ИНН</th><td><span class="sha">{{SELLER_INN}}</span></td></tr>
+          <tr><th scope="row">Адрес</th><td>{{SELLER_ADDRESS}}</td></tr>
+          <tr><th scope="row">Кошелёк ЮMoney</th><td><span class="sha">{{SELLER_WALLET}}</span></td></tr>
+          <tr><th scope="row">Почта для ключей и вопросов</th><td><a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a></td></tr>
+        </tbody>
+      </table>
+
+      <h2>Документы</h2>
+      <ul class="plain">
+        <li>Публичная <a href="../offer/">оферта</a> — договор на покупку лицензии; оплата означает согласие с ней.</li>
+        <li>Чек формируется в сервисе «Мой налог» и отправляется на почту или телефон, указанные при оплате.</li>
+        <li>Организациям по запросу до оплаты выставляется счёт; после оплаты — акт. Пишите на <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>.</li>
+      </ul>
+
+      <h2>Как купить</h2>
+      <ol class="steps">
+        <li>На странице <a href="../#pro">«Цены»</a> нажмите «Купить Pro» — откроется форма ЮMoney, сумма и назначение платежа уже заполнены.</li>
+        <li>Оплатите картой или из кошелька ЮMoney.</li>
+        <li>Напишите на <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>: сумму и дату платежа, почту для ключа.</li>
+        <li>Ключ файлом <code>.key</code> приходит ответным письмом. Активируйте его в программе: «Помощь» → «Лицензия…» → «Загрузить файл ключа…».</li>
+      </ol>
+
+      <p class="updated">Реквизиты действуют с {{OFFER_DATE}}. Условия покупки — в <a href="../offer/">оферте</a>.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p class="wordmark small">F-L-U-X-I-O-N</p>
+    <nav aria-label="Ссылки">
+      <a href="../">На главную</a>
+      <a href="../#pro">Цены</a>
+      <a href="../offer/">Оферта</a>
+      <a href="../docs/">Документация</a>
+      <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>
+    </nav>
+  </footer>
+</body>
+</html>
