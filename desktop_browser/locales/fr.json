@@ -1323,4 +1323,7 @@
  "перебег": "surcoupe",
  "подвод": "amorce",
  "рез": "saignée",
- "шириной": "de largeur"}
+ "шириной": "de largeur",
+ "Читаю чертёж…": "Lecture du dessin…",
+ "Чертёж не прочитан: {value}": "Dessin non lu : {value}"
+}

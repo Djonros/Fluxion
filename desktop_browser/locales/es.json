@@ -1323,4 +1323,7 @@
  "перебег": "sobrecorte",
  "подвод": "entrada",
  "рез": "sangría",
- "шириной": "de ancho"}
+ "шириной": "de ancho",
+ "Читаю чертёж…": "Leyendo el plano…",
+ "Чертёж не прочитан: {value}": "Plano no leído: {value}"
+}

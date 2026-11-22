@@ -1323,4 +1323,7 @@
  "перебег": "overcut",
  "подвод": "lead-in",
  "рез": "kerf",
- "шириной": "width"}
+ "шириной": "width",
+ "Читаю чертёж…": "Reading the drawing…",
+ "Чертёж не прочитан: {value}": "Drawing not read: {value}"
+}

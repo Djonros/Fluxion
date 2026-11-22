@@ -216,11 +216,15 @@ class Conversation:
     after MAX_QUESTIONS questions the part is built with defaults anyway.
     For a sheet part a thickness the chosen sheet is not rolled in is asked
     about too (the nearest ones offered); with defaults the nearest is taken.
+    A drawing summary (cad/drawing_input) is prepended to the description:
+    the model reads the sizes out of it as out of the words.
     """
 
-    def __init__(self, backend, ask: bool = True) -> None:
+    def __init__(self, backend, ask: bool = True, drawing: str = "") -> None:
         self.backend = backend
         self.ask = ask
+        self.drawing = drawing
+        self._drawing_used = False
         self.description = ""
         self.questions = 0
         self.draft: Draft | None = None
@@ -237,6 +241,9 @@ class Conversation:
         only_defaults = self.draft is not None and bool(_ONLY_DEFAULTS.match(message))
         if not only_defaults:
             self.description = f"{self.description}. {message}" if self.description else message
+            if self.drawing and not self._drawing_used:
+                self.description = f"{self.drawing}\nОписание: {self.description}"
+                self._drawing_used = True
             self.draft = read_description(self.description, self.backend)
         draft = self.draft
         material = _find_material(draft, self.description)

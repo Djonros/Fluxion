@@ -169,6 +169,7 @@ a = Analysis(
         "cad.laser",
         "cad.fix",
         "cad.drawing",
+        "cad.drawing_input",
         "cad.stamp",
         "cad.acad",
         "cad.acad_check",

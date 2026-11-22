@@ -929,15 +929,24 @@ class CadWorker(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, conversation, message: str, parent=None):
+    def __init__(self, conversation, message: str, parent=None, drawings=None):
         super().__init__(parent)
         self.conversation = conversation
         self.message = message
+        self.drawings = list(drawings or [])
 
     def run(self) -> None:
         from cad import kompas, spec
 
         try:
+            if self.drawings and not self.conversation.drawing:
+                self.progress.emit(tr("Читаю чертёж…"))
+                from cad import drawing_input
+
+                summary, problems = drawing_input.blocks(self.drawings, log=lambda line: None)
+                self.conversation.drawing = summary
+                for problem in problems:
+                    self.progress.emit(tr("Чертёж не прочитан: {value}", value=problem))
             reply = self.conversation.step(self.message)
         except spec.SpecError as exc:
             self.failed.emit(tr("Не получилось разобрать описание: {exc}", exc=exc))
@@ -6027,11 +6036,12 @@ class FluxionWindow(QMainWindow):
             return
         description = cad_command(text)
         if description is not None:
-            if not description:
+            files = self._take_attachments() if source is None else []
+            if not description and not files:
                 self._open_cad_dialog()
                 return
             self.prompt.clear()
-            self._send_cad_message(description, shown=text)
+            self._send_cad_message(description, shown=text, files=files)
             return
         if self._cad_conversation is not None and source is None:
             # the answer to Fluxion's question about the part
@@ -6883,12 +6893,16 @@ class FluxionWindow(QMainWindow):
         dialog = MaterialsDialog(self)
         dialog.exec()
 
-    def _send_cad_message(self, message: str, shown: str, answer: bool = False) -> None:
+    def _send_cad_message(self, message: str, shown: str, answer: bool = False,
+                          files: list[dict] | None = None) -> None:
         """Part in KOMPAS-3D: *message* starts a new description or, with *answer*,
-        answers Fluxion's question; the model and KOMPAS work in the background."""
+        answers Fluxion's question; the model and KOMPAS work in the background.
+        *files*: attachments with the drawings (DXF/DWG) of the part."""
         self.pages.setCurrentIndex(PAGE_CHAT)
         self._last_query = shown
         self._append_message("user", shown)
+        if files:
+            self._mark_files(files)
         self.history.append({"role": "user", "content": shown})
         if self.backend is None:
             self._cad_conversation = None
@@ -6905,7 +6919,11 @@ class FluxionWindow(QMainWindow):
         self._start_thinking()
 
         self._set_generating(True)
-        self.cad_worker = CadWorker(self._cad_conversation, message, self)
+        from cad.drawing_input import SUFFIXES as DRAWING_SUFFIXES
+
+        paths = [f["path"] for f in (files or [])
+                 if Path(f["path"]).suffix.lower() in DRAWING_SUFFIXES]
+        self.cad_worker = CadWorker(self._cad_conversation, message, self, drawings=paths)
         self.cad_worker.progress.connect(self._on_cad_progress)
         self.cad_worker.asked.connect(self._on_cad_asked)
         self.cad_worker.done.connect(self._on_cad_done)
