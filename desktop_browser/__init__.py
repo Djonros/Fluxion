@@ -1,4 +1,4 @@
 """Fluxion Browser desktop application (Fluxion + embedded web browser)."""
 
-APP_VERSION = "0.30.4"
+APP_VERSION = "0.31.0"
 SITE_URL = "https://djonros.github.io/Fluxion/"  # the site: downloads, prices, the manual
