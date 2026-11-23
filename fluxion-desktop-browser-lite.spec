@@ -170,6 +170,7 @@ a = Analysis(
         "cad.fix",
         "cad.drawing",
         "cad.drawing_input",
+        "cad.drawing_image",
         "cad.stamp",
         "cad.acad",
         "cad.acad_check",

@@ -5,6 +5,11 @@ All notable changes to Fluxion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Конструктор: «/компас» строит деталь по чертежу не только из DXF/DWG, но и по PDF или картинке (PNG, JPEG, TIFF, BMP; файл «+» → «Прикрепить файл…», перетаскиванием или Ctrl+V). PDF читается как текст (векторный экспорт) и как скан (страницы без текста), картинка — встроенным распознаванием Windows; когда на компьютере есть модель для фото («Связь с телефоном»), её описание чертежа добавляется к распознанному тексту. Сводка чертежа идёт в тот же разговор, что и от DXF: модель спросит недостающие размеры и построит деталь в КОМПАС-3D (для листовых — с развёрткой в DXF).
+
 ## [0.31.0] — 2026-11-22
 
 ### Added

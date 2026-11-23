@@ -929,11 +929,22 @@ class CadWorker(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, conversation, message: str, parent=None, drawings=None):
+    def __init__(self, conversation, message: str, parent=None, drawings=None, ollama_host: str = ""):
         super().__init__(parent)
         self.conversation = conversation
         self.message = message
         self.drawings = list(drawings or [])
+        self.ollama_host = ollama_host
+
+    def _picture_describer(self):
+        """The vision model's reading of a picture, or None when there is no model:
+        the OCR of rag/ocr.py stays the only reader of the drawing then."""
+        from .attachments import describe_drawing
+
+        def describe(path):
+            return describe_drawing(path, self.ollama_host)
+
+        return describe
 
     def run(self) -> None:
         from cad import kompas, spec
@@ -941,12 +952,19 @@ class CadWorker(QThread):
         try:
             if self.drawings and not self.conversation.drawing:
                 self.progress.emit(tr("Читаю чертёж…"))
-                from cad import drawing_input
+                from cad import drawing_image, drawing_input
 
-                summary, problems = drawing_input.blocks(self.drawings, log=lambda line: None)
-                self.conversation.drawing = summary
-                for problem in problems:
+                dxf = [p for p in self.drawings if Path(p).suffix.lower() not in drawing_image.SUFFIXES]
+                pictures = [p for p in self.drawings if Path(p).suffix.lower() in drawing_image.SUFFIXES]
+                parts, problems = drawing_input.blocks(dxf, log=lambda line: None)
+                describe = self._picture_describer()
+                more, more_problems = drawing_image.blocks(pictures, log=lambda line: None, describe=describe)
+                summary = "\n\n".join(b for b in (parts, more) if b)
+                if not summary and problems + more_problems:
+                    raise RuntimeError("; ".join(problems + more_problems))
+                for problem in problems + more_problems:
                     self.progress.emit(tr("Чертёж не прочитан: {value}", value=problem))
+                self.conversation.drawing = summary
             reply = self.conversation.step(self.message)
         except spec.SpecError as exc:
             self.failed.emit(tr("Не получилось разобрать описание: {exc}", exc=exc))
@@ -6897,7 +6915,7 @@ class FluxionWindow(QMainWindow):
                           files: list[dict] | None = None) -> None:
         """Part in KOMPAS-3D: *message* starts a new description or, with *answer*,
         answers Fluxion's question; the model and KOMPAS work in the background.
-        *files*: attachments with the drawings (DXF/DWG) of the part."""
+        *files*: attachments with the drawings (DXF/DWG, a PDF or a picture) of the part."""
         self.pages.setCurrentIndex(PAGE_CHAT)
         self._last_query = shown
         self._append_message("user", shown)
@@ -6920,10 +6938,12 @@ class FluxionWindow(QMainWindow):
 
         self._set_generating(True)
         from cad.drawing_input import SUFFIXES as DRAWING_SUFFIXES
+        from cad.drawing_image import SUFFIXES as IMAGE_DRAWING_SUFFIXES
 
         paths = [f["path"] for f in (files or [])
-                 if Path(f["path"]).suffix.lower() in DRAWING_SUFFIXES]
-        self.cad_worker = CadWorker(self._cad_conversation, message, self, drawings=paths)
+                 if Path(f["path"]).suffix.lower() in DRAWING_SUFFIXES | IMAGE_DRAWING_SUFFIXES]
+        self.cad_worker = CadWorker(self._cad_conversation, message, self, drawings=paths,
+                                    ollama_host=self._ollama_host())
         self.cad_worker.progress.connect(self._on_cad_progress)
         self.cad_worker.asked.connect(self._on_cad_asked)
         self.cad_worker.done.connect(self._on_cad_done)

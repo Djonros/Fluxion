@@ -21,6 +21,10 @@ MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024  # a plain-text file larger than this is n
 TEXT_LIMIT = 40_000  # characters of one file in front of the question: the model's context is small
 IMAGE_PROMPT = ("Опиши изображение подробно и точно: что на нём, текст и размеры, если видны, "
                 "повреждения и особенности. Пользователь спрашивает: {question}")
+DRAWING_PROMPT = ("На картинке чертёж детали, который надо построить в КОМПАС-3D. Опиши точно: "
+                  "форма детали (пластина, фланец, втулка, вал, уголок, корпус…), габаритные размеры, "
+                  "толщина, диаметры и количество отверстий, радиусы, материал, если написан. "
+                  "Числа переписывай с чертежа точно, ничего не выдумывай.")
 
 _vision_lock = threading.Lock()
 _vision_engine = None  # kept between messages: the embedded model loads for a while
@@ -108,6 +112,28 @@ def describe_image(path: str | Path, question: str, ollama_host: str) -> str:
                 raise AttachmentError(tr("Не хватило памяти для модели для фото: закройте другие программы "
                                          "или используйте компьютер мощнее.")) from exc
             raise AttachmentError(tr("{name}: модель для фото не ответила ({exc})", name=path.name, exc=exc)) from exc
+
+
+def describe_drawing(path: str | Path, ollama_host: str) -> str | None:
+    """The vision model's reading of a drawing picture; None without a vision model
+    (then the OCR text of rag/ocr.py stays the only source for «/компас»)."""
+    global _vision_engine
+    from phone import config, vision
+
+    path = Path(path)
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": DRAWING_PROMPT},
+        {"type": "image_url", "image_url": {"url": _data_url(path)}},
+    ]}]
+    with _vision_lock:
+        try:
+            _vision_engine = vision.pick(config.load(), ollama_host, embedded=_vision_engine)
+        except vision.VisionUnavailable:
+            return None
+        try:
+            return _vision_engine.complete(messages, temperature=0.2, max_tokens=700).strip()
+        except Exception:
+            return None
 
 
 def unload_idle_vision() -> None:
